@@ -259,6 +259,26 @@ fn leaving_the_settings_window_stops_recording() {
 }
 
 #[test]
+fn switching_away_from_the_settings_tab_stops_recording() {
+    use crate::app::TabBarMsg;
+    use crate::tabs::{Pane, Tab};
+    use fbterm_config::keys::Action;
+    let (mut app, _) = app();
+    let wid = app.settings_window().unwrap();
+    let terminal = app.windows.get_mut(&wid).unwrap();
+    terminal.push(Tab::single(Pane::for_profile(
+        &crate::restore_tests::profile("a"),
+    )));
+    let settings = terminal.tabs.iter().position(|t| t.page.is_some()).unwrap();
+    let shell = terminal.tabs.iter().position(|t| t.page.is_none()).unwrap();
+    let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(settings)));
+    send(&mut app, SettingsMsg::Record(Action::NewTab));
+    assert_eq!(app.recording_window(), Some(wid));
+    let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(shell)));
+    assert_eq!(app.recording_window(), None);
+}
+
+#[test]
 fn the_gear_button_opens_the_settings_window() {
     let dir = std::env::temp_dir().join(format!("fbterm-settings-test-{}", ProfileId::new()));
     std::fs::create_dir_all(&dir).unwrap();

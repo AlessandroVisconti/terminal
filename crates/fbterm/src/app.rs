@@ -946,6 +946,26 @@ impl App {
             .map(|(id, _)| *id)
     }
 
+    /// A recording ends as soon as the Settings tab stops being active
+    /// (tab select, close, new tab, drag): the keys go to a shell then, and must neither be
+    /// logged as recording text nor be taken as the chord on return.
+    fn sync_recording(&mut self) {
+        let Some((wid, state)) = &mut self.settings_win else {
+            return;
+        };
+        if state.recording.is_none() {
+            return;
+        }
+        let shown = self
+            .windows
+            .get(wid)
+            .and_then(WindowState::active_tab)
+            .is_some_and(|t| t.page == Some(crate::tabs::Page::Settings));
+        if !shown {
+            state.cancel_recording();
+        }
+    }
+
     fn first_window_ready(&self) -> bool {
         match self.screenshot_window {
             ShotWindow::Editor if self.editor.is_none() => return false,
@@ -970,6 +990,7 @@ impl App {
         self.sync_quit_key();
         self.ask_update_question();
         self.sync_update_state();
+        self.sync_recording();
         crate::key_log::set_recording(self.recording_window());
         let unfocus: Vec<Task<Message>> = [self.sync_panel_focus(), self.sync_tunnels_focus()]
             .into_iter()
