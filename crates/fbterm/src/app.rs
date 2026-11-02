@@ -35,7 +35,7 @@ use crate::restore;
 use crate::schemes_window::{SchemesMsg, SchemesState};
 use crate::sessions::{EventReceiver, session_stream, write_notice};
 use crate::settings_window::{SettingsMsg, SettingsState};
-use crate::tabs::{Pane, TabState, WindowState};
+use crate::tabs::{Page, Pane, TabState, WindowState};
 use crate::theme;
 use crate::tunnels::{Tunnels, tunnel_stream};
 use crate::tunnels_panel::{TunnelsMsg, TunnelsPanels};
@@ -1159,13 +1159,14 @@ impl App {
             Message::WindowClosed(id) => {
                 self.close_context_menu(id);
                 self.os_scales.remove(&id);
-                if self.editor_window() == Some(id) {
-                    self.editor = None;
-                }
-                if self.settings_window() == Some(id) {
-                    // Closed by the OS button or Quit: what is still waiting is written.
-                    self.write_pending_settings();
-                    self.settings_win = None;
+                // Closed by the OS button or Quit: same teardown as closing the tab.
+                let pages: Vec<Page> = self
+                    .windows
+                    .get(&id)
+                    .map(|w| w.tabs.iter().filter_map(|t| t.page).collect())
+                    .unwrap_or_default();
+                for page in pages {
+                    self.page_closed(page);
                 }
                 if self.schemes_window() == Some(id) {
                     self.schemes_win = None;
