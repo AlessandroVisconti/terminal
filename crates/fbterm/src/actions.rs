@@ -69,7 +69,7 @@ impl App {
             },
             Action::NewWindow => self.open_window(self.default_profile()),
             Action::EditProfiles => self.editor_msg(EditorMsg::Open),
-            Action::DuplicateProfile => self.duplicate_action(window),
+            Action::DuplicateProfile => self.duplicate_action(),
             Action::Settings => self.settings_msg(SettingsMsg::Open),
             Action::EditSchemes => self.open_schemes(None),
             Action::Tunnels => self.tunnels_action(window),
