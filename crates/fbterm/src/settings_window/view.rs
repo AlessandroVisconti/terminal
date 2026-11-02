@@ -87,23 +87,13 @@ pub fn view<'a>(
             .center_x(Length::Fill),
     )
     .id(state.page.clone())
+    // The default scrollbar, as the profile editor's, kept clear of the window's resize edge.
     .direction(scrollable::Direction::Vertical(crate::ui::edge_scrollbar(
         crate::chrome::Chrome::current().draws_controls(),
-        6.0,
-        6.0,
-        3.0,
+        10.0,
+        10.0,
+        0.0,
     )))
-    .style(move |theme, status| {
-        let mut s = scrollable::default(theme, status);
-        s.vertical_rail.background = None;
-        s.vertical_rail.border = Border::default();
-        s.vertical_rail.scroller.background = Background::Color(t.border);
-        s.vertical_rail.scroller.border = Border {
-            radius: 3.0.into(),
-            ..Border::default()
-        };
-        s
-    })
     .height(Length::Fill);
     container(column![page, footer(t, state, notice)])
         .width(Length::Fill)

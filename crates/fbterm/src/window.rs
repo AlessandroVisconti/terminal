@@ -7,7 +7,7 @@ use fbterm_term::highlighted_terminal_view;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget, tree};
 use iced::advanced::{Clipboard, Shell, overlay, renderer};
-use iced::widget::{button, column, container, row, scrollable, stack, text};
+use iced::widget::{button, column, container, responsive, row, scrollable, stack, text};
 use iced::window::{self, Screenshot};
 use iced::{
     Alignment, Background, Border, Color, Element, Event, Length, Padding, Pixels, Point,
@@ -210,7 +210,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
     // render nothing.
     let page = win.active_tab().and_then(|t| t.page);
     let content: Element<'_, Message> = match win.active_tab() {
-        Some(_) if page.is_some() => page_view(app, id, page),
+        Some(_) if page.is_some() => page_view_min(app, id, page),
         Some(tab) => {
             // In the tab's own pane order, not the layout's: moving a tile then keeps each
             // pane's widget state (find field, selection drag) with its pane.
@@ -359,6 +359,31 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
         }));
     }
     layers.into()
+}
+
+fn page_min_width(page: Option<Page>) -> f32 {
+    match page {
+        Some(Page::Settings) => 520.0,
+        _ => 640.0,
+    }
+}
+
+/// `page_view`, scrolling sideways below [`page_min_width`] with the default scrollbar, as the
+/// pages' own vertical one.
+fn page_view_min(app: &App, id: window::Id, page: Option<Page>) -> Element<'_, Message> {
+    responsive(move |size| {
+        let body = page_view(app, id, page);
+        let min = page_min_width(page);
+        if size.width >= min {
+            return body;
+        }
+        scrollable(container(body).width(min).height(size.height))
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::new().width(10).scroller_width(10),
+            ))
+            .into()
+    })
+    .into()
 }
 
 /// The body of a page tab: the profile editor or the Settings, drawn where the terminals go.
