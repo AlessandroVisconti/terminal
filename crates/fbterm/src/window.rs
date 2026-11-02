@@ -209,9 +209,9 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
     // Only the active tab builds terminal views (one per pane on screen); background tabs
     // render nothing.
     let page = win.active_tab().and_then(|t| t.page);
-    let content: Element<'_, Message> = match win.active_tab() {
-        Some(_) if page.is_some() => page_view_min(app, id, page),
-        Some(tab) => {
+    let content: Element<'_, Message> = match (win.active_tab(), page) {
+        (Some(_), Some(page)) => page_view_min(app, id, page),
+        (Some(tab), None) => {
             // In the tab's own pane order, not the layout's: moving a tile then keeps each
             // pane's widget state (find field, selection drag) with its pane.
             let shown = tab.visible_panes();
@@ -253,7 +253,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
             };
             crate::tiles::tiles(t, id, tab, panes, ground, !modal, incoming, cell)
         }
-        None if win.tabs.is_empty() => container(
+        (None, _) if win.tabs.is_empty() => container(
             text("No shells found. Add a profile in profiles.toml.")
                 .font(UI_FONT)
                 .size(13)
@@ -261,7 +261,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
         )
         .center(Length::Fill)
         .into(),
-        None => text("").into(),
+        (None, _) => text("").into(),
     };
     let terminal_area: Element<'_, Message> = container(content)
         .padding(if page.is_some() {
@@ -361,9 +361,9 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
     layers.into()
 }
 
-fn page_min_width(page: Option<Page>) -> f32 {
+fn page_min_width(page: Page) -> f32 {
     match page {
-        Some(Page::Settings) => 520.0,
+        Page::Settings => 520.0,
         // Sidebar 260 plus the footer's buttons and an "Unsaved changes" note.
         _ => 770.0,
     }
@@ -371,7 +371,7 @@ fn page_min_width(page: Option<Page>) -> f32 {
 
 /// `page_view`, scrolling sideways below [`page_min_width`] with the default scrollbar, as the
 /// pages' own vertical one.
-fn page_view_min(app: &App, id: window::Id, page: Option<Page>) -> Element<'_, Message> {
+fn page_view_min(app: &App, id: window::Id, page: Page) -> Element<'_, Message> {
     responsive(move |size| {
         let body = page_view(app, id, page);
         let min = page_min_width(page);
@@ -388,10 +388,10 @@ fn page_view_min(app: &App, id: window::Id, page: Option<Page>) -> Element<'_, M
 }
 
 /// The body of a page tab: the profile editor or the Settings, drawn where the terminals go.
-fn page_view(app: &App, id: window::Id, page: Option<Page>) -> Element<'_, Message> {
+fn page_view(app: &App, id: window::Id, page: Page) -> Element<'_, Message> {
     let t = app.tokens;
     match page {
-        Some(Page::Profiles) => match &app.editor {
+        Page::Profiles => match &app.editor {
             Some((_, state)) => crate::editor::view::view(
                 t,
                 state,
@@ -402,7 +402,7 @@ fn page_view(app: &App, id: window::Id, page: Option<Page>) -> Element<'_, Messa
             ),
             None => text("").into(),
         },
-        Some(Page::Settings) => match &app.settings_win {
+        Page::Settings => match &app.settings_win {
             Some((_, state)) => crate::settings_window::view::view(
                 t,
                 state,
@@ -414,7 +414,6 @@ fn page_view(app: &App, id: window::Id, page: Option<Page>) -> Element<'_, Messa
             ),
             None => text("").into(),
         },
-        None => text("").into(),
     }
 }
 
