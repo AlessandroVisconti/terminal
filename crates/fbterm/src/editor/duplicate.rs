@@ -61,7 +61,7 @@ pub fn copy_secrets(
 impl App {
     /// The `Duplicate profile` action. With the Profiles tab active (or with no terminal window)
     /// it copies the selected profile; from a terminal tab only the focused pane's profile,
-    /// opening (or raising) the editor on the copy. A pane whose profile is not saved copies
+    /// opening (or selecting) the Profiles tab on the copy. A pane whose profile is not saved copies
     /// nothing: the editor says why, and its selection is never copied instead.
     pub(crate) fn duplicate_action(&mut self) -> Task<Message> {
         let terminal = self.focused_window().and_then(|w| self.windows.get(&w));

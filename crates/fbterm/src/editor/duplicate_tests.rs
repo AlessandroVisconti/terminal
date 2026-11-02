@@ -313,8 +313,8 @@ fn the_action_from_a_terminal_window_duplicates_the_focused_panes_profile() {
     assert_eq!(state.selected, Some(copy), "the editor opens on the copy");
     assert_eq!(state.notice.as_deref(), Some(DUPLICATED));
 
-    // With unsaved changes in the open editor, the action from the terminal window is
-    // refused there (the editor is raised to say so) and nothing is written.
+    // With unsaved changes in the open editor, the action from the terminal tab is
+    // refused there (the Profiles tab is selected to say so) and nothing is written.
     editor(&mut app, EditorMsg::Host("edited.example.com".into()));
     let before = std::fs::read_to_string(app.paths.profiles()).unwrap();
     let _ = app.update(Message::Shortcut(wid, Action::DuplicateProfile));
