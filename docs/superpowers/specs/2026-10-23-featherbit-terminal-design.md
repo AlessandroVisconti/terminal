@@ -276,8 +276,8 @@ Done 2026-10-27 (milestone 5); see `2026-10-27-export-vault-design.md`.
   blur (`window::Settings::blur`, through winit); on macOS this relies on an undocumented
   CoreGraphics call; if it stops working, blur is lost but nothing breaks. Replacing it is a
   follow-up item in section 6.
-- *(Owner's decision, 2026-10-24)* **Settings window.** A separate window (unified title bar on
-  macOS, like the profile editor) with a control for every `settings.toml` option: theme, font
+- *(Owner's decision, 2026-10-24; the separate window is superseded by 2026-11-03 below)*
+  **Settings.** A control for every `settings.toml` option: theme, font
   family (installed monospace families, the bundled Geist Mono first), font size, background
   opacity and blur, scrollback lines, kitty keyboard protocol, redraw rate. Changes apply live, with no Save
   button, and are written to `settings.toml` in place: only the changed key, keeping comments,
@@ -285,6 +285,12 @@ Done 2026-10-27 (milestone 5); see `2026-10-27-export-vault-design.md`.
   300 ms pause or when the slider is let go; our own writes do not trigger a reload). A file
   that does not load is never written: the window is read-only until it is fixed, and edits on
   disk show in the window. Opened with Cmd+, (Ctrl+, elsewhere) or the palette's **Settings**.
+- *(Owner's decision, 2026-11-03)* **Profiles and Settings are tabs.** The profile editor and
+  Settings no longer open as separate windows: each is a page tab in a terminal window's tab
+  bar (the Profiles button, the gear button, their shortcuts and the palette open it, or select
+  it where it is already open; one of each in the app). They close like tabs (Cmd+W). They are
+  not restored at relaunch and cannot be split or merged. The Color schemes and export/import
+  windows stay separate windows.
 - *(Owner's decision, 2026-10-24)* **Configurable redraw rate.** `settings.toml` `max_fps`
   caps output-driven redraws: a whole number from 30 to 240 (out of range is clamped and
   reported) or `"display"` to follow the screen's refresh rate; default 60. Typing and its echo

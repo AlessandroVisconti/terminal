@@ -48,4 +48,4 @@ A key passphrase remembered when you connect also marks the profile's key as hav
 
 ## Editing the setting by hand
 
-`secret_storage` is `"auto"`, `"keychain"` or `"vault"` in [`settings.toml`](files#settingstoml). Prefer the Settings window: it moves the secrets. A hand edit made while the app runs takes effect at the next launch and moves nothing, so secrets saved in the old place are not found until you switch back.
+`secret_storage` is `"auto"`, `"keychain"` or `"vault"` in [`settings.toml`](files#settingstoml). Prefer the Settings tab: it moves the secrets. A hand edit made while the app runs takes effect at the next launch and moves nothing, so secrets saved in the old place are not found until you switch back.

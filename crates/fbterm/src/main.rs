@@ -20,11 +20,12 @@
 //! - `FBTERM_PALETTE_QUERY=<text>`: open the quick-launch palette in the first window, pre-filled.
 //! - `FBTERM_SCREENSHOT=<path.png>`: once the first window has rendered for a moment, capture
 //!   that window only (never the screen), write it as PNG and exit.
-//! - `FBTERM_SCREENSHOT_WINDOW=editor|settings|schemes|archive`: capture the profile editor,
-//!   the Settings window, the Color schemes window or the export and import window instead.
-//! - `FBTERM_OPEN_EDITOR=<profile name>`: open the profile editor at startup, that profile
+//! - `FBTERM_SCREENSHOT_WINDOW=editor|settings|schemes|archive`: capture the window showing the
+//!   Profiles tab, the one showing the Settings tab, the Color schemes window or the export and
+//!   import window instead.
+//! - `FBTERM_OPEN_EDITOR=<profile name>`: open the Profiles tab at startup, that profile
 //!   selected.
-//! - `FBTERM_OPEN_SETTINGS=1`: open the Settings window at startup (`secrets`: scrolled to the
+//! - `FBTERM_OPEN_SETTINGS=1`: open the Settings tab at startup (`secrets`: scrolled to the
 //!   Saved secrets section).
 //! - `FBTERM_DEMO_VAULT=1`: with `FBTERM_SECRETS=memory`, make the in-memory backend's vault
 //!   (in its temporary folder, main password `demo`) so Settings shows `Reset vault`.

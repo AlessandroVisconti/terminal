@@ -6,7 +6,7 @@ sidebar_label: Keyboard shortcuts
 
 Application shortcuts use `Cmd` on macOS. On Linux and Windows shortcuts are `Ctrl+Shift`, so plain `Ctrl` keys (such as `Ctrl+T`, `Ctrl+W` and `Ctrl+P`) keep reaching your shell and the programs running in it. The exceptions are `Ctrl+,` for Settings, `Ctrl+Alt+F` for find in all tabs and `Ctrl+Alt` with an arrow key to move between panes.
 
-These are the defaults. Every application shortcut can be changed or removed in the **Keyboard** section of the Settings window (see [Changing shortcuts](#changing-shortcuts)); the tables below list the defaults, and the Settings window, the palette and the tab-bar tooltips always show the shortcuts in force.
+These are the defaults. Every application shortcut can be changed or removed in the **Keyboard** section of the Settings tab (see [Changing shortcuts](#changing-shortcuts)); the tables below list the defaults, and the Settings tab, the palette and the tab-bar tooltips always show the shortcuts in force.
 
 Hover over a button in the tab bar to see what it does and its shortcut. The gear button at the end of the tab bar opens Settings. The tunnels button after the tab buttons opens or closes the [tunnels panel](tunnels#the-tunnels-panel), shows how many tunnels are up and is highlighted while the panel is open. While the focused pane is an SSH session whose server offers SFTP, a folder button appears before the gear: it opens or closes the [file panel](file-panel) and is highlighted while the panel is open.
 
@@ -67,7 +67,7 @@ Move tile, Move tile to new tab, Merge tab into and Find in this tab have no sho
 
 ### The title bar on macOS
 
-On macOS the tab bar is the title bar: the window buttons sit at its left end and the tabs follow them. Drag any empty part of the tab bar (around and after the tabs) to move the window, and double-click it to zoom the window or restore its size. The profile editor and Settings windows work the same way with their own header. The window title, shown in the Dock, Mission Control and the Window menu, is the active tab's name.
+On macOS the tab bar is the title bar: the window buttons sit at its left end and the tabs follow them. Drag any empty part of the tab bar (around and after the tabs) to move the window, and double-click it to zoom the window or restore its size. The window title, shown in the Dock, Mission Control and the Window menu, is the active tab's name.
 
 On Linux and Windows the window keeps the system title bar for now.
 
@@ -107,7 +107,7 @@ While the find bar is open:
 | Open Settings | `Cmd+,` | `Ctrl+,` |
 | Open the profile editor | `Cmd+Shift+,` | `Ctrl+Shift+,` |
 
-The profiles button after the new-tab button in the tab bar opens the profile editor too, and the gear button after it opens Settings. The Settings window has a control for every option in [`settings.toml`](files#settingstoml); changes apply at once and are saved to the file. In the profile editor and Settings windows, `Cmd+W` (`Ctrl+Shift+W`) closes the window, and each window's shortcut opens the other.
+The profiles button after the new-tab button in the tab bar opens the profile editor too, and the gear button after it opens Settings. The Settings tab has a control for every option in [`settings.toml`](files#settingstoml); changes apply at once and are saved to the file. Profiles and Settings are tabs like any other: each opens once, and its shortcut or button selects the tab where it is already open. In either tab, `Cmd+W` (`Ctrl+Shift+W`) closes the tab, and the other page's shortcut opens or selects that page. These two tabs are not restored when fbterm starts again, and they cannot be split or merged.
 
 ## Palette actions
 
@@ -200,7 +200,7 @@ A shortcut is its modifiers and a key joined by `+`. Modifiers are `ctrl`, `alt`
 | `find`, `find_all`, `find_next`, `find_previous` | Find in pane, find in all tabs, older and newer match in the find bar |
 | `palette`, `open_settings_file`, `reveal_config_folder`, `quit` | The palette, the palette actions of the same names, quit |
 
-Edits to the table apply while the app runs, like every setting. An entry that names no action, a shortcut that cannot be read, is not allowed or is reserved, a shortcut another action already has, and `quit` on macOS are reported like other problems in `settings.toml`, with the file and line, and that action keeps its default; the rest of the file still applies. The Settings window writes only the lines of the actions you change there, keeping your comments (a comment above a removed line moves to the next one). An entry it could not read stays as you wrote it; an entry it could read but did not use (for example one that took another action's shortcut) is replaced when you change shortcuts there, so what runs is always what the file says.
+Edits to the table apply while the app runs, like every setting. An entry that names no action, a shortcut that cannot be read, is not allowed or is reserved, a shortcut another action already has, and `quit` on macOS are reported like other problems in `settings.toml`, with the file and line, and that action keeps its default; the rest of the file still applies. The Settings tab writes only the lines of the actions you change there, keeping your comments (a comment above a removed line moves to the next one). An entry it could not read stays as you wrote it; an entry it could read but did not use (for example one that took another action's shortcut) is replaced when you change shortcuts there, so what runs is always what the file says.
 
 ## Search in detail
 
