@@ -1,4 +1,4 @@
-//! The Settings window against a temporary config directory: live apply, in-place writes,
+//! The Settings tab against a temporary config directory: live apply, in-place writes,
 //! own-write suppression and edits on disk.
 
 use fbterm_config::{Paths, ProfileId, SETTINGS_TEMPLATE, Settings, ThemeMode};
@@ -312,7 +312,7 @@ fn clearing_a_chord_does_not_bring_back_an_entry_load_dropped() {
     assert!(app.settings_notice.is_none());
 }
 
-/// An app with the Settings window open and one tab whose history holds `lines` lines (the
+/// An app with the Settings tab open and one tab whose history holds `lines` lines (the
 /// default limit, 10,000, is what is saved).
 fn app_with_history(lines: usize) -> (App, Paths, fbterm_term::SharedTerminal) {
     use crate::restore_tests::{fill_history, first_terminal, paths_with, profile, saved};

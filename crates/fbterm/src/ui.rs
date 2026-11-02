@@ -188,10 +188,15 @@ pub fn text_button<'a>(
     on_press: Option<Message>,
     style: fn(&Tokens, button::Status) -> button::Style,
 ) -> button::Button<'a, Message> {
-    button(text(caption).font(UI_FONT).size(13).wrapping(text::Wrapping::None))
-        .on_press_maybe(on_press)
-        .padding(Padding::from([6.0, 14.0]))
-        .style(move |_, status| style(t, status))
+    button(
+        text(caption)
+            .font(UI_FONT)
+            .size(13)
+            .wrapping(text::Wrapping::None),
+    )
+    .on_press_maybe(on_press)
+    .padding(Padding::from([6.0, 14.0]))
+    .style(move |_, status| style(t, status))
 }
 
 /// A card surface (radius 8).
@@ -284,7 +289,7 @@ pub fn edge_scrollbar(
         .margin(edge_scrollbar_margin(drawn, margin))
 }
 
-/// The bar of the editor and Settings windows where the OS title bar is gone: room for the
+/// The bar of the editor and Settings tabs where the OS title bar is gone: room for the
 /// window buttons (or the drawn controls) and to move the window. It stays blank otherwise;
 /// the window's content titles it.
 pub fn window_header<'a>(

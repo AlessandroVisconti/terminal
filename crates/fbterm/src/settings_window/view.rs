@@ -1,4 +1,4 @@
-//! The Settings window: Appearance, Terminal, Tunnels, Saved secrets, Updates and Keyboard
+//! The Settings tab: Appearance, Terminal, Tunnels, Saved secrets, Updates and Keyboard
 //! cards of labelled controls, and a footer with the settings file actions.
 
 use fbterm_config::keys::{Action, ActionGroup, Bindings, FixedShortcut, fixed_shortcuts, risk};
@@ -415,7 +415,7 @@ pub fn title_bar_shown(setting: WindowDecorations, fell_back: bool) -> WindowDec
     }
 }
 
-/// Whether the Settings window offers the `Title bar` choice: only where windows follow
+/// Whether the Settings tab offers the `Title bar` choice: only where windows follow
 /// Linux's conventions (the `window_decorations` setting is ignored elsewhere).
 pub fn shows_title_bar_row(look: Platform) -> bool {
     look == Platform::Linux

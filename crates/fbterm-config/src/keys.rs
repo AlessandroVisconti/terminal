@@ -30,7 +30,7 @@ pub enum Action {
     /// Copy a profile (the one selected in the profile editor, or the focused pane's) and
     /// open the copy in the editor (no chord by default).
     DuplicateProfile,
-    /// The Settings window: Cmd+, on macOS, Ctrl+, elsewhere.
+    /// The Settings tab: Cmd+, on macOS, Ctrl+, elsewhere.
     Settings,
     /// The Color schemes window (no chord by default).
     EditSchemes,
@@ -89,7 +89,7 @@ pub enum Action {
     TileToTab,
 }
 
-/// The groups the Settings window lists actions in.
+/// The groups the Settings tab lists actions in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionGroup {
     Tabs,
@@ -120,7 +120,7 @@ impl ActionGroup {
 }
 
 impl Action {
-    /// Every action, in the order the Settings window lists them.
+    /// Every action, in the order the Settings tab lists them.
     pub const ALL: [Action; 45] = [
         Action::NewTab,
         Action::CloseTab,
@@ -700,7 +700,7 @@ pub fn reserved(mac: bool, chord: Chord) -> Option<&'static str> {
     None
 }
 
-/// A shortcut outside the binding table, shown read-only in the Settings window: its chord is
+/// A shortcut outside the binding table, shown read-only in the Settings tab: its chord is
 /// one [`reserved`] keeps, so it can neither be changed nor taken by an action. (Quit on macOS
 /// is an action of its own, listed with the others as fixed, see [`Action::is_fixed`].)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

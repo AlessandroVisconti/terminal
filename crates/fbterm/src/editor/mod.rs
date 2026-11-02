@@ -1,4 +1,4 @@
-//! Profile editor state: the form behind the editor window, as plain data so its rules are
+//! Profile editor state: the form behind the editor tab, as plain data so its rules are
 //! testable without a GUI. The window itself is drawn by [`view`].
 //!
 //! The editor works on drafts of every profile and touches the real store only in
@@ -50,7 +50,7 @@ pub enum AuthChoice {
     Agent,
 }
 
-/// What the editor window asks for. The first group is handled by the app (windows, files,
+/// What the editor tab asks for. The first group is handled by the app (windows, files,
 /// disk); the rest edit the selected draft.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorMsg {
@@ -468,7 +468,7 @@ impl Draft {
     }
 }
 
-/// The editor window's state.
+/// The editor tab's state.
 pub struct EditorState {
     drafts: Vec<Draft>,
     pub selected: Option<ProfileId>,

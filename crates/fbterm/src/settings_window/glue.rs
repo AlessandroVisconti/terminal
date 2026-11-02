@@ -294,7 +294,7 @@ impl App {
     /// read each frame). The scrollback length applies to every open terminal's normal screen
     /// and to new ones: raising it keeps everything, lowering it drops the oldest lines at once
     /// and then releases the freed memory (a lowered value read from `settings.toml` also sets
-    /// the settings notice; one the Settings window applied after the user confirmed does not,
+    /// the settings notice; one the Settings tab applied after the user confirmed does not,
     /// see [`SettingsSource`]).
     /// `kitty_keyboard` applies to every open terminal at once: turning it off drops the
     /// protocol flags programs have set, turning it on affects their requests from then on.
@@ -313,7 +313,7 @@ impl App {
         mut new: Settings,
         source: SettingsSource,
     ) -> Task<Message> {
-        // Saved secrets move only through the Settings window (which writes the key itself):
+        // Saved secrets move only through the Settings tab (which writes the key itself):
         // a hand edit of `secret_storage` applies on the next launch.
         new.secret_storage = self.settings.secret_storage;
         if new == self.settings {
@@ -437,7 +437,7 @@ impl App {
     }
 
     /// Set the output redraw rate from `max_fps` and the displays; pacing picks it up with the
-    /// next output. The Settings window shows the detected display rate.
+    /// next output. The Settings tab shows the detected display rate.
     pub(crate) fn update_output_rate(&mut self) {
         let hz = self.display_hz();
         let fps = u32::from(self.settings.max_fps.effective(hz));

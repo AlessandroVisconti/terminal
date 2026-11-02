@@ -520,7 +520,7 @@ mod tests {
         let _ = app.update(Message::TitleBar(w, BarAction::Drag));
         assert!(!app.move_watch.watching());
 
-        // From the Settings window: "System", then "fbterm" tries drawn chrome again.
+        // From the Settings tab: "System", then "fbterm" tries drawn chrome again.
         let _ = app.update(Message::Settings(SettingsMsg::Open));
         let _ = app.update(Message::Settings(SettingsMsg::TitleBar(
             WindowDecorations::System,

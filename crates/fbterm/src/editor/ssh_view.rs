@@ -20,30 +20,35 @@ pub(super) fn segment<'a>(
     selected: bool,
     on_press: Option<Message>,
 ) -> button::Button<'a, Message> {
-    button(text(caption).font(UI_FONT).size(12.5).wrapping(text::Wrapping::None))
-        .on_press_maybe(on_press)
-        .padding(Padding::from([6.0, 14.0]))
-        .style(move |_, status| {
-            let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-            button::Style {
-                background: if selected {
-                    Some(t.raised.into())
+    button(
+        text(caption)
+            .font(UI_FONT)
+            .size(12.5)
+            .wrapping(text::Wrapping::None),
+    )
+    .on_press_maybe(on_press)
+    .padding(Padding::from([6.0, 14.0]))
+    .style(move |_, status| {
+        let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+        button::Style {
+            background: if selected {
+                Some(t.raised.into())
+            } else {
+                hovered.then(|| t.hover.into())
+            },
+            text_color: if selected { t.text } else { t.text_secondary },
+            border: Border {
+                color: if selected {
+                    t.border
                 } else {
-                    hovered.then(|| t.hover.into())
+                    Color::TRANSPARENT
                 },
-                text_color: if selected { t.text } else { t.text_secondary },
-                border: Border {
-                    color: if selected {
-                        t.border
-                    } else {
-                        Color::TRANSPARENT
-                    },
-                    width: 1.0,
-                    radius: 5.0.into(),
-                },
-                ..button::Style::default()
-            }
-        })
+                width: 1.0,
+                radius: 5.0.into(),
+            },
+            ..button::Style::default()
+        }
+    })
 }
 
 /// A segmented control around `choices` (a row of [`segment`]s).

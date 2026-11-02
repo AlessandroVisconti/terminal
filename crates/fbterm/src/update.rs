@@ -211,7 +211,7 @@ impl App {
         }
     }
 
-    /// Keep the Settings window's copy of [`App::update_available`] in step (after every
+    /// Keep the Settings tab's copy of [`App::update_available`] in step (after every
     /// update).
     pub(crate) fn sync_update_state(&mut self) {
         if let Some((_, state)) = &mut self.settings_win

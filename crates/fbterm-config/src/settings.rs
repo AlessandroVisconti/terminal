@@ -166,7 +166,7 @@ pub struct Settings {
     /// file), which counts as off; the app asks once at launch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check_updates: Option<bool>,
-    /// Where saved secrets live. Changed through the Settings window, which moves them; a
+    /// Where saved secrets live. Changed through the Settings tab, which moves them; a
     /// hand edit applies on the next launch and moves nothing.
     pub secret_storage: SecretStorage,
     /// Keyboard shortcuts changed from their defaults (the `[keys]` table).
@@ -203,7 +203,7 @@ pub const OPACITY_RANGE: (f32, f32) = (0.05, 1.0);
 pub const TUNNEL_RETRIES_RANGE: (u32, u32) = (0, 100);
 /// Allowed range of `scrollback_lines`.
 pub const SCROLLBACK_RANGE: (usize, usize) = (0, 1_000_000);
-/// Above this many lines the Settings window notes that resizing can pause while history
+/// Above this many lines the Settings tab notes that resizing can pause while history
 /// rewraps. Measured (feathercritty `benches/RESULTS.md`): a 100,000-line rewrap takes 3 to
 /// 33 ms (one first full-width pass 57 ms); the next measured size, 1,000,000, takes about
 /// 0.3 s. The owner chose to warn above 100,000.
@@ -385,7 +385,7 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 #font_size = 13.0
 
 # Lines of history kept per tab, from 0 to 1000000. Applies to open tabs at once: lowering it
-# drops their oldest lines (the Settings window asks first). Above 100000, resizing a window
+# drops their oldest lines (the Settings tab asks first). Above 100000, resizing a window
 # can pause briefly while history rewraps.
 #scrollback_lines = 10000
 
@@ -423,11 +423,11 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 
 # Where saved passwords and key passphrases live: "auto" (the system keychain where it
 # works, else the encrypted vault), "keychain" or "vault" (an encrypted file opened with a
-# main password). Change it in the Settings window, which moves the saved secrets across.
+# main password). Change it in the Settings tab, which moves the saved secrets across.
 #secret_storage = "auto"
 
 # Keyboard shortcuts changed from their defaults, by action. The Keyboard section of the
-# Settings window lists every action with its chord and changes them for you.
+# Settings tab lists every action with its chord and changes them for you.
 # A chord is modifiers and a key joined by "+": ctrl, alt, shift and cmd (written super
 # outside macOS), then a key such as t, 1, ",", f5, up, pageup, space or plus.
 # "none" leaves an action without a chord. For example:

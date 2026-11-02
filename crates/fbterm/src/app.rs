@@ -209,12 +209,12 @@ pub enum Message {
 }
 
 /// Where a settings change came from. The scrollback notice is for edits made in
-/// `settings.toml` only; a change confirmed in the Settings window already told the user.
+/// `settings.toml` only; a change confirmed in the Settings tab already told the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsSource {
     /// `settings.toml` was edited on disk and reloaded.
     File,
-    /// The Settings window applied it (for a lowered scrollback: after the user confirmed).
+    /// The Settings tab applied it (for a lowered scrollback: after the user confirmed).
     Window,
 }
 
@@ -313,7 +313,7 @@ pub struct App {
     pub(crate) hover_generation: u64,
     /// The find-in-all-tabs box, when open (in one window at a time).
     pub find_box: Option<FindAll>,
-    /// The profile editor window, when open.
+    /// The profile editor tab, when open.
     pub editor: Option<(window::Id, EditorState)>,
     /// Numbers the editor's saves, so the result of one for a replaced editor is dropped.
     pub(crate) editor_seq: u64,
@@ -322,7 +322,7 @@ pub struct App {
     pub(crate) editor_job: Option<crate::editor::SecretJob>,
     /// Quit waits for `editor_job` to end before the process exits.
     pub(crate) exit_waiting: bool,
-    /// The Settings window, when open.
+    /// The Settings tab, when open.
     pub settings_win: Option<(window::Id, SettingsState)>,
     /// The Color schemes window, when open.
     pub schemes_win: Option<(window::Id, SchemesState)>,
@@ -373,7 +373,7 @@ pub struct App {
     pub(crate) watch_moves: bool,
     pub(crate) move_watch: crate::move_watch::MoveWatch,
     /// The desktop refused a move or resize: the system title bar for the rest of the session
-    /// (until `window_decorations` is set to `"fbterm"` again from the Settings window).
+    /// (until `window_decorations` is set to `"fbterm"` again from the Settings tab).
     pub(crate) chrome_fell_back: bool,
     /// The fallback notice was shown (once per session).
     pub(crate) chrome_notice_shown: bool,
@@ -938,7 +938,7 @@ impl App {
         crate::key_log::active(crate::key_log::enabled(), self.recording_window()).is_some()
     }
 
-    /// The Settings window while it records a shortcut.
+    /// The Settings tab while it records a shortcut.
     pub(crate) fn recording_window(&self) -> Option<window::Id> {
         self.settings_win
             .as_ref()
@@ -1117,7 +1117,7 @@ impl App {
             }
             Message::WindowUnfocused(id) => {
                 self.close_context_menu(id);
-                // Recording a chord ends when the Settings window loses focus: the keys go
+                // Recording a chord ends when the Settings tab loses focus: the keys go
                 // elsewhere then.
                 if let Some((sid, state)) = &mut self.settings_win
                     && *sid == id

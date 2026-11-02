@@ -5,7 +5,7 @@
 //!   in `<dir>` instead of the platform config directory.
 //! - `FBTERM_SECRETS=memory`: keep secrets in memory only; the OS keychain is never touched.
 //!
-//! - `FBTERM_LOG_KEYS=1` (works in release builds, see `key_log.rs`): while the Settings window
+//! - `FBTERM_LOG_KEYS=1` (works in release builds, see `key_log.rs`): while the Settings tab
 //!   records a shortcut, log every keyboard event the app receives to stderr.
 //!
 //! Measurement mode (works in release builds, see `perf.rs`): `--perf-tabs <N> | --perf-panes <N>

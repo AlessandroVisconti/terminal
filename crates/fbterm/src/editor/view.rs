@@ -1,4 +1,4 @@
-//! The profile editor window: profiles by group on the left, the selected one's form on the right.
+//! The profile editor tab: profiles by group on the left, the selected one's form on the right.
 
 use fbterm_config::{AccentStyle, Rgb};
 use iced::widget::{

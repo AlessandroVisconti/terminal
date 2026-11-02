@@ -294,7 +294,7 @@ Done 2026-10-27 (milestone 5); see `2026-10-27-export-vault-design.md`.
 - *(Owner's decision, 2026-10-24)* **Configurable redraw rate.** `settings.toml` `max_fps`
   caps output-driven redraws: a whole number from 30 to 240 (out of range is clamped and
   reported) or `"display"` to follow the screen's refresh rate; default 60. Typing and its echo
-  always redraw at once. The Settings window offers 30, 60, 120 and "Match display (N Hz)" (plus
+  always redraw at once. The Settings tab offers 30, 60, 120 and "Match display (N Hz)" (plus
   a custom number from the file) and warns that rates above 60 use more CPU while output
   streams. Builder's notes: pacing is shared by all windows, so `"display"` follows the fastest
   screen a terminal window is on; on macOS that is `NSScreen.maximumFramesPerSecond`, read when
@@ -316,9 +316,9 @@ derived from the same table.
 ### 5.11.1 Rebinding shortcuts *(owner's decisions, 2026-10-24; done)*
 
 - **Gear button** in the tab bar after "+" and the profiles button (Lucide `settings`), tooltip
-  "Settings (chord)"; it opens or focuses the Settings window like the shortcut and never drags
+  "Settings (chord)"; it opens or selects the Settings tab like the shortcut and never drags
   or zooms the window.
-- **Keyboard section** in the Settings window, first of all to see every shortcut in one place,
+- **Keyboard section** in the Settings tab, first of all to see every shortcut in one place,
   then to rebind ones that clash with programs (tmux, vim, emacs): every action with its chord,
   grouped Tabs / Windows / Search / App; actions without a default (open settings file, reveal
   config folder, export tab) show "Not set" and can be bound. Click a chord to record; while recording no key
@@ -350,10 +350,10 @@ derived from the same table.
   (AZERTY `&` is never `7`). Reserved, refused when recording and on load: terminal copy/paste,
   the scrollback keys, the editor's Save and, on macOS, the app menu's Cmd+Q / Cmd+H /
   Cmd+Option+H; Quit on macOS is fixed at Cmd+Q. Entries that conflict fall back to their
-  default one by one until no chord is shared. The Settings window writes only the actions it
+  default one by one until no chord is shared. The Settings tab writes only the actions it
   changes, diffed against the entries as written (so one load dropped never comes back), and
   keeps the comments of removed lines; an unreadable entry stays until the user fixes it.
-  Recording stops when the Settings window loses focus or the chords change on disk, and Take
+  Recording stops when the Settings tab loses focus, stops being the active tab or the chords change on disk, and Take
   over checks again that the other action still has the chord. The clear button shows on
   hover.
 
@@ -536,7 +536,7 @@ core. Follow-up work is listed in section 6.
 *Measured 2026-10-24 (same machine):* idle footprint with one tab 60 MB after the icon font
 (76 MB before); output redraws capped at 60 per second; numbers in section 6. The cap is the
 `max_fps` setting (owner decision 2026-10-24: configurable, default 60, a `"display"` option, a
-CPU warning above 60 in the Settings window). With one visible 100-lines/s stream on a 120 Hz
+CPU warning above 60 in the Settings tab). With one visible 100-lines/s stream on a 120 Hz
 display, `"display"` drew 83-84 frames per second (every chunk) at 10-13% of a core against 54
 frames per second and 8-9% at 60 (`dev/perf/README.md`).
 
