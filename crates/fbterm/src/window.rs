@@ -364,7 +364,8 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
 fn page_min_width(page: Option<Page>) -> f32 {
     match page {
         Some(Page::Settings) => 520.0,
-        _ => 640.0,
+        // Sidebar 260 plus the footer's buttons and an "Unsaved changes" note.
+        _ => 770.0,
     }
 }
 

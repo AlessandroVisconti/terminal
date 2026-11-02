@@ -188,7 +188,7 @@ pub fn text_button<'a>(
     on_press: Option<Message>,
     style: fn(&Tokens, button::Status) -> button::Style,
 ) -> button::Button<'a, Message> {
-    button(text(caption).font(UI_FONT).size(13))
+    button(text(caption).font(UI_FONT).size(13).wrapping(text::Wrapping::None))
         .on_press_maybe(on_press)
         .padding(Padding::from([6.0, 14.0]))
         .style(move |_, status| style(t, status))

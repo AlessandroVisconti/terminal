@@ -20,7 +20,7 @@ pub(super) fn segment<'a>(
     selected: bool,
     on_press: Option<Message>,
 ) -> button::Button<'a, Message> {
-    button(text(caption).font(UI_FONT).size(12.5))
+    button(text(caption).font(UI_FONT).size(12.5).wrapping(text::Wrapping::None))
         .on_press_maybe(on_press)
         .padding(Padding::from([6.0, 14.0]))
         .style(move |_, status| {
