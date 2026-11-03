@@ -1205,7 +1205,7 @@ fn query_is_kept_while_closed_and_dropped_with_the_window() {
 }
 
 #[test]
-fn tunnels_action_from_settings_opens_in_last_terminal_window() {
+fn tunnels_action_from_schemes_window_opens_in_last_terminal_window() {
     use crate::keys::Action;
     let (mut w, a, b) = two_windows();
     // Opened from B: what opening the panel there costs, raising nothing.

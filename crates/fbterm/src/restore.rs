@@ -223,13 +223,14 @@ pub fn snapshot(
         windows: windows
             .iter()
             .filter_map(|(id, w)| {
-                // Page tabs are not saved; the selection moves to the tab left in their place.
+                // Page tabs are not saved; the selection moves as `WindowState::close` would
+                // move it: the shell tab that takes the active tab's place, else the last one.
                 let tabs: Vec<_> = w.tabs.iter().filter(|t| t.page.is_none()).collect();
-                let active = w.tabs[..=w.active.min(w.tabs.len().checked_sub(1)?)]
+                let active = w.tabs[..w.active.min(w.tabs.len())]
                     .iter()
                     .filter(|t| t.page.is_none())
                     .count()
-                    .saturating_sub(1);
+                    .min(tabs.len().saturating_sub(1));
                 (!tabs.is_empty()).then(|| SavedWindow {
                     tabs: tabs.into_iter().map(save_tab).collect(),
                     active,
@@ -456,5 +457,43 @@ mod tests {
         assert_eq!(state.windows[0].size, (1200.0, 700.0));
         assert_eq!(state.windows[1].size, DEFAULT_SIZE);
         assert_eq!(state.recency, BTreeMap::from([(a, 7)]));
+    }
+
+    #[test]
+    fn snapshot_active_matches_closing_the_page_tab() {
+        use crate::tabs::Page;
+        let shell = || Tab::single(Pane::new(ProfileId::new(), "s", None));
+        let page = || Tab::page(Page::Settings);
+        // Layouts of shell (s) and page (p) tabs, the active index, and what closing it selects.
+        let cases: [(&[char], usize); 6] = [
+            (&['p', 's', 's'], 0),
+            (&['s', 'p', 's'], 1),
+            (&['s', 's', 'p'], 2),
+            (&['s', 'p', 's'], 0),
+            (&['s', 'p', 's'], 2),
+            (&['p'], 0),
+        ];
+        for (layout, active) in cases {
+            let mut w = WindowState::new();
+            for c in layout {
+                w.push(if *c == 's' { shell() } else { page() });
+            }
+            w.active = active;
+            let mut closed = WindowState::new();
+            for c in layout {
+                closed.push(if *c == 's' { shell() } else { page() });
+            }
+            closed.active = active;
+            let id = window::Id::unique();
+            let saved = snapshot(&BTreeMap::from([(id, w)]), &HashMap::new(), &Recency::new());
+            // Close every page tab the way the user would; the shell tabs left must agree.
+            while let Some(i) = closed.tabs.iter().position(|t| t.page.is_some()) {
+                closed.close(i);
+            }
+            match saved.windows.first() {
+                Some(sw) => assert_eq!(sw.active, closed.active, "{layout:?} active {active}"),
+                None => assert!(closed.tabs.is_empty(), "page-only window is not saved"),
+            }
+        }
     }
 }
