@@ -709,6 +709,7 @@ mod tests {
 
     fn keyless(name: &str) -> Profile {
         Profile {
+            icon: None,
             id: ProfileId::new(),
             name: name.into(),
             group: None,
