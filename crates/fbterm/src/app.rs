@@ -35,7 +35,7 @@ use crate::restore;
 use crate::schemes_window::{SchemesMsg, SchemesState};
 use crate::sessions::{EventReceiver, session_stream, write_notice};
 use crate::settings_window::{SettingsMsg, SettingsState};
-use crate::tabs::{Pane, TabState, WindowState};
+use crate::tabs::{Page, Pane, TabState, WindowState};
 use crate::theme;
 use crate::tunnels::{Tunnels, tunnel_stream};
 use crate::tunnels_panel::{TunnelsMsg, TunnelsPanels};
@@ -209,12 +209,12 @@ pub enum Message {
 }
 
 /// Where a settings change came from. The scrollback notice is for edits made in
-/// `settings.toml` only; a change confirmed in the Settings window already told the user.
+/// `settings.toml` only; a change confirmed in the Settings tab already told the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsSource {
     /// `settings.toml` was edited on disk and reloaded.
     File,
-    /// The Settings window applied it (for a lowered scrollback: after the user confirmed).
+    /// The Settings tab applied it (for a lowered scrollback: after the user confirmed).
     Window,
 }
 
@@ -313,7 +313,7 @@ pub struct App {
     pub(crate) hover_generation: u64,
     /// The find-in-all-tabs box, when open (in one window at a time).
     pub find_box: Option<FindAll>,
-    /// The profile editor window, when open.
+    /// The profile editor tab, when open.
     pub editor: Option<(window::Id, EditorState)>,
     /// Numbers the editor's saves, so the result of one for a replaced editor is dropped.
     pub(crate) editor_seq: u64,
@@ -322,7 +322,7 @@ pub struct App {
     pub(crate) editor_job: Option<crate::editor::SecretJob>,
     /// Quit waits for `editor_job` to end before the process exits.
     pub(crate) exit_waiting: bool,
-    /// The Settings window, when open.
+    /// The Settings tab, when open.
     pub settings_win: Option<(window::Id, SettingsState)>,
     /// The Color schemes window, when open.
     pub schemes_win: Option<(window::Id, SchemesState)>,
@@ -373,7 +373,7 @@ pub struct App {
     pub(crate) watch_moves: bool,
     pub(crate) move_watch: crate::move_watch::MoveWatch,
     /// The desktop refused a move or resize: the system title bar for the rest of the session
-    /// (until `window_decorations` is set to `"fbterm"` again from the Settings window).
+    /// (until `window_decorations` is set to `"fbterm"` again from the Settings tab).
     pub(crate) chrome_fell_back: bool,
     /// The fallback notice was shown (once per session).
     pub(crate) chrome_notice_shown: bool,
@@ -807,12 +807,6 @@ impl App {
     }
 
     pub fn title(&self, id: window::Id) -> String {
-        if self.editor_window() == Some(id) {
-            return "Profiles · fbterm".into();
-        }
-        if self.settings_window() == Some(id) {
-            return "Settings · fbterm".into();
-        }
         if self.schemes_window() == Some(id) {
             return "Color schemes · fbterm".into();
         }
@@ -944,12 +938,32 @@ impl App {
         crate::key_log::active(crate::key_log::enabled(), self.recording_window()).is_some()
     }
 
-    /// The Settings window while it records a shortcut.
+    /// The Settings tab while it records a shortcut.
     pub(crate) fn recording_window(&self) -> Option<window::Id> {
         self.settings_win
             .as_ref()
             .filter(|(_, state)| state.recording.is_some())
             .map(|(id, _)| *id)
+    }
+
+    /// A recording ends as soon as the Settings tab stops being active
+    /// (tab select, close, new tab, drag): the keys go to a shell then, and must neither be
+    /// logged as recording text nor be taken as the chord on return.
+    fn sync_recording(&mut self) {
+        let Some((wid, state)) = &mut self.settings_win else {
+            return;
+        };
+        if state.recording.is_none() {
+            return;
+        }
+        let shown = self
+            .windows
+            .get(wid)
+            .and_then(WindowState::active_tab)
+            .is_some_and(|t| t.page == Some(crate::tabs::Page::Settings));
+        if !shown {
+            state.cancel_recording();
+        }
     }
 
     fn first_window_ready(&self) -> bool {
@@ -976,6 +990,7 @@ impl App {
         self.sync_quit_key();
         self.ask_update_question();
         self.sync_update_state();
+        self.sync_recording();
         crate::key_log::set_recording(self.recording_window());
         let unfocus: Vec<Task<Message>> = [self.sync_panel_focus(), self.sync_tunnels_focus()]
             .into_iter()
@@ -1102,7 +1117,7 @@ impl App {
             }
             Message::WindowUnfocused(id) => {
                 self.close_context_menu(id);
-                // Recording a chord ends when the Settings window loses focus: the keys go
+                // Recording a chord ends when the Settings tab loses focus: the keys go
                 // elsewhere then.
                 if let Some((sid, state)) = &mut self.settings_win
                     && *sid == id
@@ -1144,13 +1159,14 @@ impl App {
             Message::WindowClosed(id) => {
                 self.close_context_menu(id);
                 self.os_scales.remove(&id);
-                if self.editor_window() == Some(id) {
-                    self.editor = None;
-                }
-                if self.settings_window() == Some(id) {
-                    // Closed by the OS button or Quit: what is still waiting is written.
-                    self.write_pending_settings();
-                    self.settings_win = None;
+                // Closed by the OS button or Quit: same teardown as closing the tab.
+                let pages: Vec<Page> = self
+                    .windows
+                    .get(&id)
+                    .map(|w| w.tabs.iter().filter_map(|t| t.page).collect())
+                    .unwrap_or_default();
+                for page in pages {
+                    self.page_closed(page);
                 }
                 if self.schemes_window() == Some(id) {
                     self.schemes_win = None;

@@ -217,10 +217,15 @@ pub fn text_button<'a>(
     on_press: Option<Message>,
     style: fn(&Tokens, button::Status) -> button::Style,
 ) -> button::Button<'a, Message> {
-    button(text(caption).font(UI_FONT).size(13))
-        .on_press_maybe(on_press)
-        .padding(Padding::from([6.0, 14.0]))
-        .style(move |_, status| style(t, status))
+    button(
+        text(caption)
+            .font(UI_FONT)
+            .size(13)
+            .wrapping(text::Wrapping::None),
+    )
+    .on_press_maybe(on_press)
+    .padding(Padding::from([6.0, 14.0]))
+    .style(move |_, status| style(t, status))
 }
 
 /// A card surface (radius 8).
@@ -298,22 +303,54 @@ pub fn edge_scrollbar_margin(drawn: bool, margin: f32) -> f32 {
     }
 }
 
-/// A vertical scrollbar `width` wide (its scroller `scroller_width`) with `margin` around it,
-/// for a scrollable along a window's right edge: clear of the resize band where the chrome is
-/// `drawn` (see [`edge_scrollbar_margin`]).
-pub fn edge_scrollbar(
-    drawn: bool,
-    width: f32,
-    scroller_width: f32,
-    margin: f32,
-) -> scrollable::Scrollbar {
+/// The width of every scrollbar in the app.
+pub const SCROLLBAR_WIDTH: f32 = 6.0;
+
+/// The one scrollbar of the app, vertical or horizontal, for a scrollable along a window's edge:
+/// clear of the resize band where the chrome is `drawn` (see [`edge_scrollbar_margin`]).
+pub fn edge_scrollbar(drawn: bool) -> scrollable::Scrollbar {
     scrollable::Scrollbar::new()
-        .width(width)
-        .scroller_width(scroller_width)
-        .margin(edge_scrollbar_margin(drawn, margin))
+        .width(SCROLLBAR_WIDTH)
+        .scroller_width(SCROLLBAR_WIDTH)
+        .margin(edge_scrollbar_margin(drawn, 0.0))
 }
 
-/// The bar of the editor and Settings windows where the OS title bar is gone: room for the
+/// The right padding that keeps a list's rows clear of the scrollbar floating over it: its
+/// width, its margin where `drawn`, and a 4 px gap. Lists use at least their usual padding.
+pub fn scrollbar_clearance(drawn: bool) -> f32 {
+    SCROLLBAR_WIDTH + edge_scrollbar_margin(drawn, 0.0) + 4.0
+}
+
+/// The padding of a sidebar's list: 8 px, and on the right clear of the scrollbar.
+pub fn sidebar_list_padding(drawn: bool) -> Padding {
+    Padding {
+        top: 0.0,
+        right: 8.0_f32.max(scrollbar_clearance(drawn)),
+        bottom: 0.0,
+        left: 8.0,
+    }
+}
+
+/// The one scrollbar look of the app: no rail, a rounded scroller in the border color.
+pub fn scroll_style(
+    t: &Tokens,
+    theme: &iced::Theme,
+    status: scrollable::Status,
+) -> scrollable::Style {
+    let mut s = scrollable::default(theme, status);
+    for rail in [&mut s.vertical_rail, &mut s.horizontal_rail] {
+        rail.background = None;
+        rail.border = Border::default();
+        rail.scroller.background = Background::Color(t.border);
+        rail.scroller.border = Border {
+            radius: (SCROLLBAR_WIDTH / 2.0).into(),
+            ..Border::default()
+        };
+    }
+    s
+}
+
+/// The bar of the editor and Settings tabs where the OS title bar is gone: room for the
 /// window buttons (or the drawn controls) and to move the window. It stays blank otherwise;
 /// the window's content titles it.
 pub fn window_header<'a>(

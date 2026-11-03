@@ -1,4 +1,4 @@
-//! The app side of settings: the Settings window, applying settings live, and reloading
+//! The app side of settings: the Settings tab, applying settings live, and reloading
 //! `settings.toml` when it changes on disk.
 
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 use super::{SettingsMsg, SettingsState, WRITE_DEBOUNCE, Write, fonts, thousands};
 use crate::app::{App, Message, SettingsSource};
 use crate::chrome::Chrome;
-use crate::tabs::{Pane, Tab};
+use crate::tabs::{Page, Pane, Tab};
 use crate::theme;
 
 /// `name` as a `'static` str: iced wants font names that live for the whole process. Each
@@ -85,13 +85,7 @@ impl App {
     pub(crate) fn settings_msg(&mut self, msg: SettingsMsg) -> Task<Message> {
         match msg {
             SettingsMsg::Open => self.open_settings(),
-            SettingsMsg::Close => {
-                self.write_pending_settings();
-                match self.settings_window() {
-                    Some(id) => self.close_window(id),
-                    None => Task::none(),
-                }
-            }
+            SettingsMsg::Close => self.close_page(Page::Settings),
             SettingsMsg::OpenFile => {
                 crate::config_files::open_settings_file(&self.paths);
                 Task::none()
@@ -169,26 +163,21 @@ impl App {
             .unwrap_or(0)
     }
 
-    /// Open the Settings window, or bring it to the front.
+    /// Open the Settings tab, or select it where it is open.
     pub(crate) fn open_settings(&mut self) -> Task<Message> {
-        if let Some(id) = self.settings_window() {
-            return window::gain_focus(id);
+        if self.settings_win.is_some() {
+            return self.show_page(Page::Settings).1;
         }
-        let (id, open) = crate::chrome::open_window(window::Settings {
-            size: iced::Size::new(640.0, 720.0),
-            min_size: Some(iced::Size::new(520.0, 420.0)),
-            exit_on_close_request: false,
-            ..window::Settings::default()
-        });
+        let (id, open) = self.show_page(Page::Settings);
         let read_only = Settings::load(&self.paths.settings()).err();
         let mut state = SettingsState::new(&self.settings, fonts::installed_monospace(), read_only);
         state.display_hz = self.display_hz();
         state.max_open_history = self.max_open_history();
         self.settings_win = Some((id, state));
-        open.discard()
+        open
     }
 
-    /// Write the Settings window's unwritten changes to `settings.toml`, each key in place.
+    /// Write the Settings tab's unwritten changes to `settings.toml`, each key in place.
     /// Our own write is remembered so the file watcher does not reload it. If the file was
     /// edited on disk since we last saw it (and the watcher has not reported it yet), that edit
     /// is not ours to hide: after writing, the file is reloaded as for any edit on disk.
@@ -251,7 +240,7 @@ impl App {
     }
 
     /// `settings.toml` changed on disk: apply it, or keep the previous settings and say why.
-    /// An open Settings window shows the new values (or turns read-only while it does not load).
+    /// An open Settings tab shows the new values (or turns read-only while it does not load).
     pub(crate) fn settings_file_changed(&mut self) -> Task<Message> {
         let path = self.paths.settings();
         let text = std::fs::read_to_string(&path).ok();
@@ -305,7 +294,7 @@ impl App {
     /// read each frame). The scrollback length applies to every open terminal's normal screen
     /// and to new ones: raising it keeps everything, lowering it drops the oldest lines at once
     /// and then releases the freed memory (a lowered value read from `settings.toml` also sets
-    /// the settings notice; one the Settings window applied after the user confirmed does not,
+    /// the settings notice; one the Settings tab applied after the user confirmed does not,
     /// see [`SettingsSource`]).
     /// `kitty_keyboard` applies to every open terminal at once: turning it off drops the
     /// protocol flags programs have set, turning it on affects their requests from then on.
@@ -324,7 +313,7 @@ impl App {
         mut new: Settings,
         source: SettingsSource,
     ) -> Task<Message> {
-        // Saved secrets move only through the Settings window (which writes the key itself):
+        // Saved secrets move only through the Settings tab (which writes the key itself):
         // a hand edit of `secret_storage` applies on the next launch.
         new.secret_storage = self.settings.secret_storage;
         if new == self.settings {
@@ -448,7 +437,7 @@ impl App {
     }
 
     /// Set the output redraw rate from `max_fps` and the displays; pacing picks it up with the
-    /// next output. The Settings window shows the detected display rate.
+    /// next output. The Settings tab shows the detected display rate.
     pub(crate) fn update_output_rate(&mut self) {
         let hz = self.display_hz();
         let fps = u32::from(self.settings.max_fps.effective(hz));

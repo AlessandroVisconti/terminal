@@ -44,8 +44,6 @@ const SIZE_WIDTH: f32 = 52.0;
 const MODIFIED_WIDTH: f32 = 82.0;
 /// The modified column shows only when the list is at least this wide.
 const MODIFIED_FROM: f32 = 250.0;
-/// Width of the list's and the queue's scrollbars.
-pub(super) const SCROLLBAR_WIDTH: f32 = 6.0;
 /// Where a row's content starts and ends inside the list (the selection is inset by half).
 const ROW_PAD: f32 = 6.0;
 
@@ -449,11 +447,8 @@ fn transfers<'a>(
     let list = scrollable(list)
         .direction(scrollable::Direction::Vertical(crate::ui::edge_scrollbar(
             drawn,
-            SCROLLBAR_WIDTH,
-            4.0,
-            1.0,
         )))
-        .style(move |theme, status| scroll_style(t, theme, status))
+        .style(move |theme, status| crate::ui::scroll_style(t, theme, status))
         .height(Length::Shrink);
     column![rule, container(list).max_height(TRANSFERS_MAX_HEIGHT)]
         .width(Length::Fill)
@@ -668,11 +663,8 @@ fn listing<'a>(
         })
         .direction(scrollable::Direction::Vertical(crate::ui::edge_scrollbar(
             drawn,
-            SCROLLBAR_WIDTH,
-            4.0,
-            1.0,
         )))
-        .style(move |theme, status| scroll_style(t, theme, status))
+        .style(move |theme, status| crate::ui::scroll_style(t, theme, status))
         .height(Length::Fill);
         column![headers, list].into()
     })
@@ -856,26 +848,6 @@ fn mono<'a>(s: impl text::IntoFragment<'a>, size: f32, color: iced::Color) -> El
         .color(color)
         .wrapping(text::Wrapping::None)
         .into()
-}
-
-/// A thin scroller that shows only on hover, over the panel's surface.
-fn scroll_style(t: &Tokens, theme: &iced::Theme, status: scrollable::Status) -> scrollable::Style {
-    let mut style = scrollable::default(theme, status);
-    let hovered = !matches!(status, scrollable::Status::Active { .. });
-    let rail = || scrollable::Rail {
-        background: None,
-        border: Border::default(),
-        scroller: scrollable::Scroller {
-            background: if hovered { t.border } else { t.raised }.into(),
-            border: Border {
-                radius: 2.0.into(),
-                ..Border::default()
-            },
-        },
-    };
-    style.vertical_rail = rail();
-    style.horizontal_rail = rail();
-    style
 }
 
 #[cfg(test)]

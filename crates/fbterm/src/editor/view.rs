@@ -1,4 +1,4 @@
-//! The profile editor window: profiles by group on the left, the selected one's form on the right.
+//! The profile editor tab: profiles by group on the left, the selected one's form on the right.
 
 use fbterm_config::{AccentStyle, Rgb};
 use iced::widget::{
@@ -40,13 +40,11 @@ pub fn view<'a>(
                 .padding(Padding::from([20.0, 28.0]))
                 .max_width(FORM_WIDTH + 56.0),
         )
-        // The default scrollbar, kept clear of the window's resize edge.
+        // The app scrollbar, kept clear of the window's resize edge.
         .direction(scrollable::Direction::Vertical(ui::edge_scrollbar(
             crate::chrome::Chrome::current().draws_controls(),
-            10.0,
-            10.0,
-            0.0,
         )))
+        .style(move |theme, status| ui::scroll_style(t, theme, status))
         .height(Length::Fill)
         .into(),
         None => container(
@@ -198,7 +196,14 @@ fn sidebar<'a>(
             .spacing(6)
             .align_y(Alignment::Center)
             .padding(Padding::from([12.0, 12.0])),
-            scrollable(container(list).padding(Padding::from([0.0, 8.0]))).height(Length::Fill),
+            scrollable(container(list).padding(ui::sidebar_list_padding(
+                crate::chrome::Chrome::current().draws_controls(),
+            )))
+            .direction(scrollable::Direction::Vertical(ui::edge_scrollbar(
+                crate::chrome::Chrome::current().draws_controls()
+            )))
+            .style(move |theme, status| ui::scroll_style(t, theme, status))
+            .height(Length::Fill),
             row![
                 transfer("Export", ui::ICON_UPLOAD, EditorMsg::Export),
                 transfer("Import", ui::ICON_DOWNLOAD, EditorMsg::Import),

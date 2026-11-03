@@ -1,4 +1,4 @@
-//! The Settings window: Appearance, Terminal, Tunnels, Saved secrets, Updates and Keyboard
+//! The Settings tab: Appearance, Terminal, Tunnels, Saved secrets, Updates and Keyboard
 //! cards of labelled controls, and a footer with the settings file actions.
 
 use fbterm_config::keys::{Action, ActionGroup, Bindings, FixedShortcut, fixed_shortcuts, risk};
@@ -87,23 +87,11 @@ pub fn view<'a>(
             .center_x(Length::Fill),
     )
     .id(state.page.clone())
+    // The app scrollbar, kept clear of the window's resize edge.
     .direction(scrollable::Direction::Vertical(crate::ui::edge_scrollbar(
         crate::chrome::Chrome::current().draws_controls(),
-        6.0,
-        6.0,
-        3.0,
     )))
-    .style(move |theme, status| {
-        let mut s = scrollable::default(theme, status);
-        s.vertical_rail.background = None;
-        s.vertical_rail.border = Border::default();
-        s.vertical_rail.scroller.background = Background::Color(t.border);
-        s.vertical_rail.scroller.border = Border {
-            radius: 3.0.into(),
-            ..Border::default()
-        };
-        s
-    })
+    .style(move |theme, status| crate::ui::scroll_style(t, theme, status))
     .height(Length::Fill);
     container(column![page, footer(t, state, notice)])
         .width(Length::Fill)
@@ -433,7 +421,7 @@ pub fn title_bar_shown(setting: WindowDecorations, fell_back: bool) -> WindowDec
     }
 }
 
-/// Whether the Settings window offers the `Title bar` choice: only where windows follow
+/// Whether the Settings tab offers the `Title bar` choice: only where windows follow
 /// Linux's conventions (the `window_decorations` setting is ignored elsewhere).
 pub fn shows_title_bar_row(look: Platform) -> bool {
     look == Platform::Linux

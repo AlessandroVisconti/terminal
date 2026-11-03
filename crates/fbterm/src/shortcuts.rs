@@ -59,11 +59,11 @@ pub(crate) enum Mode {
     /// A main password dialog (`crate::saved_secrets`): Escape cancels, Enter submits, no
     /// shortcut acts; other keys go to its fields.
     Vault,
-    /// The profile editor window: Cmd+W closes it, Cmd+S saves, Settings and Quit work; other
+    /// The profile editor tab: Cmd+W closes it, Cmd+S saves, Settings and Quit work; other
     /// shortcuts do nothing.
     Editor,
-    /// The Settings window: Cmd+W closes it, the profile editor and Quit work; other shortcuts
-    /// do nothing.
+    /// The Settings tab: Cmd+W closes it; the profile editor, Quit, tab navigation, New tab,
+    /// New window and the palette work; other shortcuts do nothing.
     Settings,
     /// The Color schemes window: Cmd+W closes it, Cmd+S saves, Settings, the profile editor and
     /// Quit work; other shortcuts do nothing.
@@ -83,7 +83,7 @@ pub(crate) enum Mode {
     /// schemes, Tunnels and Quit work, and so do the export and import actions (they switch
     /// its mode); other shortcuts do nothing (typing goes to its fields).
     Archive,
-    /// The Settings window recording a new chord: every key press goes to the recorder (plain
+    /// The Settings tab recording a new chord: every key press goes to the recorder (plain
     /// Escape cancels), none reaches a field or acts as a shortcut.
     Recording,
 }
@@ -221,6 +221,12 @@ fn press_message(
             }
             shortcut.map(|action| match action {
                 Action::CloseTab if !repeat => Some(Message::Editor(EditorMsg::Close)),
+                Action::NextTab | Action::PrevTab => Some(Message::Shortcut(w, action)),
+                Action::SelectTab(_) | Action::NewTab | Action::NewWindow | Action::Palette
+                    if !repeat =>
+                {
+                    Some(Message::Shortcut(w, action))
+                }
                 Action::Quit
                 | Action::DuplicateProfile
                 | Action::Settings
@@ -237,6 +243,12 @@ fn press_message(
         }
         Mode::Settings => shortcut.map(|action| match action {
             Action::CloseTab if !repeat => Some(Message::Settings(SettingsMsg::Close)),
+            Action::NextTab | Action::PrevTab => Some(Message::Shortcut(w, action)),
+            Action::SelectTab(_) | Action::NewTab | Action::NewWindow | Action::Palette
+                if !repeat =>
+            {
+                Some(Message::Shortcut(w, action))
+            }
             Action::Quit | Action::EditProfiles | Action::EditSchemes | Action::Tunnels
                 if !repeat =>
             {
@@ -1181,7 +1193,11 @@ mod tests {
             press(Mode::Settings, ",", true),
             Some(Some(Message::Shortcut(_, Action::EditProfiles)))
         ));
-        assert!(matches!(press(Mode::Settings, "t", false), Some(None)));
+        // Settings is a tab: tab shortcuts work there.
+        assert!(matches!(
+            press(Mode::Settings, "t", false),
+            Some(Some(Message::Shortcut(_, Action::NewTab)))
+        ));
         let (key, mods) = if cfg!(target_os = "macos") {
             (
                 keyboard::Key::Character(",".into()),
@@ -1334,7 +1350,7 @@ mod tests {
         assert!(key_message(&b, Mode::Normal, w, &key, mods, false, None).is_none());
         let (key, mods) = chord_keys("w", false);
         assert!(key_message(&b, Mode::Normal, w, &key, mods, false, None).is_none());
-        // The Settings window closes on Close tab's chord: unbound, it does nothing there.
+        // The Settings tab closes on Close tab's chord: unbound, it does nothing there.
         assert!(key_message(&b, Mode::Settings, w, &key, mods, false, None).is_none());
         // Find navigation acts in the bar only.
         let n = keyboard::Key::Character("n".into());

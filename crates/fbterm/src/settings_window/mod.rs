@@ -1,4 +1,4 @@
-//! The Settings window's state: one control per `settings.toml` option, as plain data so its
+//! The Settings tab's state: one control per `settings.toml` option, as plain data so its
 //! rules (ranges, typed numbers, when to write) are testable without a GUI. Changes apply at
 //! once; the file is written in place (see [`Settings::write_field`]), right away for a click
 //! and after a quiet period for a slider drag or typing. The window is drawn by [`view`] and
@@ -26,7 +26,7 @@ pub(crate) use glue::{intern, terminal_style};
 /// Quiet period after the last slider or typing change before the file is written.
 pub const WRITE_DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// What the Settings window asks for. `Open`, `Close`, `OpenFile`, `RevealFolder` and `Flush`
+/// What the Settings tab asks for. `Open`, `Close`, `OpenFile`, `RevealFolder` and `Flush`
 /// are the app's; the rest change a value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsMsg {

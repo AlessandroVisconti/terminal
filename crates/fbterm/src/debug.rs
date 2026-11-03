@@ -140,7 +140,7 @@ impl App {
         task
     }
 
-    /// `FBTERM_OPEN_SETTINGS=1` (debug aid): open the Settings window at startup.
+    /// `FBTERM_OPEN_SETTINGS=1` (debug aid): open the Settings tab at startup.
     pub(crate) fn open_debug_settings(&mut self) -> Task<Message> {
         let Some(value) = debug_env("FBTERM_OPEN_SETTINGS") else {
             return Task::none();

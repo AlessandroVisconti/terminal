@@ -314,8 +314,8 @@ fn the_action_from_a_terminal_window_duplicates_the_focused_panes_profile() {
     assert_eq!(state.selected, Some(copy), "the editor opens on the copy");
     assert_eq!(state.notice.as_deref(), Some(DUPLICATED));
 
-    // With unsaved changes in the open editor, the action from the terminal window is
-    // refused there (the editor is raised to say so) and nothing is written.
+    // With unsaved changes in the open editor, the action from the terminal tab is
+    // refused there (the Profiles tab is selected to say so) and nothing is written.
     editor(&mut app, EditorMsg::Host("edited.example.com".into()));
     let before = std::fs::read_to_string(app.paths.profiles()).unwrap();
     let _ = app.update(Message::Shortcut(wid, Action::DuplicateProfile));
@@ -326,6 +326,28 @@ fn the_action_from_a_terminal_window_duplicates_the_focused_panes_profile() {
     let ed = ed(&app);
     assert_eq!(ed.notice.as_deref(), Some(DIRTY));
     assert!(ed.dirty, "the edits are kept");
+}
+
+#[test]
+fn the_action_from_a_terminal_tab_ignores_a_background_profiles_tab() {
+    let a = ssh("a", AuthMethod::Agent);
+    let b = ssh("b", AuthMethod::Agent);
+    let mut app = app_with(&[a.clone(), b.clone()]);
+    let wid = window::Id::unique();
+    let mut w = WindowState::new();
+    w.push(Tab::single(Pane::new(a.id, "a", None)));
+    app.windows.insert(wid, w);
+    app.focused = Some(wid);
+    editor(&mut app, EditorMsg::Open);
+    editor(&mut app, EditorMsg::Select(b.id));
+    assert_eq!(app.editor_window(), Some(wid));
+    // The Profiles tab is open in `wid`, but the terminal tab is the active one.
+    app.windows.get_mut(&wid).unwrap().select(0);
+    let _ = app.update(Message::Shortcut(wid, Action::DuplicateProfile));
+    let store = on_disk(&app);
+    copy_of(&store, &a, "a copy");
+    let copies = names(&store).into_iter().filter(|n| n.ends_with(" copy"));
+    assert_eq!(copies.count(), 1, "only a was copied");
 }
 
 #[test]
