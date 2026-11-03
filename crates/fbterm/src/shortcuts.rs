@@ -62,8 +62,8 @@ pub(crate) enum Mode {
     /// The profile editor tab: Cmd+W closes it, Cmd+S saves, Settings and Quit work; other
     /// shortcuts do nothing.
     Editor,
-    /// The Settings tab: Cmd+W closes it, the profile editor and Quit work; other shortcuts
-    /// do nothing.
+    /// The Settings tab: Cmd+W closes it; the profile editor, Quit, tab navigation, New tab,
+    /// New window and the palette work; other shortcuts do nothing.
     Settings,
     /// The Color schemes window: Cmd+W closes it, Cmd+S saves, Settings, the profile editor and
     /// Quit work; other shortcuts do nothing.

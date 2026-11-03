@@ -87,13 +87,11 @@ pub fn view<'a>(
             .center_x(Length::Fill),
     )
     .id(state.page.clone())
-    // The default scrollbar, as the profile editor's, kept clear of the window's resize edge.
+    // The app scrollbar, kept clear of the window's resize edge.
     .direction(scrollable::Direction::Vertical(crate::ui::edge_scrollbar(
         crate::chrome::Chrome::current().draws_controls(),
-        10.0,
-        10.0,
-        0.0,
     )))
+    .style(move |theme, status| crate::ui::scroll_style(t, theme, status))
     .height(Length::Fill);
     container(column![page, footer(t, state, notice)])
         .width(Length::Fill)

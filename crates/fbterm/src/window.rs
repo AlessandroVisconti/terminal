@@ -369,7 +369,7 @@ fn page_min_width(page: Page) -> f32 {
     }
 }
 
-/// `page_view`, scrolling sideways below [`page_min_width`] with the default scrollbar, as the
+/// `page_view`, scrolling sideways below [`page_min_width`] with the app scrollbar, as the
 /// pages' own vertical one.
 fn page_view_min(app: &App, id: window::Id, page: Page) -> Element<'_, Message> {
     responsive(move |size| {
@@ -378,10 +378,13 @@ fn page_view_min(app: &App, id: window::Id, page: Page) -> Element<'_, Message> 
         if size.width >= min {
             return body;
         }
-        scrollable(container(body).width(min).height(size.height))
+        scrollable(container(body).width(min).height(Length::Fill))
             .direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::new().width(10).scroller_width(10),
+                // Embedded: the bar takes its own row under the page instead of floating over the footer.
+                crate::ui::edge_scrollbar(crate::chrome::Chrome::current().draws_controls())
+                    .spacing(0.0),
             ))
+            .style(move |theme, status| crate::ui::scroll_style(app.tokens, theme, status))
             .into()
     })
     .into()
@@ -2108,7 +2111,13 @@ fn notice_banner<'a>(
         .style(move |_, status| ghost(t, status));
     let banner = container(
         row![
-            scrollable(lines).height(Length::Shrink).width(Length::Fill),
+            scrollable(lines)
+                .direction(scrollable::Direction::Vertical(crate::ui::edge_scrollbar(
+                    false
+                ),))
+                .style(move |theme, status| crate::ui::scroll_style(t, theme, status))
+                .height(Length::Shrink)
+                .width(Length::Fill),
             dismiss
         ]
         .spacing(12)

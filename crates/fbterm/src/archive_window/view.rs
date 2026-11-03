@@ -4,7 +4,7 @@
 use fbterm_config::ProfileStore;
 use fbterm_secrets::archive::ArchiveKind;
 use iced::widget::{Space, button, checkbox, column, container, row, scrollable, text, text_input};
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
+use iced::{Alignment, Border, Color, Element, Length, Padding};
 
 use super::{
     ArchiveMode, ArchiveMsg, ArchiveState, Busy, CHECKING, INCLUDE_KEYS, INCLUDED_FOR_JUMPS,
@@ -62,21 +62,8 @@ pub fn view<'a>(
     )
     .direction(scrollable::Direction::Vertical(crate::ui::edge_scrollbar(
         crate::chrome::Chrome::current().draws_controls(),
-        6.0,
-        6.0,
-        3.0,
     )))
-    .style(move |theme, status| {
-        let mut s = scrollable::default(theme, status);
-        s.vertical_rail.background = None;
-        s.vertical_rail.border = Border::default();
-        s.vertical_rail.scroller.background = Background::Color(t.border);
-        s.vertical_rail.scroller.border = Border {
-            radius: 3.0.into(),
-            ..Border::default()
-        };
-        s
-    })
+    .style(move |theme, status| crate::ui::scroll_style(t, theme, status))
     .height(Length::Fill);
     container(column![page, footer(t, state, read_only)])
         .width(Length::Fill)

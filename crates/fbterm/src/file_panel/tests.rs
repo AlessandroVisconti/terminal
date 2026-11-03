@@ -2952,8 +2952,8 @@ fn the_list_scrollbar_is_clear_of_the_resize_edge() {
         Pixels(16.0),
     ));
     // The drawn bar, with its margin on both sides.
-    let margin = crate::ui::edge_scrollbar_margin(true, 1.0);
-    let width = super::view::SCROLLBAR_WIDTH;
+    let margin = crate::ui::edge_scrollbar_margin(true, 0.0);
+    let width = crate::ui::SCROLLBAR_WIDTH;
     let bar = (WINDOW.width - margin - width, WINDOW.width - margin);
     for x in [bar.0 + 0.5, (bar.0 + bar.1) / 2.0, bar.1 - 0.5] {
         let at = Point::new(x, 300.0);
