@@ -987,6 +987,7 @@ impl App {
         // shows its focused pane's profile.
         self.sync_file_panels();
         self.sync_context_menu();
+        self.sync_palette_items();
         self.sync_quit_key();
         self.ask_update_question();
         self.sync_update_state();

@@ -131,8 +131,21 @@ impl App {
             return;
         }
         let items = self.palette_items();
-        for state in self.palettes.values_mut() {
-            state.set_items(items.clone(), &self.recency);
+        let windows = &self.windows;
+        for (wid, state) in self.palettes.iter_mut() {
+            state.set_items(items_for(windows.get(wid), items.clone()), &self.recency);
+        }
+    }
+
+    /// An open launcher follows its window's active tab: switching to or from a page tab
+    /// (with the palette still up) adds or drops "Merge tab into…".
+    pub(crate) fn sync_palette_items(&mut self) {
+        let stale = self.palettes.iter().any(|(wid, state)| {
+            state.stage == palette::Stage::Launch
+                && state.lists_merge() != merge_listed(self.windows.get(wid))
+        });
+        if stale {
+            self.refresh_palettes();
         }
     }
 
@@ -141,7 +154,8 @@ impl App {
         if !self.windows.contains_key(&wid) {
             return Task::none();
         }
-        let state = PaletteState::new(self.palette_items(), query, &self.recency);
+        let items = items_for(self.windows.get(&wid), self.palette_items());
+        let state = PaletteState::new(items, query, &self.recency);
         let input = state.input.clone();
         self.palettes.insert(wid, state);
         iced::widget::operation::focus(input)
@@ -323,4 +337,30 @@ impl App {
             other => self.action(Some(wid), other),
         }
     }
+}
+
+/// Whether `window`'s launcher lists "Merge tab into…": a page tab cannot be merged into
+/// another tab, so while one is active it does not.
+fn merge_listed(window: Option<&WindowState>) -> bool {
+    !window
+        .and_then(WindowState::active_tab)
+        .is_some_and(|t| t.page.is_some())
+}
+
+/// The launcher rows for `window`.
+fn items_for(window: Option<&WindowState>, mut items: Vec<PaletteItem>) -> Vec<PaletteItem> {
+    if !merge_listed(window) {
+        items.retain(|i| !is_merge(i));
+    }
+    items
+}
+
+fn is_merge(item: &PaletteItem) -> bool {
+    matches!(
+        item,
+        PaletteItem::Action {
+            action: Action::MergeTab,
+            ..
+        }
+    )
 }

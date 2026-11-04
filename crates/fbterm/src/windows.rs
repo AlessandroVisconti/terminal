@@ -906,6 +906,26 @@ mod tests {
     }
 
     #[test]
+    fn launcher_lists_merge_except_on_a_page_tab() {
+        let p = profile("a");
+        let (mut app, wid, _, _) = app_with_tabs(&p);
+        let merge = |app: &App| labels(app, wid).iter().any(|l| l.starts_with("Merge tab"));
+        let _ = app.update(Message::Palette(wid, PaletteMsg::Open));
+        assert!(merge(&app), "plain shell tab");
+        let _ = app.update(Message::Palette(wid, PaletteMsg::Close));
+        let _ = app.update(Message::Shortcut(wid, Action::Settings));
+        let _ = app.update(Message::Palette(wid, PaletteMsg::Open));
+        assert!(!merge(&app), "page tab");
+        // Back on a shell tab with the launcher still up.
+        app.windows.get_mut(&wid).unwrap().active = 0;
+        let _ = app.update(Message::Palette(wid, PaletteMsg::Query(String::new())));
+        assert!(merge(&app), "shell tab again");
+        let _ = app.update(Message::Palette(wid, PaletteMsg::Close));
+        let _ = app.update(Message::Palette(wid, PaletteMsg::Open));
+        assert!(merge(&app), "reopened on a shell tab");
+    }
+
+    #[test]
     fn palette_lists_only_choices_that_fit() {
         let p = profile("a");
         let (mut app, wid, _, _) = app_with_tabs(&p);

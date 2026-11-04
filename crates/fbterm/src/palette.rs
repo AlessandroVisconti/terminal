@@ -419,6 +419,19 @@ impl PaletteState {
         self.selected = self.selected.min(self.ranked.len().saturating_sub(1));
     }
 
+    /// Whether the listed items include "Merge tab into…".
+    pub fn lists_merge(&self) -> bool {
+        self.items.iter().any(|i| {
+            matches!(
+                i,
+                PaletteItem::Action {
+                    action: Action::MergeTab,
+                    ..
+                }
+            )
+        })
+    }
+
     pub fn set_query(&mut self, query: String, recency: &Recency) {
         self.ranked = rank(&query, &self.items, recency);
         self.query = query;
