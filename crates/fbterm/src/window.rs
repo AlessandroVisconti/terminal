@@ -2057,10 +2057,12 @@ fn tab_button<'a>(
         demo_tip,
     );
     let mut inner = row![stripe];
-    // A page tab has no session to show.
-    if tab.page.is_none() {
-        inner = inner.push(dot(state_color(t, tab.state())));
-    }
+    // A page tab has no session to show: it carries the icon of the button that opens it.
+    inner = match tab.page {
+        None => inner.push(dot(state_color(t, tab.state()))),
+        Some(Page::Settings) => inner.push(icon(ICON_SETTINGS, 14.0, idle.icon)),
+        Some(Page::Profiles) => inner.push(icon(ICON_USERS, 14.0, idle.icon)),
+    };
     // A background pane that lost its session: a second dot, the theme's warning color.
     if tab.trouble() {
         inner = inner.push(dot(t.warning));
