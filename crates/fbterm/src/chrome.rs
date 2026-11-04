@@ -5,7 +5,8 @@
 //! window buttons drawn over its leading end. Empty space in that bar moves the window and a
 //! double click zooms it. While the pointer is over a tab or a button of the bar, the window
 //! is not movable by the system ([`Chrome::system_may_drag`], [`set_system_drag`]), so dragging
-//! a tab drags only the tab.
+//! a tab drags only the tab. From macOS 26 the system rounds a window's corners more when it
+//! holds a toolbar, so every titled window gets an empty one ([`system_corners`]).
 //!
 //! Windows and Linux draw their own: the window has no OS decorations, the tab bar (or the
 //! editor's header) is the title bar and holds drawn minimize, maximize and close controls
@@ -1024,6 +1025,58 @@ fn set_acrylic_backdrop(window: &dyn window::Window) {
     if result != 0 {
         tracing::info!(result, "the system refused the blurred backdrop");
     }
+}
+
+/// Round the corners of window `id` as the system rounds its own windows. From macOS 26 the
+/// system gives a window with a toolbar a larger corner radius than a window with only a title
+/// bar, so a titled window gets an empty toolbar in the expanded style, the one style that
+/// leaves the window buttons where [`MACOS_TITLEBAR_HEIGHT`] and
+/// [`MACOS_TRAFFIC_LIGHTS_INSET`] expect them; the transparent title strip shows nothing of
+/// it and clicks under it still reach the content. Nothing on older macOS or elsewhere.
+pub fn system_corners<T: Send + 'static>(id: window::Id) -> iced::Task<T> {
+    #[cfg(target_os = "macos")]
+    {
+        window::run(id, attach_corner_toolbar).discard()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = id;
+        iced::Task::none()
+    }
+}
+
+/// The first macOS whose window corner radius depends on a toolbar.
+#[cfg(target_os = "macos")]
+const MACOS_TOOLBAR_CORNERS: isize = 26;
+
+/// Give `window` the empty toolbar of [`system_corners`], once, when the system is new enough
+/// and the window is titled (a drawn-chrome window has no title bar to round).
+#[cfg(target_os = "macos")]
+fn attach_corner_toolbar(window: &dyn window::Window) {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSToolbar, NSWindowStyleMask, NSWindowToolbarStyle};
+    use objc2_foundation::{NSProcessInfo, ns_string};
+
+    if NSProcessInfo::processInfo()
+        .operatingSystemVersion()
+        .majorVersion
+        < MACOS_TOOLBAR_CORNERS
+    {
+        return;
+    }
+    let Some(ns_window) = ns_window(window) else {
+        return;
+    };
+    if !ns_window.styleMask().contains(NSWindowStyleMask::Titled) || ns_window.toolbar().is_some() {
+        return;
+    }
+    // `ns_window` is only `Some` on the main thread.
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let toolbar = NSToolbar::initWithIdentifier(mtm.alloc(), ns_string!("fbterm.corners"));
+    ns_window.setToolbar(Some(&toolbar));
+    ns_window.setToolbarStyle(NSWindowToolbarStyle::Expanded);
 }
 
 /// Let the system move window `id` from a press in its bar (`movable`), or not: on macOS the

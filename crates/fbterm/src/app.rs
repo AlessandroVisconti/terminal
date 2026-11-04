@@ -1077,10 +1077,12 @@ impl App {
                     }
                     _ => Task::none(),
                 };
-                // And read its scale (changes arrive as `Rescaled` events).
+                // Read its scale (changes arrive as `Rescaled` events) and round its corners
+                // as the system does.
                 Task::batch([
                     decorations,
                     window::scale_factor(id).map(move |s| Message::WindowScale(id, s)),
+                    chrome::system_corners(id),
                 ])
             }
             Message::WindowVisible(id, visible) => {
