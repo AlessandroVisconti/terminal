@@ -314,10 +314,11 @@ impl App {
 
     pub(crate) fn run_palette_action(&mut self, wid: window::Id, action: Action) -> Task<Message> {
         match action {
-            // From the palette, "New tab" is the default shell (the palette itself just closed).
+            // From the palette, "New tab" is the default shell (the palette itself just closed);
+            // with no local profile to start, the Profiles tab is opened.
             Action::NewTab => match self.default_profile() {
                 Some(profile) => self.open_tab(wid, profile),
-                None => Task::none(),
+                None => self.open_editor(),
             },
             other => self.action(Some(wid), other),
         }
