@@ -906,10 +906,30 @@ mod tests {
     }
 
     #[test]
-    fn launcher_lists_merge_except_on_a_page_tab() {
+    fn launcher_hides_terminal_rows_on_a_page_tab() {
         let p = profile("a");
         let (mut app, wid, _, _) = app_with_tabs(&p);
-        let merge = |app: &App| labels(app, wid).iter().any(|l| l.starts_with("Merge tab"));
+        // One row of each kind that needs a terminal, and one that does not.
+        let merge = |app: &App| {
+            let all = labels(app, wid);
+            let has = |l: &str| all.iter().any(|x| x.starts_with(l));
+            let rows = [
+                "Merge tab",
+                "Maximize pane",
+                "Find in pane",
+                "Find in this tab",
+                "Split right",
+                "Split down",
+                "Move tile\u{2026}",
+                "Move tile to new tab",
+            ];
+            assert!(has("Settings"), "rows that need no terminal stay");
+            assert!(has("Find in all tabs"), "rows that need no terminal stay");
+            let listed = rows.iter().filter(|l| has(l)).count();
+            assert!(has("Export tab") == (listed > 0));
+            assert!(listed == 0 || listed == rows.len(), "all or none");
+            listed > 0
+        };
         let _ = app.update(Message::Palette(wid, PaletteMsg::Open));
         assert!(merge(&app), "plain shell tab");
         let _ = app.update(Message::Palette(wid, PaletteMsg::Close));
@@ -923,6 +943,28 @@ mod tests {
         let _ = app.update(Message::Palette(wid, PaletteMsg::Close));
         let _ = app.update(Message::Palette(wid, PaletteMsg::Open));
         assert!(merge(&app), "reopened on a shell tab");
+    }
+
+    #[test]
+    fn pane_actions_do_nothing_on_a_page_tab() {
+        let p = profile("a");
+        let (mut app, wid, _, _) = app_with_tabs(&p);
+        let _ = app.update(Message::Shortcut(wid, Action::Settings));
+        assert!(app.windows[&wid].active_tab().unwrap().page.is_some());
+        for a in [
+            Action::FindInTab,
+            Action::Find,
+            Action::MaximizePane,
+            Action::ZoomIn,
+            Action::SplitRight,
+            Action::TileToTab,
+        ] {
+            let _ = app.update(Message::Shortcut(wid, a));
+        }
+        assert!(app.find_box.is_none());
+        let w = &app.windows[&wid];
+        assert!(w.active_tab().unwrap().focused_pane().find.is_none());
+        assert_eq!(w.tabs.len(), 3, "no tab added by Move tile to new tab");
     }
 
     #[test]

@@ -17,6 +17,9 @@ impl App {
             self.focused = Some(wid);
         }
         let wid = self.focused_window();
+        if needs_terminal(action) && !terminal_active(wid.and_then(|wid| self.windows.get(&wid))) {
+            return Task::none();
+        }
         match action {
             // New tab asks which profile to open: the palette, with nothing preselected.
             Action::NewTab => match wid {
@@ -138,11 +141,11 @@ impl App {
     }
 
     /// An open launcher follows its window's active tab: switching to or from a page tab
-    /// (with the palette still up) adds or drops "Merge tab into…".
+    /// (with the palette still up) adds or drops the rows that need a terminal.
     pub(crate) fn sync_palette_items(&mut self) {
         let stale = self.palettes.iter().any(|(wid, state)| {
             state.stage == palette::Stage::Launch
-                && state.lists_merge() != merge_listed(self.windows.get(wid))
+                && state.lists(Action::MaximizePane) != terminal_active(self.windows.get(wid))
         });
         if stale {
             self.refresh_palettes();
@@ -339,9 +342,31 @@ impl App {
     }
 }
 
-/// Whether `window`'s launcher lists "Merge tab into…": a page tab cannot be merged into
-/// another tab, so while one is active it does not.
-fn merge_listed(window: Option<&WindowState>) -> bool {
+/// The actions that work on a terminal pane or the tabs holding them: a page tab's one pane
+/// is a stand-in with no terminal, so on a page tab they do nothing and the launcher does not
+/// list them.
+fn needs_terminal(action: Action) -> bool {
+    matches!(
+        action,
+        Action::Find
+            | Action::FindInTab
+            | Action::FindNext
+            | Action::FindPrevious
+            | Action::ZoomIn
+            | Action::ZoomOut
+            | Action::ZoomReset
+            | Action::MaximizePane
+            | Action::MergeTab
+            | Action::MoveTile
+            | Action::TileToTab
+            | Action::SplitRight
+            | Action::SplitDown
+            | Action::ExportTab
+    )
+}
+
+/// Whether `window`'s active tab holds a terminal (not a page tab).
+fn terminal_active(window: Option<&WindowState>) -> bool {
     !window
         .and_then(WindowState::active_tab)
         .is_some_and(|t| t.page.is_some())
@@ -349,18 +374,10 @@ fn merge_listed(window: Option<&WindowState>) -> bool {
 
 /// The launcher rows for `window`.
 fn items_for(window: Option<&WindowState>, mut items: Vec<PaletteItem>) -> Vec<PaletteItem> {
-    if !merge_listed(window) {
-        items.retain(|i| !is_merge(i));
+    if !terminal_active(window) {
+        items.retain(
+            |i| !matches!(i, PaletteItem::Action { action, .. } if needs_terminal(*action)),
+        );
     }
     items
-}
-
-fn is_merge(item: &PaletteItem) -> bool {
-    matches!(
-        item,
-        PaletteItem::Action {
-            action: Action::MergeTab,
-            ..
-        }
-    )
 }
