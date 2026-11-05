@@ -197,6 +197,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
         update_dot: app.update_dot(),
         outline_end,
         outline_to_edge: panel.is_none(),
+        width: app.sizes.get(&id).map(|&(w, _)| w),
     };
     let mut body = column![tab_bar(t, bar, &win.tabs, win.active)];
     let notices = app.visible_notices();
@@ -900,6 +901,30 @@ struct TabBar<'b> {
     /// The outline reaches the window's right edge (no panel docked), so it passes under
     /// drawn controls on the right.
     outline_to_edge: bool,
+    /// The window's width, to size the tabs (`None`: full size).
+    width: Option<f32>,
+}
+
+/// A tab's widest and narrowest width; tabs share the bar's room between them.
+const TAB_MAX_WIDTH: f32 = 196.0;
+const TAB_MIN_WIDTH: f32 = 90.0;
+/// Room the buttons after the tabs take (all of them showing, with a tunnel count), and the
+/// bar's right padding. A little generous: a tab may come out slightly narrower than needed.
+const TRAILING_WIDTH: f32 = 200.0;
+
+/// Each tab's width: full size, shrinking to the minimum as the bar fills.
+fn tab_width(chrome: Chrome, fullscreen: bool, width: Option<f32>, count: usize) -> f32 {
+    let Some(width) = width else {
+        return TAB_MAX_WIDTH;
+    };
+    let controls = if chrome.draws_controls() {
+        let setup = chrome::setup();
+        chrome::controls_width(setup.look, setup.controls.order.len())
+    } else {
+        0.0
+    };
+    let room = width - chrome.leading_inset(fullscreen) - controls - TRAILING_WIDTH;
+    (room / count.max(1) as f32 - 2.0).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
 }
 
 fn tab_bar<'a>(
@@ -927,6 +952,7 @@ fn tab_bar<'a>(
     let height = chrome.bar_height();
     let msg = move |m| Message::TabBar(window, m);
     let mut bar = row![].spacing(2).align_y(Alignment::End);
+    let tab_w = tab_width(chrome, fullscreen, tabs_bar.width, tabs.len());
     for (i, tab) in tabs.iter().enumerate() {
         bar = bar.push(tab_button(
             t,
@@ -935,6 +961,7 @@ fn tab_bar<'a>(
             i,
             i == active,
             height - TAB_TOP_GAP,
+            tab_w,
         ));
     }
     let new_tab = button(icon(ICON_PLUS, 14.0, t.text_muted))
@@ -2032,6 +2059,7 @@ fn tab_button<'a>(
     index: usize,
     active: bool,
     height: f32,
+    width: f32,
 ) -> Element<'a, Message> {
     let window = bar.window;
     let demo_tip = index == 0 && bar.demo_tip == Some(DemoTip::Close);
@@ -2089,7 +2117,7 @@ fn tab_button<'a>(
         .align_y(Alignment::Center);
     button(inner)
         .on_press(Message::TabBar(window, TabBarMsg::Select(index)))
-        .width(Length::Fixed(196.0))
+        .width(Length::Fixed(width))
         .height(height)
         // The tab starts TAB_TOP_GAP below the top of the bar; the same space below its
         // content centers the label on the bar (and on the window buttons).
@@ -2456,6 +2484,7 @@ mod tests {
                 // And the outline a docked file panel brings.
                 outline_end: Some(500.0),
                 outline_to_edge: false,
+                width: None,
             };
             let mut element = tab_bar(t, bar, tabs, 0);
             let renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
