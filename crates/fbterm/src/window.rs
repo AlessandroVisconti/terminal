@@ -2077,7 +2077,7 @@ fn tab_button<'a>(
             },
             ..container::Style::default()
         });
-    let label = text(tab.title())
+    let label = text(tab.name())
         .font(UI_FONT)
         .size(12.5)
         .wrapping(text::Wrapping::None)
