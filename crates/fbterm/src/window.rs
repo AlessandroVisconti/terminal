@@ -1447,13 +1447,21 @@ impl BarBackground<'_> {
         let buttons = tab_rects(layout, self.ids.len());
         let under = |p: Point| buttons.iter().position(|r| r.contains(p));
         let tile = matches!(self.carry, Some(Carry::Tile(_)));
-        // A tile drag that ended elsewhere (Escape) leaves no gap behind.
-        if !tile && state.gap.take().is_some() {
+        // The index of the tab this bar is carrying, if any: it can be dropped back on the bar.
+        let own = state
+            .press
+            .as_ref()
+            .filter(|p| p.dragging && matches!(self.carry, Some(Carry::Tab(_))))
+            .map(|p| p.index);
+        // A drag that ended elsewhere (Escape) leaves no gap behind.
+        if !tile && own.is_none() && state.gap.take().is_some() {
             shell.request_redraw();
         }
         let gap = |p: Option<Point>| {
-            p.filter(|_| tile)
-                .and_then(|p| tab_gap(&buttons, self.hole, p))
+            let p = p.filter(|_| tile || own.is_some())?;
+            let gap = tab_gap(&buttons, if tile { self.hole } else { own }, p)?;
+            // Right before or after the carried tab: no move.
+            (own != Some(gap) && own.map(|o| o + 1) != Some(gap)).then_some(gap)
         };
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
@@ -1500,11 +1508,17 @@ impl BarBackground<'_> {
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                let at = gap(cursor.position_over(bounds));
                 if state.gap.take().is_some() {
                     shell.request_redraw();
                 }
                 if let Some(TabPress { dragging: true, .. }) = state.press.take() {
                     state.over = None;
+                    if let (Some(index), Some(tab)) =
+                        (at.filter(|_| !tile), own.and_then(|o| self.ids.get(o)))
+                    {
+                        self.publish(shell, DragMsg::ReorderTab { tab: *tab, index });
+                    }
                     self.publish(shell, DragMsg::End);
                     return true;
                 }
@@ -1777,9 +1791,9 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
             cursor,
             viewport,
         );
-        // A carried tile: a violet bar in the gap where it would become a tab.
+        // A carried tile or tab: a violet bar in the gap where it would land.
         let state = tree.state.downcast_ref::<BarState>();
-        if let (Some(Carry::Tile(_)), Some(gap)) = (self.carry, state.gap) {
+        if let (Some(Carry::Tile(_) | Carry::Tab(_)), Some(gap)) = (self.carry, state.gap) {
             let x = match buttons.get(gap) {
                 Some(next) => next.x - 2.0,
                 None => buttons.last().map_or(bounds.x, |r| r.x + r.width),

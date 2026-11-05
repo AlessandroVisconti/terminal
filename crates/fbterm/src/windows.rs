@@ -37,6 +37,9 @@ pub enum DragMsg {
     HoverElapsed(u64),
     /// The carried tab was dropped on the content of the shown tab.
     DropTab { tab: TabId, at: Drop },
+    /// The carried tab was dropped on the tab bar: it moves to the gap `index` (counted in
+    /// the bar as it was before the move).
+    ReorderTab { tab: TabId, index: usize },
     /// A tile is being carried (`None`: no longer).
     Tile(Option<PaneId>),
     /// A carried tile was dropped on the tab bar: a tab of its own at `index`.
@@ -461,6 +464,24 @@ impl App {
                     Some(target) => self.merge_tab(wid, tab, target, at),
                     None => Task::none(),
                 }
+            }
+            DragMsg::ReorderTab { tab, index } => {
+                self.end_carry();
+                let Some(window) = self.windows.get_mut(&wid) else {
+                    return Task::none();
+                };
+                let Some(from) = window.find(tab) else {
+                    return Task::none();
+                };
+                let to = if index > from { index - 1 } else { index };
+                if to == from || to >= window.tabs.len() {
+                    return Task::none();
+                }
+                let moved = window.tabs.remove(from);
+                window.tabs.insert(to, moved);
+                window.active = to;
+                self.save_state();
+                self.shown(wid)
             }
             DragMsg::Tile(pane) => {
                 match pane {
