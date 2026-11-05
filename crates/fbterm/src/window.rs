@@ -2710,6 +2710,52 @@ mod tests {
             );
         }
 
+        #[test]
+        fn a_carried_tab_dropped_in_a_gap_asks_to_move_there() {
+            let tabs = tabs();
+            let id = tabs[0].id;
+            // Tab 0 released on the right half of tab 1: the gap after it, index 2.
+            let messages = drive(&tabs, Some(Carry::Tab(id)), |b| {
+                let at = b[0].center();
+                let away = Point::new(at.x + 10.0, at.y);
+                let over = Point::new(b[1].center_x() + 10.0, at.y);
+                vec![
+                    (press(), at),
+                    (moved(away), away),
+                    (moved(over), over),
+                    (release(), over),
+                ]
+            });
+            assert_eq!(
+                drags(&messages)
+                    .iter()
+                    .filter(|d| matches!(d, DragMsg::ReorderTab { .. }))
+                    .collect::<Vec<_>>(),
+                [&DragMsg::ReorderTab { tab: id, index: 2 }],
+                "{messages:?}"
+            );
+            assert_eq!(drags(&messages).last(), Some(&DragMsg::End));
+
+            // Released on the left half of the next tab: the gap right after itself, no move.
+            let messages = drive(&tabs, Some(Carry::Tab(id)), |b| {
+                let at = b[0].center();
+                let away = Point::new(at.x + 10.0, at.y);
+                let over = Point::new(b[1].center_x() - 10.0, at.y);
+                vec![
+                    (press(), at),
+                    (moved(away), away),
+                    (moved(over), over),
+                    (release(), over),
+                ]
+            });
+            assert!(
+                !drags(&messages)
+                    .iter()
+                    .any(|d| matches!(d, DragMsg::ReorderTab { .. })),
+                "{messages:?}"
+            );
+        }
+
         fn bar_actions(messages: &[Message]) -> Vec<BarAction> {
             messages
                 .iter()
@@ -2985,6 +3031,28 @@ mod tests {
         assert_eq!(
             bottoms,
             [Rectangle::new((0.0, 31.0).into(), Size::new(500.0, 1.0))]
+        );
+    }
+}
+
+#[cfg(test)]
+mod tab_width_tests {
+    use super::*;
+
+    #[test]
+    fn tabs_shrink_with_the_room_and_stop_at_the_minimum() {
+        let w = |width, count| tab_width(Chrome::Unified, false, Some(width), count);
+        assert_eq!(tab_width(Chrome::Unified, false, None, 50), TAB_MAX_WIDTH);
+        assert_eq!(w(1600.0, 3), TAB_MAX_WIDTH, "plenty of room");
+        let (few, many) = (w(1000.0, 5), w(1000.0, 8));
+        assert!(TAB_MIN_WIDTH < few && few < TAB_MAX_WIDTH, "{few}");
+        assert!(many < few, "more tabs, narrower tabs");
+        assert!(w(1000.0, 5) > w(700.0, 5), "narrower window, narrower tabs");
+        assert_eq!(w(400.0, 30), TAB_MIN_WIDTH, "never below the minimum");
+        assert_eq!(
+            w(10.0, 0),
+            TAB_MIN_WIDTH,
+            "no room and no tabs is no division by zero"
         );
     }
 }

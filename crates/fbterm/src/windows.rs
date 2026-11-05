@@ -777,6 +777,33 @@ mod tests {
     }
 
     #[test]
+    fn reorder_tab_moves_it_to_the_gap_and_shows_it() {
+        let p = profile("a");
+        let (mut app, wid, _, [ta, tb]) = app_with_tabs(&p);
+        let order =
+            |app: &App| -> Vec<TabId> { app.windows[&wid].tabs.iter().map(|t| t.id).collect() };
+        // Gaps are counted before the move: 2 is after the last tab.
+        let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab: ta, index: 2 });
+        assert_eq!(order(&app), [tb, ta]);
+        assert_eq!(app.windows[&wid].active, 1, "the moved tab is shown");
+        let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab: ta, index: 0 });
+        assert_eq!(order(&app), [ta, tb]);
+        assert_eq!(app.windows[&wid].active, 0);
+        // Next to itself, past the end or a missing tab: nothing.
+        for (tab, index) in [
+            (ta, 0),
+            (ta, 1),
+            (tb, 1),
+            (tb, 2),
+            (ta, 9),
+            (TabId::next(), 0),
+        ] {
+            let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab, index });
+            assert_eq!(order(&app), [ta, tb], "{index}");
+        }
+    }
+
+    #[test]
     fn merge_into_self_is_noop() {
         let p = profile("a");
         let (mut app, wid, [_, _, b], [ta, tb]) = app_with_tabs(&p);
