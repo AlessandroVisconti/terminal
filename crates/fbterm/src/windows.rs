@@ -1154,6 +1154,7 @@ mod tests {
         let generation = app.hover_generation;
         let _ = app.update(Message::Drag(wid, DragMsg::HoverElapsed(generation)));
         let _ = app.update(Message::Drag(wid, DragMsg::End));
+        assert_eq!(app.windows[&wid].active, 1, "the tab shown before is back");
         let tab = &app.windows[&wid].tabs[0];
         assert_eq!(
             tab.maximized,
