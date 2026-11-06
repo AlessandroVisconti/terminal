@@ -136,7 +136,12 @@ impl App {
         let items = self.palette_items();
         let windows = &self.windows;
         for (wid, state) in self.palettes.iter_mut() {
-            state.set_items(items_for(windows.get(wid), items.clone()), &self.recency);
+            let window = windows.get(wid);
+            state.set_items(
+                items_for(window, items.clone()),
+                terminal_active(window),
+                &self.recency,
+            );
         }
     }
 
@@ -145,7 +150,7 @@ impl App {
     pub(crate) fn sync_palette_items(&mut self) {
         let stale = self.palettes.iter().any(|(wid, state)| {
             state.stage == palette::Stage::Launch
-                && state.lists(Action::MaximizePane) != terminal_active(self.windows.get(wid))
+                && state.for_terminal() != terminal_active(self.windows.get(wid))
         });
         if stale {
             self.refresh_palettes();
@@ -157,8 +162,9 @@ impl App {
         if !self.windows.contains_key(&wid) {
             return Task::none();
         }
-        let items = items_for(self.windows.get(&wid), self.palette_items());
-        let state = PaletteState::new(items, query, &self.recency);
+        let window = self.windows.get(&wid);
+        let items = items_for(window, self.palette_items());
+        let state = PaletteState::new(items, query, terminal_active(window), &self.recency);
         let input = state.input.clone();
         self.palettes.insert(wid, state);
         iced::widget::operation::focus(input)
