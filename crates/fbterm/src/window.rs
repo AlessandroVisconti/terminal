@@ -296,7 +296,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
             .tabs
             .iter()
             .find(|tab| tab.id == source)
-            .map(|tab| tab.title().to_owned()),
+            .map(|tab| tab.name().to_owned()),
         _ => None,
     };
     let body = Element::new(Carried {
