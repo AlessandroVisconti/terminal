@@ -511,3 +511,18 @@ fn a_double_click_on_a_saved_profile_opens_it_in_a_new_tab() {
         assert_eq!(tabs(&app), before + 1);
     }
 }
+
+#[test]
+fn a_double_click_on_a_row_with_unsaved_edits_does_not_open_the_old_profile() {
+    let a = ssh("a", AuthMethod::Agent);
+    let mut app = app_with(std::slice::from_ref(&a));
+    editor(&mut app, EditorMsg::Open);
+    let tabs = |app: &App| app.windows.values().map(|w| w.tabs.len()).sum::<usize>();
+    let before = tabs(&app);
+
+    editor(&mut app, EditorMsg::Select(a.id));
+    editor(&mut app, EditorMsg::Host("edited.example".into()));
+    editor(&mut app, EditorMsg::Select(a.id));
+    assert_eq!(tabs(&app), before);
+    assert!(ed(&app).notice.is_some());
+}

@@ -76,6 +76,13 @@ impl App {
                     ed.last_click = Some((id, std::time::Instant::now()));
                     return Task::none();
                 }
+                // Unsaved edits on this row: the tab would use the saved profile, so say so.
+                let edited = ed.dirty
+                    && ed.draft(id).map(|d| d.to_profile()).as_ref() != self.profiles.get(id);
+                if edited {
+                    ed.notice = Some("Save this profile first: a tab opens the saved one".into());
+                    return Task::none();
+                }
                 self.open_tab(wid, id)
             }
             other => {
