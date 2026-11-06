@@ -505,10 +505,9 @@ fn a_double_click_on_a_saved_profile_opens_it_in_a_new_tab() {
 
     // Too slow to be a double click.
     editor(&mut app, EditorMsg::Select(a.id));
-    app.editor.as_mut().unwrap().1.last_click = Some((
-        a.id,
-        std::time::Instant::now() - std::time::Duration::from_secs(2),
-    ));
-    editor(&mut app, EditorMsg::Select(a.id));
-    assert_eq!(tabs(&app), before + 1);
+    if let Some(old) = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(2)) {
+        app.editor.as_mut().unwrap().1.last_click = Some((a.id, old));
+        editor(&mut app, EditorMsg::Select(a.id));
+        assert_eq!(tabs(&app), before + 1);
+    }
 }
