@@ -55,7 +55,7 @@ jobs:
 
   package:
     name: unsigned universal macOS dmg
-    runs-on: macos-14
+    runs-on: macos-15
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
