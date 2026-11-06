@@ -1430,7 +1430,7 @@ struct BarBackground<'a> {
 
 /// A press on a tab button, until its release.
 struct TabPress {
-    index: usize,
+    id: TabId,
     origin: Point,
     /// Travelled past the threshold: the tab is carried, the release is no click.
     dragging: bool,
@@ -1500,7 +1500,7 @@ impl BarBackground<'_> {
             .press
             .as_ref()
             .filter(|p| p.dragging && matches!(self.carry, Some(Carry::Tab(_))))
-            .map(|p| p.index);
+            .and_then(|p| self.ids.iter().position(|id| *id == p.id));
         // A drag that ended elsewhere (Escape) leaves no gap behind.
         if !tile && own.is_none() && state.gap.take().is_some() {
             shell.request_redraw();
@@ -1517,8 +1517,9 @@ impl BarBackground<'_> {
                     .position_over(bounds)
                     .filter(|_| !self.modal)
                     .and_then(|p| {
-                        under(p).map(|index| TabPress {
-                            index,
+                        let id = *self.ids.get(under(p)?)?;
+                        Some(TabPress {
+                            id,
                             origin: p,
                             dragging: false,
                         })
@@ -1534,15 +1535,16 @@ impl BarBackground<'_> {
                 if let (Some(press), Some(p)) = (&mut state.press, cursor.position()) {
                     if !press.dragging && p.distance(press.origin) >= TAB_DRAG_THRESHOLD {
                         press.dragging = true;
-                        if let Some(id) = self.ids.get(press.index) {
-                            shell.publish(Message::Drag(self.window, DragMsg::StartTab(*id)));
+                        if self.ids.contains(&press.id) {
+                            shell.publish(Message::Drag(self.window, DragMsg::StartTab(press.id)));
                         }
                     }
                     if press.dragging && matches!(self.carry, Some(Carry::Tab(_))) {
+                        let mine = self.ids.iter().position(|id| *id == press.id);
                         let over = cursor
                             .position_over(bounds)
                             .and_then(under)
-                            .filter(|i| *i != press.index);
+                            .filter(|i| Some(*i) != mine);
                         if over != state.over {
                             state.over = over;
                             self.publish(shell, DragMsg::OverTab(over));
