@@ -35,7 +35,7 @@ use crate::restore;
 use crate::schemes_window::{SchemesMsg, SchemesState};
 use crate::sessions::{EventReceiver, session_stream, write_notice};
 use crate::settings_window::{SettingsMsg, SettingsState};
-use crate::tabs::{Page, Pane, TabState, WindowState};
+use crate::tabs::{Page, Pane, TabId, TabState, WindowState};
 use crate::theme;
 use crate::tunnels::{Tunnels, tunnel_stream};
 use crate::tunnels_panel::{TunnelsMsg, TunnelsPanels};
@@ -311,6 +311,9 @@ pub struct App {
     pub(crate) hover: Option<(window::Id, usize, u64)>,
     /// Counts hovers, so only the latest one's timer switches tabs.
     pub(crate) hover_generation: u64,
+    /// The tab that was active when a tab drag began: a drag that ends on the bar without a
+    /// move shows it again, undoing any hover switch on the way.
+    pub(crate) carry_from: Option<TabId>,
     /// The find-in-all-tabs box, when open (in one window at a time).
     pub find_box: Option<FindAll>,
     /// The profile editor tab, when open.
@@ -682,6 +685,7 @@ impl App {
             carry: None,
             hover: None,
             hover_generation: 0,
+            carry_from: None,
             find_box: None,
             editor: None,
             editor_seq: 0,

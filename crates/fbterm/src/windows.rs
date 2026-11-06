@@ -424,6 +424,11 @@ impl App {
             DragMsg::StartTab(tab) => {
                 self.carry = Some((wid, Carry::Tab(tab)));
                 self.hover = None;
+                self.carry_from = self
+                    .windows
+                    .get(&wid)
+                    .and_then(WindowState::active_tab)
+                    .map(|t| t.id);
                 Task::none()
             }
             DragMsg::OverTab(over) => {
@@ -466,6 +471,7 @@ impl App {
                 }
             }
             DragMsg::ReorderTab { tab, index } => {
+                let back = self.carry_from;
                 self.end_carry();
                 let Some(window) = self.windows.get_mut(&wid) else {
                     return Task::none();
@@ -475,7 +481,7 @@ impl App {
                 };
                 let to = if index > from { index - 1 } else { index };
                 if to == from || to >= window.tabs.len() {
-                    return Task::none();
+                    return self.show_tab(wid, back);
                 }
                 let moved = window.tabs.remove(from);
                 window.tabs.insert(to, moved);
@@ -498,8 +504,9 @@ impl App {
                 self.tile_to_tab(wid, pane, index)
             }
             DragMsg::End => {
+                let back = self.carry_from;
                 self.end_carry();
-                Task::none()
+                self.show_tab(wid, back)
             }
         }
     }
@@ -554,6 +561,16 @@ impl App {
     fn end_carry(&mut self) {
         self.carry = None;
         self.hover = None;
+        self.carry_from = None;
+    }
+
+    /// Show tab `id` of `wid` again if a hover switch moved away from it during a drag.
+    fn show_tab(&mut self, wid: window::Id, id: Option<TabId>) -> Task<Message> {
+        let index = id.and_then(|id| self.windows.get(&wid)?.find(id));
+        match index {
+            Some(i) => self.with_window(wid, |w| w.select(i)),
+            None => Task::none(),
+        }
     }
 
     /// Merge tab `source` into tab `target` of `wid`: the source's whole layout (its
@@ -801,6 +818,30 @@ mod tests {
             let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab, index });
             assert_eq!(order(&app), [ta, tb], "{index}");
         }
+    }
+
+    #[test]
+    fn a_drag_ending_without_a_move_shows_the_tab_that_was_active() {
+        let p = profile("a");
+        let (mut app, wid, _, [ta, _]) = app_with_tabs(&p);
+        app.state_saving_enabled = false;
+        app.windows.get_mut(&wid).unwrap().active = 0;
+        // Carry the first tab over the second long enough to switch to it.
+        let hover_switch = |app: &mut App| {
+            let _ = app.drag_msg(wid, super::DragMsg::StartTab(ta));
+            let _ = app.drag_msg(wid, super::DragMsg::OverTab(Some(1)));
+            let generation = app.hover_generation;
+            let _ = app.drag_msg(wid, super::DragMsg::HoverElapsed(generation));
+            assert_eq!(app.windows[&wid].active, 1, "the hover switched");
+        };
+        // Released at its own gap: nothing moves, and the first tab is shown again.
+        hover_switch(&mut app);
+        let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab: ta, index: 0 });
+        assert_eq!(app.windows[&wid].active, 0);
+        // Same for a drag that ends otherwise (cancelled, pointer left the bar).
+        hover_switch(&mut app);
+        let _ = app.drag_msg(wid, super::DragMsg::End);
+        assert_eq!(app.windows[&wid].active, 0);
     }
 
     #[test]
@@ -1094,7 +1135,6 @@ mod tests {
         let _ = app.update(Message::Drag(wid, DragMsg::HoverElapsed(generation)));
         let _ = app.update(Message::Drag(wid, DragMsg::End));
         let tab = &app.windows[&wid].tabs[0];
-        assert_eq!(app.windows[&wid].active, 0);
         assert_eq!(
             tab.maximized,
             Some(a2),
