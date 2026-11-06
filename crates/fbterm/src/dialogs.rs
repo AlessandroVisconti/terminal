@@ -80,7 +80,7 @@ impl App {
                 let edited = ed.dirty
                     && ed.draft(id).map(|d| d.to_profile()).as_ref() != self.profiles.get(id);
                 if edited {
-                    ed.notice = Some("Save this profile first: a tab opens the saved one".into());
+                    ed.notice = Some("Save this profile first!".into());
                     return Task::none();
                 }
                 self.open_tab(wid, id)
