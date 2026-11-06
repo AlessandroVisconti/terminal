@@ -908,12 +908,32 @@ struct TabBar<'b> {
 /// A tab's widest and narrowest width; tabs share the bar's room between them.
 const TAB_MAX_WIDTH: f32 = 196.0;
 const TAB_MIN_WIDTH: f32 = 90.0;
-/// Room the buttons after the tabs take (all of them showing, with a tunnel count), and the
-/// bar's right padding. A little generous: a tab may come out slightly narrower than needed.
-const TRAILING_WIDTH: f32 = 200.0;
+const BUTTON_WIDTH: f32 = 28.0;
+const BAR_SPACING: f32 = 2.0;
+const BAR_RIGHT_PADDING: f32 = 8.0;
+
+fn trailing_width(tunnels_up: usize, files: bool) -> f32 {
+    let count = crate::tunnels_panel::indicator_count(tunnels_up)
+        .map_or(0.0, |n| 5.0 + 8.0 * n.len() as f32);
+    let buttons = [
+        BUTTON_WIDTH + 8.0,
+        BUTTON_WIDTH,
+        BUTTON_WIDTH + count,
+        if files { BUTTON_WIDTH } else { 0.0 },
+        BUTTON_WIDTH,
+    ];
+    let shown = buttons.iter().filter(|w| **w > 0.0).count() as f32;
+    buttons.iter().sum::<f32>() + shown * BAR_SPACING + BAR_RIGHT_PADDING
+}
 
 /// Each tab's width: full size, shrinking to the minimum as the bar fills.
-fn tab_width(chrome: Chrome, fullscreen: bool, width: Option<f32>, count: usize) -> f32 {
+fn tab_width(
+    chrome: Chrome,
+    fullscreen: bool,
+    width: Option<f32>,
+    count: usize,
+    trailing: f32,
+) -> f32 {
     let Some(width) = width else {
         return TAB_MAX_WIDTH;
     };
@@ -923,7 +943,7 @@ fn tab_width(chrome: Chrome, fullscreen: bool, width: Option<f32>, count: usize)
     } else {
         0.0
     };
-    let room = width - chrome.leading_inset(fullscreen) - controls - TRAILING_WIDTH;
+    let room = width - chrome.leading_inset(fullscreen) - controls - trailing;
     (room / count.max(1) as f32 - 2.0).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
 }
 
@@ -952,7 +972,8 @@ fn tab_bar<'a>(
     let height = chrome.bar_height();
     let msg = move |m| Message::TabBar(window, m);
     let mut bar = row![].spacing(2).align_y(Alignment::End);
-    let tab_w = tab_width(chrome, fullscreen, tabs_bar.width, tabs.len());
+    let trailing = trailing_width(tunnels_up, files.is_some());
+    let tab_w = tab_width(chrome, fullscreen, tabs_bar.width, tabs.len(), trailing);
     for (i, tab) in tabs.iter().enumerate() {
         bar = bar.push(tab_button(
             t,
@@ -3041,8 +3062,12 @@ mod tab_width_tests {
 
     #[test]
     fn tabs_shrink_with_the_room_and_stop_at_the_minimum() {
-        let w = |width, count| tab_width(Chrome::Unified, false, Some(width), count);
-        assert_eq!(tab_width(Chrome::Unified, false, None, 50), TAB_MAX_WIDTH);
+        let trailing = trailing_width(3, true);
+        let w = |width, count| tab_width(Chrome::Unified, false, Some(width), count, trailing);
+        assert_eq!(
+            tab_width(Chrome::Unified, false, None, 50, trailing),
+            TAB_MAX_WIDTH
+        );
         assert_eq!(w(1600.0, 3), TAB_MAX_WIDTH, "plenty of room");
         let (few, many) = (w(1000.0, 5), w(1000.0, 8));
         assert!(TAB_MIN_WIDTH < few && few < TAB_MAX_WIDTH, "{few}");
@@ -3053,6 +3078,17 @@ mod tab_width_tests {
             w(10.0, 0),
             TAB_MIN_WIDTH,
             "no room and no tabs is no division by zero"
+        );
+    }
+
+    #[test]
+    fn the_trailing_room_follows_the_files_button_and_the_tunnel_count() {
+        let base = trailing_width(0, false);
+        assert!(trailing_width(0, true) > base, "files button");
+        assert!(trailing_width(3, false) > base, "a count");
+        assert!(
+            trailing_width(12, false) > trailing_width(3, false),
+            "two digits"
         );
     }
 }
