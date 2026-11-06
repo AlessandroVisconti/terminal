@@ -568,14 +568,15 @@ mod tests {
         let (mut app, _dir) = app();
         app.chrome = Box::leak(Box::new(ChromeCell::starting(Chrome::Unified)));
         let w = window::Id::unique();
-        // Opening a window leaves it movable (the one task reads the window's scale).
-        assert_eq!(app.update(Message::AnyWindowOpened(w)).units(), 1);
+        // On macOS each change is one call to AppKit; nothing when nothing changes.
+        let call = usize::from(cfg!(target_os = "macos"));
+        // Opening a window leaves it movable: one task reads the window's scale, and on
+        // macOS one more rounds its corners.
+        assert_eq!(app.update(Message::AnyWindowOpened(w)).units(), 1 + call);
         let over = |app: &mut App, over| {
             app.update(Message::TitleBar(w, BarAction::PointerOverWidget(over)))
                 .units()
         };
-        // On macOS each change is one call to AppKit; nothing when nothing changes.
-        let call = usize::from(cfg!(target_os = "macos"));
         assert_eq!(over(&mut app, false), 0);
         assert_eq!(over(&mut app, true), call);
         assert!(app.held_still.contains(&w));
@@ -614,11 +615,13 @@ mod tests {
         chrome::record_created(fine, Chrome::Native);
         let _ = app.fall_back_to_system_chrome();
         assert_eq!(app.chrome.get(), Chrome::Native);
-        // Every opened window reads its scale (one task); `late` also gets its decorations.
-        assert_eq!(app.update(Message::AnyWindowOpened(late)).units(), 2);
-        assert_eq!(app.update(Message::AnyWindowOpened(fine)).units(), 1);
+        // Every opened window reads its scale (one task, plus the macOS corner rounding);
+        // `late` also gets its decorations.
+        let open = 1 + usize::from(cfg!(target_os = "macos"));
+        assert_eq!(app.update(Message::AnyWindowOpened(late)).units(), open + 1);
+        assert_eq!(app.update(Message::AnyWindowOpened(fine)).units(), open);
         assert!(app.open_windows.contains(&late) && app.open_windows.contains(&fine));
-        // Recorded once: a second report changes nothing but the scale read.
-        assert_eq!(app.update(Message::AnyWindowOpened(late)).units(), 1);
+        // Recorded once: a second report changes nothing but the open-window tasks.
+        assert_eq!(app.update(Message::AnyWindowOpened(late)).units(), open);
     }
 }
