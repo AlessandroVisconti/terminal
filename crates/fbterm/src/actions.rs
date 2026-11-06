@@ -352,23 +352,45 @@ impl App {
 /// is a stand-in with no terminal, so on a page tab they do nothing and the launcher does not
 /// list them.
 fn needs_terminal(action: Action) -> bool {
-    matches!(
-        action,
+    match action {
         Action::Find
-            | Action::FindInTab
-            | Action::FindNext
-            | Action::FindPrevious
-            | Action::ZoomIn
-            | Action::ZoomOut
-            | Action::ZoomReset
-            | Action::MaximizePane
-            | Action::MergeTab
-            | Action::MoveTile
-            | Action::TileToTab
-            | Action::SplitRight
-            | Action::SplitDown
-            | Action::ExportTab
-    )
+        | Action::FindInTab
+        | Action::FindNext
+        | Action::FindPrevious
+        | Action::ZoomIn
+        | Action::ZoomOut
+        | Action::ZoomReset
+        | Action::MaximizePane
+        | Action::MergeTab
+        | Action::MoveTile
+        | Action::TileToTab
+        | Action::SplitRight
+        | Action::SplitDown
+        | Action::ExportTab => true,
+        Action::NewTab
+        | Action::CloseTab
+        | Action::NextTab
+        | Action::PrevTab
+        | Action::SelectTab(_)
+        | Action::Palette
+        | Action::NewWindow
+        | Action::Quit
+        | Action::EditProfiles
+        | Action::DuplicateProfile
+        | Action::Settings
+        | Action::EditSchemes
+        | Action::Tunnels
+        | Action::ExportProfiles
+        | Action::ImportProfiles
+        | Action::FilePanel
+        | Action::OpenSettingsFile
+        | Action::RevealConfigFolder
+        | Action::FindAll
+        | Action::FocusLeft
+        | Action::FocusRight
+        | Action::FocusUp
+        | Action::FocusDown => false,
+    }
 }
 
 /// Whether `window`'s active tab holds a terminal (not a page tab).
