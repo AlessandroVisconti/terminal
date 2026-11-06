@@ -471,9 +471,13 @@ impl App {
                 }
             }
             DragMsg::ReorderTab { tab, index } => {
+                // Only the drag that is under way: a stale release changes nothing.
+                if self.carry_in(wid) != Some(Carry::Tab(tab)) {
+                    return Task::none();
+                }
                 let back = self.carry_from;
                 self.end_carry();
-                let Some(window) = self.windows.get_mut(&wid) else {
+                let Some(window) = self.windows.get(&wid) else {
                     return Task::none();
                 };
                 let Some(from) = window.find(tab) else {
@@ -483,11 +487,12 @@ impl App {
                 if to == from || to >= window.tabs.len() {
                     return self.show_tab(wid, back);
                 }
-                let moved = window.tabs.remove(from);
-                window.tabs.insert(to, moved);
-                window.active = to;
-                self.save_state();
-                self.shown(wid)
+                self.with_window(wid, |w| {
+                    let moved = w.tabs.remove(from);
+                    w.tabs.insert(to, moved);
+                    w.active = to;
+                    true
+                })
             }
             DragMsg::Tile(pane) => {
                 match pane {
@@ -799,11 +804,15 @@ mod tests {
         let (mut app, wid, _, [ta, tb]) = app_with_tabs(&p);
         let order =
             |app: &App| -> Vec<TabId> { app.windows[&wid].tabs.iter().map(|t| t.id).collect() };
+        let reorder = |app: &mut App, tab, index| {
+            let _ = app.drag_msg(wid, super::DragMsg::StartTab(tab));
+            let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab, index });
+        };
         // Gaps are counted before the move: 2 is after the last tab.
-        let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab: ta, index: 2 });
+        reorder(&mut app, ta, 2);
         assert_eq!(order(&app), [tb, ta]);
         assert_eq!(app.windows[&wid].active, 1, "the moved tab is shown");
-        let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab: ta, index: 0 });
+        reorder(&mut app, ta, 0);
         assert_eq!(order(&app), [ta, tb]);
         assert_eq!(app.windows[&wid].active, 0);
         // Next to itself, past the end or a missing tab: nothing.
@@ -815,9 +824,20 @@ mod tests {
             (ta, 9),
             (TabId::next(), 0),
         ] {
-            let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab, index });
+            reorder(&mut app, tab, index);
             assert_eq!(order(&app), [ta, tb], "{index}");
         }
+        // A release nobody is carrying for (cancelled, or another tab or window's drag): nothing.
+        let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab: ta, index: 2 });
+        assert_eq!(order(&app), [ta, tb], "no carry");
+        let _ = app.drag_msg(wid, super::DragMsg::StartTab(tb));
+        let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab: ta, index: 2 });
+        assert_eq!(order(&app), [ta, tb], "another tab is carried");
+        assert_eq!(
+            app.carry_in(wid),
+            Some(super::Carry::Tab(tb)),
+            "that drag goes on"
+        );
     }
 
     #[test]
