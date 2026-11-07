@@ -964,7 +964,7 @@ mod tests {
         ));
         let size = Size::new(800.0, 600.0);
         let wid = window::Id::unique();
-        let menu = ContextMenu::for_tab(wid, TabId::next(), Point::new(100.0, 100.0), true);
+        let menu = ContextMenu::for_tab(wid, TabId::next(), Point::new(100.0, 100.0), true, vec![]);
         let mut element = view(t, wid, &menu, Some(size));
         let mut tree = Tree::new(&element);
         let node = element.as_widget_mut().layout(
