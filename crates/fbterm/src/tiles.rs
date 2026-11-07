@@ -29,7 +29,7 @@ use crate::windows::DragMsg;
 /// Extra grab room on each side of a divider, over the panes next to it.
 const SLOP: f32 = 2.0;
 /// Two presses on a divider within this time equalize its split.
-const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+pub(crate) const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// Alpha of a pane's own background laid over it when it does not have focus.
 const DIM: f32 = 0.35;
 /// Depth of the band along the content's outer edge that drops a tile as a whole row or column.

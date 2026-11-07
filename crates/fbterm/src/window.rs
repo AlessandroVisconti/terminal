@@ -315,12 +315,12 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
                 scale: app.physical_scale(id),
                 width,
             };
-            row![
+            let beside = row![
                 crate::tab_sidebar::view(side, &win.tabs, win.active),
                 docked_area
             ]
-            .height(Length::Fill)
-            .into()
+            .height(Length::Fill);
+            crate::sidebar_resize::resizable(id, beside.into(), width, hairline, modal, t)
         }
         None => docked_area,
     });

@@ -109,6 +109,7 @@ mod schemes_window;
 mod sessions;
 mod settings_window;
 mod shortcuts;
+mod sidebar_resize;
 mod tab_drag;
 mod tab_look;
 mod tab_menu;
