@@ -27,7 +27,9 @@ use crate::tabs::{Page, Pane, Tab, TabId, TabState};
 use crate::theme::{Tokens, UI_FONT};
 use crate::tooltip::{DemoTip, tip, tooltip_text};
 use crate::tunnels_panel::TunnelsMsg;
-use crate::ui::{ICON_FOLDER, ICON_PLUS, ICON_SETTINGS, ICON_TUNNELS, ICON_USERS, ICON_X, icon};
+use crate::ui::{
+    ICON_FOLDER, ICON_PLUS, ICON_SETTINGS, ICON_TERMINAL, ICON_TUNNELS, ICON_USERS, ICON_X, icon,
+};
 use crate::windows::Carry;
 
 /// Space around the terminal area. Where the chrome is drawn the window's resize band lies
@@ -206,6 +208,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
         update_dot: app.update_dot(),
         outline_end,
         outline_to_edge: panel.is_none(),
+        width: app.sizes.get(&id).map(|&(w, _)| w),
         tabs_in_bar: sidebar.is_none(),
         outline_start: sidebar.unwrap_or(0.0),
     };
@@ -332,7 +335,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
             .tabs
             .iter()
             .find(|tab| tab.id == source)
-            .map(|tab| tab.title().to_owned()),
+            .map(|tab| tab.name().to_owned()),
         _ => None,
     };
     let body = Element::new(Carried {
@@ -938,12 +941,56 @@ struct TabBar<'b> {
     /// The outline reaches the window's right edge (no panel docked), so it passes under
     /// drawn controls on the right.
     outline_to_edge: bool,
+    /// The window's width, to size the tabs (`None`: full size).
+    width: Option<f32>,
     /// The tabs sit on the bar (tabs on top); with tabs on the left the bar holds only its
     /// buttons and paints plain.
     tabs_in_bar: bool,
     /// Where the outline along the content's top starts (window x): the sidebar's rule
     /// with tabs on the left, else the window's left edge.
     outline_start: f32,
+}
+
+/// A tab's widest and narrowest width; tabs share the bar's room between them.
+const TAB_MAX_WIDTH: f32 = 196.0;
+const TAB_MIN_WIDTH: f32 = 90.0;
+const BUTTON_WIDTH: f32 = 28.0;
+const BAR_SPACING: f32 = 2.0;
+const BAR_RIGHT_PADDING: f32 = 8.0;
+
+fn trailing_width(tunnels_up: usize, files: bool) -> f32 {
+    let count = crate::tunnels_panel::indicator_count(tunnels_up)
+        .map_or(0.0, |n| 5.0 + 8.0 * n.len() as f32);
+    let buttons = [
+        BUTTON_WIDTH + 8.0,
+        BUTTON_WIDTH,
+        BUTTON_WIDTH + count,
+        if files { BUTTON_WIDTH } else { 0.0 },
+        BUTTON_WIDTH,
+    ];
+    let shown = buttons.iter().filter(|w| **w > 0.0).count() as f32;
+    buttons.iter().sum::<f32>() + shown * BAR_SPACING + BAR_RIGHT_PADDING
+}
+
+/// Each tab's width: full size, shrinking to the minimum as the bar fills.
+fn tab_width(
+    chrome: Chrome,
+    fullscreen: bool,
+    width: Option<f32>,
+    count: usize,
+    trailing: f32,
+) -> f32 {
+    let Some(width) = width else {
+        return TAB_MAX_WIDTH;
+    };
+    let controls = if chrome.draws_controls() {
+        let setup = chrome::setup();
+        chrome::controls_width(setup.look, setup.controls.order.len())
+    } else {
+        0.0
+    };
+    let room = width - chrome.leading_inset(fullscreen) - controls - trailing;
+    (room / count.max(1) as f32 - 2.0).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
 }
 
 fn tab_bar<'a>(
@@ -973,6 +1020,8 @@ fn tab_bar<'a>(
     let mut bar = row![].spacing(2).align_y(Alignment::End);
     // With tabs on the left the bar lists none: no buttons, no hole, nothing to drag.
     let tabs: &[Tab] = if tabs_bar.tabs_in_bar { tabs } else { &[] };
+    let trailing = trailing_width(tunnels_up, files.is_some());
+    let tab_w = tab_width(chrome, fullscreen, tabs_bar.width, tabs.len(), trailing);
     for (i, tab) in tabs.iter().enumerate() {
         bar = bar.push(tab_button(
             t,
@@ -981,6 +1030,7 @@ fn tab_bar<'a>(
             i,
             i == active,
             height - TAB_TOP_GAP,
+            tab_w,
         ));
     }
     let new_tab = button(icon(ICON_PLUS, 14.0, t.text_muted))
@@ -1429,6 +1479,16 @@ struct BarBackground<'a> {
     outline_start: f32,
 }
 
+/// The glyph a page tab shows in place of a session's state dot: the icon of the button
+/// that opens it, or the app's own for the Welcome tab.
+pub(crate) fn page_icon(page: Page) -> &'static str {
+    match page {
+        Page::Settings => ICON_SETTINGS,
+        Page::Profiles => ICON_USERS,
+        Page::Welcome => ICON_TERMINAL,
+    }
+}
+
 /// The tab buttons' bounds: the first `n` children of the bar's row (container -> row).
 fn tab_rects(layout: Layout<'_>, n: usize) -> Vec<Rectangle> {
     layout
@@ -1697,9 +1757,9 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
             cursor,
             viewport,
         );
-        // A carried tile: a violet bar in the gap where it would become a tab.
+        // A carried tile or tab: a violet bar in the gap where it would land.
         let state = tree.state.downcast_ref::<DragState>();
-        if let (Some(Carry::Tile(_)), Some(gap)) = (self.carry, state.gap) {
+        if let (Some(Carry::Tile(_) | Carry::Tab(_)), Some(gap)) = (self.carry, state.gap) {
             let x = match buttons.get(gap) {
                 Some(next) => next.x - 2.0,
                 None => buttons.last().map_or(bounds.x, |r| r.x + r.width),
@@ -1938,6 +1998,7 @@ fn tab_button<'a>(
     index: usize,
     active: bool,
     height: f32,
+    width: f32,
 ) -> Element<'a, Message> {
     let window = bar.window;
     let demo_tip = index == 0 && bar.demo_tip == Some(DemoTip::Close);
@@ -1955,7 +2016,7 @@ fn tab_button<'a>(
             },
             ..container::Style::default()
         });
-    let label = text(tab.title())
+    let label = text(tab.name())
         .font(UI_FONT)
         .size(12.5)
         .wrapping(text::Wrapping::None)
@@ -1977,10 +2038,11 @@ fn tab_button<'a>(
         demo_tip,
     );
     let mut inner = row![stripe];
-    // A page tab has no session to show.
-    if tab.page.is_none() {
-        inner = inner.push(dot(state_color(t, tab.state())));
-    }
+    // A page tab has no session to show: it carries the icon of the button that opens it.
+    inner = match tab.page {
+        None => inner.push(dot(state_color(t, tab.state()))),
+        Some(page) => inner.push(icon(page_icon(page), 14.0, idle.icon)),
+    };
     // A background pane that lost its session: a second dot, the theme's warning color.
     if tab.trouble() {
         inner = inner.push(dot(t.warning));
@@ -1993,7 +2055,7 @@ fn tab_button<'a>(
         .align_y(Alignment::Center);
     button(inner)
         .on_press(Message::TabBar(window, TabBarMsg::Select(index)))
-        .width(Length::Fixed(196.0))
+        .width(Length::Fixed(width))
         .height(height)
         // The tab starts TAB_TOP_GAP below the top of the bar; the same space below its
         // content centers the label on the bar (and on the window buttons).
@@ -2369,6 +2431,7 @@ mod tests {
                 // And the outline a docked file panel brings.
                 outline_end: Some(500.0),
                 outline_to_edge: false,
+                width: None,
                 tabs_in_bar: true,
                 outline_start: 0.0,
             };
@@ -2593,6 +2656,52 @@ mod tests {
             assert!(
                 selects(&messages).is_empty(),
                 "dropping on a tab is not a click"
+            );
+        }
+
+        #[test]
+        fn a_carried_tab_dropped_in_a_gap_asks_to_move_there() {
+            let tabs = tabs();
+            let id = tabs[0].id;
+            // Tab 0 released on the right half of tab 1: the gap after it, index 2.
+            let messages = drive(&tabs, Some(Carry::Tab(id)), |b| {
+                let at = b[0].center();
+                let away = Point::new(at.x + 10.0, at.y);
+                let over = Point::new(b[1].center_x() + 10.0, at.y);
+                vec![
+                    (press(), at),
+                    (moved(away), away),
+                    (moved(over), over),
+                    (release(), over),
+                ]
+            });
+            assert_eq!(
+                drags(&messages)
+                    .iter()
+                    .filter(|d| matches!(d, DragMsg::ReorderTab { .. }))
+                    .collect::<Vec<_>>(),
+                [&DragMsg::ReorderTab { tab: id, index: 2 }],
+                "{messages:?}"
+            );
+            assert_eq!(drags(&messages).last(), Some(&DragMsg::End));
+
+            // Released on the left half of the next tab: the gap right after itself, no move.
+            let messages = drive(&tabs, Some(Carry::Tab(id)), |b| {
+                let at = b[0].center();
+                let away = Point::new(at.x + 10.0, at.y);
+                let over = Point::new(b[1].center_x() - 10.0, at.y);
+                vec![
+                    (press(), at),
+                    (moved(away), away),
+                    (moved(over), over),
+                    (release(), over),
+                ]
+            });
+            assert!(
+                !drags(&messages)
+                    .iter()
+                    .any(|d| matches!(d, DragMsg::ReorderTab { .. })),
+                "{messages:?}"
             );
         }
 
@@ -2871,6 +2980,43 @@ mod tests {
         assert_eq!(
             bottoms,
             [Rectangle::new((0.0, 31.0).into(), Size::new(500.0, 1.0))]
+        );
+    }
+}
+
+#[cfg(test)]
+mod tab_width_tests {
+    use super::*;
+
+    #[test]
+    fn tabs_shrink_with_the_room_and_stop_at_the_minimum() {
+        let trailing = trailing_width(3, true);
+        let w = |width, count| tab_width(Chrome::Unified, false, Some(width), count, trailing);
+        assert_eq!(
+            tab_width(Chrome::Unified, false, None, 50, trailing),
+            TAB_MAX_WIDTH
+        );
+        assert_eq!(w(1600.0, 3), TAB_MAX_WIDTH, "plenty of room");
+        let (few, many) = (w(1000.0, 5), w(1000.0, 8));
+        assert!(TAB_MIN_WIDTH < few && few < TAB_MAX_WIDTH, "{few}");
+        assert!(many < few, "more tabs, narrower tabs");
+        assert!(w(1000.0, 5) > w(700.0, 5), "narrower window, narrower tabs");
+        assert_eq!(w(400.0, 30), TAB_MIN_WIDTH, "never below the minimum");
+        assert_eq!(
+            w(10.0, 0),
+            TAB_MIN_WIDTH,
+            "no room and no tabs is no division by zero"
+        );
+    }
+
+    #[test]
+    fn the_trailing_room_follows_the_files_button_and_the_tunnel_count() {
+        let base = trailing_width(0, false);
+        assert!(trailing_width(0, true) > base, "files button");
+        assert!(trailing_width(3, false) > base, "a count");
+        assert!(
+            trailing_width(12, false) > trailing_width(3, false),
+            "two digits"
         );
     }
 }

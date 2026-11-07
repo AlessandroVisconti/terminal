@@ -481,3 +481,48 @@ fn the_copy_draft_matches_the_original_draft() {
     );
     assert_eq!(copy.group, original.group);
 }
+
+#[test]
+fn a_double_click_on_a_saved_profile_opens_it_in_a_new_tab() {
+    let a = ssh("a", AuthMethod::Agent);
+    let b = ssh("b", AuthMethod::Agent);
+    let mut app = app_with(&[a.clone(), b.clone()]);
+    editor(&mut app, EditorMsg::Open);
+    let tabs = |app: &App| app.windows.values().map(|w| w.tabs.len()).sum::<usize>();
+    let before = tabs(&app);
+
+    // One click, or two on different rows: selection only.
+    editor(&mut app, EditorMsg::Select(a.id));
+    editor(&mut app, EditorMsg::Select(b.id));
+    assert_eq!(tabs(&app), before);
+    assert_eq!(ed(&app).selected, Some(b.id));
+
+    // Two on the same row open it, and a third click starts counting afresh.
+    editor(&mut app, EditorMsg::Select(b.id));
+    assert_eq!(tabs(&app), before + 1);
+    editor(&mut app, EditorMsg::Select(b.id));
+    assert_eq!(tabs(&app), before + 1);
+
+    // Too slow to be a double click.
+    editor(&mut app, EditorMsg::Select(a.id));
+    if let Some(old) = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(2)) {
+        app.editor.as_mut().unwrap().1.last_click = Some((a.id, old));
+        editor(&mut app, EditorMsg::Select(a.id));
+        assert_eq!(tabs(&app), before + 1);
+    }
+}
+
+#[test]
+fn a_double_click_on_a_row_with_unsaved_edits_does_not_open_the_old_profile() {
+    let a = ssh("a", AuthMethod::Agent);
+    let mut app = app_with(std::slice::from_ref(&a));
+    editor(&mut app, EditorMsg::Open);
+    let tabs = |app: &App| app.windows.values().map(|w| w.tabs.len()).sum::<usize>();
+    let before = tabs(&app);
+
+    editor(&mut app, EditorMsg::Select(a.id));
+    editor(&mut app, EditorMsg::Host("edited.example".into()));
+    editor(&mut app, EditorMsg::Select(a.id));
+    assert_eq!(tabs(&app), before);
+    assert!(ed(&app).notice.is_some());
+}

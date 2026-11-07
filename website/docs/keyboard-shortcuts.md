@@ -116,7 +116,7 @@ These actions are listed after your profiles, each with its shortcut when it has
 
 | Action | Does |
 | --- | --- |
-| New tab | Choose a profile to open in a new tab. |
+| New tab | Choose a profile to open in a new tab. With no local profile to start, picking it from the palette opens the Profiles tab instead. |
 | New window | Open a new window. |
 | Close pane | Close the focused pane; the last pane closes the tab. |
 | Split right | Open the focused pane's profile in a new pane to its right. |
@@ -142,6 +142,8 @@ These actions are listed after your profiles, each with its shortcut when it has
 | Export profiles… | Open the [export window](export-import#exporting). It has no shortcut by default. |
 | Import profiles… | Open the [import window](export-import#importing). It has no shortcut by default. |
 | Quit | Save the layout and quit. |
+
+While the Profiles or Settings tab is the active tab, the palette leaves out the actions that need a terminal: Split right, Split down, Maximize pane, Merge tab into…, Move tile…, Move tile to new tab, Find in pane, Find in this tab and Export tab to file…. Their shortcuts do nothing there either. Select a terminal tab to use them again.
 
 ## Inside the palette
 

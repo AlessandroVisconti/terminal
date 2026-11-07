@@ -498,6 +498,8 @@ pub struct EditorState {
     pub name_input: iced::widget::Id,
     /// Tells this editor apart from one opened (or reloaded) after it.
     instance: u64,
+    /// The last profile row pressed and when, to tell a double click.
+    pub last_click: Option<(ProfileId, std::time::Instant)>,
 }
 
 /// The next editor's [`EditorState::instance`].
@@ -542,6 +544,7 @@ impl EditorState {
             removed_kinds: Vec::new(),
             errors: Vec::new(),
             notice: None,
+            last_click: None,
             read_only,
             dirty: false,
             secrets,

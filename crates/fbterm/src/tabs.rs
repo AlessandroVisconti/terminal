@@ -252,8 +252,7 @@ impl Tab {
         &self.focused_pane().title
     }
 
-    /// The focused pane's profile name.
-    #[allow(dead_code)] // read by tests; part of the tab's read surface
+    /// The focused pane's profile name (what the tab button shows).
     pub fn name(&self) -> &str {
         &self.focused_pane().name
     }

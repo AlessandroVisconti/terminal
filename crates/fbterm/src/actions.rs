@@ -17,6 +17,9 @@ impl App {
             self.focused = Some(wid);
         }
         let wid = self.focused_window();
+        if needs_terminal(action) && !terminal_active(wid.and_then(|wid| self.windows.get(&wid))) {
+            return Task::none();
+        }
         match action {
             // New tab asks which profile to open: the palette, with nothing preselected.
             Action::NewTab => match wid {
@@ -132,8 +135,26 @@ impl App {
             return;
         }
         let items = self.palette_items();
-        for state in self.palettes.values_mut() {
-            state.set_items(items.clone(), &self.recency);
+        let windows = &self.windows;
+        for (wid, state) in self.palettes.iter_mut() {
+            let window = windows.get(wid);
+            state.set_items(
+                items_for(window, items.clone()),
+                terminal_active(window),
+                &self.recency,
+            );
+        }
+    }
+
+    /// An open launcher follows its window's active tab: switching to or from a page tab
+    /// (with the palette still up) adds or drops the rows that need a terminal.
+    pub(crate) fn sync_palette_items(&mut self) {
+        let stale = self.palettes.iter().any(|(wid, state)| {
+            state.stage == palette::Stage::Launch
+                && state.for_terminal() != terminal_active(self.windows.get(wid))
+        });
+        if stale {
+            self.refresh_palettes();
         }
     }
 
@@ -142,7 +163,9 @@ impl App {
         if !self.windows.contains_key(&wid) {
             return Task::none();
         }
-        let state = PaletteState::new(self.palette_items(), query, &self.recency);
+        let window = self.windows.get(&wid);
+        let items = items_for(window, self.palette_items());
+        let state = PaletteState::new(items, query, terminal_active(window), &self.recency);
         let input = state.input.clone();
         self.palettes.insert(wid, state);
         iced::widget::operation::focus(input)
@@ -315,12 +338,76 @@ impl App {
 
     pub(crate) fn run_palette_action(&mut self, wid: window::Id, action: Action) -> Task<Message> {
         match action {
-            // From the palette, "New tab" is the default shell (the palette itself just closed).
+            // From the palette, "New tab" is the default shell (the palette itself just closed);
+            // with no local profile to start, the Profiles tab is opened.
             Action::NewTab => match self.default_profile() {
                 Some(profile) => self.open_tab(wid, profile),
-                None => Task::none(),
+                None => self.open_editor(),
             },
             other => self.action(Some(wid), other),
         }
     }
+}
+
+/// The actions that work on a terminal pane or the tabs holding them: a page tab's one pane
+/// is a stand-in with no terminal, so on a page tab they do nothing and the launcher does not
+/// list them.
+fn needs_terminal(action: Action) -> bool {
+    match action {
+        Action::Find
+        | Action::FindInTab
+        | Action::FindNext
+        | Action::FindPrevious
+        | Action::ZoomIn
+        | Action::ZoomOut
+        | Action::ZoomReset
+        | Action::MaximizePane
+        | Action::MergeTab
+        | Action::MoveTile
+        | Action::TileToTab
+        | Action::SplitRight
+        | Action::SplitDown
+        | Action::ExportTab => true,
+        Action::NewTab
+        | Action::CloseTab
+        | Action::NextTab
+        | Action::PrevTab
+        | Action::SelectTab(_)
+        | Action::Palette
+        | Action::NewWindow
+        | Action::Quit
+        | Action::EditProfiles
+        | Action::DuplicateProfile
+        | Action::Settings
+        | Action::EditSchemes
+        | Action::Tunnels
+        | Action::ExportProfiles
+        | Action::ImportProfiles
+        | Action::FilePanel
+        | Action::OpenSettingsFile
+        | Action::RevealConfigFolder
+        | Action::FindAll
+        | Action::FocusLeft
+        | Action::FocusRight
+        | Action::FocusUp
+        | Action::FocusDown
+        | Action::VerticalTabs => false,
+    }
+}
+
+/// Whether `window`'s active tab holds a terminal (not a page tab).
+fn terminal_active(window: Option<&WindowState>) -> bool {
+    !window
+        .and_then(WindowState::active_tab)
+        .is_some_and(|t| t.page.is_some())
+}
+
+/// The launcher rows for `window`.
+fn items_for(window: Option<&WindowState>, mut items: Vec<PaletteItem>) -> Vec<PaletteItem> {
+    if !terminal_active(window) {
+        items.retain(
+            |i| !matches!(i, PaletteItem::Action { action, .. } if needs_terminal(*action)),
+        );
+    }
+    items
 }

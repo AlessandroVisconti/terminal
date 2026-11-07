@@ -37,9 +37,10 @@ impl Axis {
     }
 }
 
-/// A press on a tab, until its release.
+/// A press on a tab, until its release. The tab is remembered by id, not by index: tabs can
+/// come and go during a drag, and a release must act on the tab that was pressed, or on none.
 pub(crate) struct Press {
-    pub index: usize,
+    pub id: TabId,
     pub origin: Point,
     /// Travelled past the threshold: the tab is carried, the release is no click.
     pub dragging: bool,
@@ -50,7 +51,8 @@ pub(crate) struct DragState {
     pub press: Option<Press>,
     /// The tab a carried tab hovers, as last reported.
     pub over: Option<usize>,
-    /// Where a carried tile would become a tab, as last drawn.
+    /// Where a carried tile would become a tab, or a carried tab of this strip would move
+    /// to, as last drawn.
     pub gap: Option<usize>,
 }
 
@@ -70,9 +72,9 @@ pub(crate) struct Strip<'a> {
     pub scroll: f32,
 }
 
-/// Where a tile dropped at `p` becomes a tab: before the tab whose first half (along the
-/// axis) is under `p`, after the one whose second half is, else the nearest gap. Over its
-/// own tab (`own`): nowhere.
+/// Where something dropped at `p` lands between the tabs: before the tab whose first half
+/// (along the axis) is under `p`, after the one whose second half is, else the nearest gap.
+/// Over its own tab (`own`): nowhere.
 pub(crate) fn gap_at(
     rects: &[Rectangle],
     own: Option<usize>,
@@ -102,9 +104,11 @@ pub(crate) fn gap_at(
 }
 
 /// The tab-drag and right-click side of `event` over a strip whose tabs sit at `rects`
-/// inside `bounds`. Returns `true` when the content beneath must not see where the pointer
-/// is (the release that ends a tab drag is no click on a button; a right-click is the
-/// menu's, not the button's).
+/// inside `bounds`: a press that travels [`DRAG_THRESHOLD`] carries its tab, a carried tab
+/// of this strip dropped in a gap asks to move there ([`DragMsg::ReorderTab`]), a carried
+/// tile dropped in a gap becomes a tab there. Returns `true` when the content beneath must
+/// not see where the pointer is (the release that ends a tab drag is no click on a button; a
+/// right-click is the menu's, not the button's).
 pub(crate) fn drag_event(
     strip: &Strip<'_>,
     state: &mut DragState,
@@ -118,14 +122,24 @@ pub(crate) fn drag_event(
         shell.publish(Message::Drag(strip.window, msg));
     };
     let under = |p: Point| rects.iter().position(|r| r.contains(p));
+    let index_of = |id: TabId| strip.ids.iter().position(|i| *i == id);
     let tile = matches!(strip.carry, Some(Carry::Tile(_)));
-    // A tile drag that ended elsewhere (Escape) leaves no gap behind.
-    if !tile && state.gap.take().is_some() {
+    // The index of the tab this strip is carrying, if any: it can be dropped back on the
+    // strip, in another gap.
+    let own = state
+        .press
+        .as_ref()
+        .filter(|p| p.dragging && matches!(strip.carry, Some(Carry::Tab(id)) if id == p.id))
+        .and_then(|p| index_of(p.id));
+    // A drag that ended elsewhere (Escape) leaves no gap behind.
+    if !tile && own.is_none() && state.gap.take().is_some() {
         shell.request_redraw();
     }
     let gap = |p: Option<Point>| {
-        p.filter(|_| tile)
-            .and_then(|p| gap_at(rects, strip.hole, p, strip.axis))
+        let p = p.filter(|_| tile || own.is_some())?;
+        let gap = gap_at(rects, if tile { strip.hole } else { own }, p, strip.axis)?;
+        // Right before or after the carried tab: no move.
+        (own != Some(gap) && own.map(|o| o + 1) != Some(gap)).then_some(gap)
     };
     match event {
         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
@@ -133,8 +147,9 @@ pub(crate) fn drag_event(
                 .position_over(bounds)
                 .filter(|_| !strip.modal)
                 .and_then(|p| {
-                    under(p).map(|index| Press {
-                        index,
+                    let id = *strip.ids.get(under(p)?)?;
+                    Some(Press {
+                        id,
                         origin: p,
                         dragging: false,
                     })
@@ -160,15 +175,16 @@ pub(crate) fn drag_event(
             if let (Some(press), Some(p)) = (&mut state.press, cursor.position()) {
                 if !press.dragging && p.distance(press.origin) >= DRAG_THRESHOLD {
                     press.dragging = true;
-                    if let Some(id) = strip.ids.get(press.index) {
-                        shell.publish(Message::Drag(strip.window, DragMsg::StartTab(*id)));
+                    if strip.ids.contains(&press.id) {
+                        shell.publish(Message::Drag(strip.window, DragMsg::StartTab(press.id)));
                     }
                 }
                 if press.dragging && matches!(strip.carry, Some(Carry::Tab(_))) {
+                    let mine = index_of(press.id);
                     let over = cursor
                         .position_over(bounds)
                         .and_then(under)
-                        .filter(|i| *i != press.index);
+                        .filter(|i| Some(*i) != mine);
                     if over != state.over {
                         state.over = over;
                         publish(shell, DragMsg::OverTab(over));
@@ -182,11 +198,18 @@ pub(crate) fn drag_event(
             }
         }
         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+            let at = gap(cursor.position_over(bounds));
             if state.gap.take().is_some() {
                 shell.request_redraw();
             }
             if let Some(Press { dragging: true, .. }) = state.press.take() {
                 state.over = None;
+                // This strip's own tab let go in a gap: it moves there, then the drag ends.
+                if let (Some(index), Some(tab)) =
+                    (at.filter(|_| !tile), own.and_then(|o| strip.ids.get(o)))
+                {
+                    publish(shell, DragMsg::ReorderTab { tab: *tab, index });
+                }
                 publish(shell, DragMsg::End);
                 return true;
             }
@@ -258,6 +281,153 @@ mod tests {
         assert_eq!(gap_at(&tabs, Some(0), Point::new(20.0, 5.0), Axis::X), None);
         // A strip with no tabs (the bar while tabs are on the left) takes no drop.
         assert_eq!(gap_at(&[], None, Point::new(20.0, 5.0), Axis::X), None);
+    }
+
+    /// Runs `events` (each with the pointer position, in strip coordinates) through a strip
+    /// of `rows` down the left, scrolled by `scroll`, while `carry` is under way. Returns the
+    /// drag messages published.
+    fn drive_rows(
+        rows: &[Rectangle],
+        ids: &[TabId],
+        carry: Option<Carry>,
+        scroll: f32,
+        events: &[(Event, Point)],
+    ) -> Vec<DragMsg> {
+        use iced::advanced::Shell;
+        let strip = Strip {
+            window: window::Id::unique(),
+            ids,
+            carry,
+            modal: false,
+            hole: Some(0),
+            axis: Axis::Y,
+            scroll,
+        };
+        let bounds = Rectangle::new(
+            Point::new(0.0, rows[0].y),
+            Size::new(100.0, rows.len() as f32 * 34.0),
+        );
+        let mut state = DragState::default();
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        for (event, at) in events {
+            drag_event(
+                &strip,
+                &mut state,
+                event,
+                rows,
+                bounds,
+                mouse::Cursor::Available(*at),
+                &mut shell,
+            );
+        }
+        messages
+            .into_iter()
+            .filter_map(|m| match m {
+                Message::Drag(_, d) => Some(d),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn press() -> Event {
+        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+    }
+
+    fn release() -> Event {
+        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+    }
+
+    fn moved(p: Point) -> Event {
+        Event::Mouse(mouse::Event::CursorMoved { position: p })
+    }
+
+    #[test]
+    fn a_tab_carried_down_the_sidebar_and_dropped_in_a_gap_asks_to_move_there() {
+        // Three rows inside a list scrolled by 400 (content coordinates).
+        let rows = [
+            Rectangle::new(Point::new(0.0, 400.0), Size::new(100.0, 30.0)),
+            Rectangle::new(Point::new(0.0, 434.0), Size::new(100.0, 30.0)),
+            Rectangle::new(Point::new(0.0, 468.0), Size::new(100.0, 30.0)),
+        ];
+        let ids = [TabId::next(), TabId::next(), TabId::next()];
+        let at = rows[0].center();
+        let away = Point::new(at.x, at.y + 10.0);
+        // The lower half of the second row: the gap after it, index 2.
+        let over = Point::new(at.x, rows[1].center_y() + 10.0);
+        let drags = drive_rows(
+            &rows,
+            &ids,
+            Some(Carry::Tab(ids[0])),
+            400.0,
+            &[
+                (press(), at),
+                (moved(away), away),
+                (moved(over), over),
+                (release(), over),
+            ],
+        );
+        assert_eq!(
+            drags
+                .iter()
+                .filter(|d| matches!(d, DragMsg::ReorderTab { .. }))
+                .collect::<Vec<_>>(),
+            [&DragMsg::ReorderTab {
+                tab: ids[0],
+                index: 2
+            }],
+            "{drags:?}"
+        );
+        assert_eq!(drags.last(), Some(&DragMsg::End));
+
+        // The upper half of the second row is the gap right after itself: no move.
+        let over = Point::new(at.x, rows[1].center_y() - 10.0);
+        let drags = drive_rows(
+            &rows,
+            &ids,
+            Some(Carry::Tab(ids[0])),
+            400.0,
+            &[
+                (press(), at),
+                (moved(away), away),
+                (moved(over), over),
+                (release(), over),
+            ],
+        );
+        assert!(
+            !drags
+                .iter()
+                .any(|d| matches!(d, DragMsg::ReorderTab { .. })),
+            "{drags:?}"
+        );
+        assert_eq!(drags.last(), Some(&DragMsg::End));
+    }
+
+    #[test]
+    fn a_tab_that_left_the_strip_during_its_drag_is_not_reordered() {
+        let rows = [
+            Rectangle::new(Point::new(0.0, 0.0), Size::new(100.0, 30.0)),
+            Rectangle::new(Point::new(0.0, 34.0), Size::new(100.0, 30.0)),
+        ];
+        let ids = [TabId::next(), TabId::next()];
+        // The carried tab is not one of this strip's rows any more (it moved to another
+        // window): a release over a gap here asks for no move.
+        let gone = TabId::next();
+        let at = rows[0].center();
+        let over = Point::new(at.x, rows[1].center_y() + 10.0);
+        let drags = drive_rows(
+            &rows,
+            &ids,
+            Some(Carry::Tab(gone)),
+            0.0,
+            &[(press(), at), (moved(over), over), (release(), over)],
+        );
+        assert!(
+            !drags
+                .iter()
+                .any(|d| matches!(d, DragMsg::ReorderTab { .. })),
+            "{drags:?}"
+        );
     }
 
     #[test]

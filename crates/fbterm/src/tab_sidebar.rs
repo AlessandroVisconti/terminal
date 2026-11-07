@@ -19,7 +19,7 @@ use crate::tabs::{Tab, TabId};
 use crate::theme::{Tokens, UI_FONT};
 use crate::tooltip::{tip, tooltip_text};
 use crate::ui::{ICON_X, icon};
-use crate::window::{MIN_TERMINAL_WIDTH, dot, snap_rect, state_color};
+use crate::window::{MIN_TERMINAL_WIDTH, dot, page_icon, snap_rect, state_color};
 use crate::windows::Carry;
 
 /// The sidebar's width, when the window has room for it beside the terminal.
@@ -188,9 +188,11 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
         false,
     );
     let mut inner = row![stripe];
-    if tab.page.is_none() {
-        inner = inner.push(dot(state_color(t, tab.state())));
-    }
+    // A page tab has no session to show: it carries its page's icon, as on the bar.
+    inner = match tab.page {
+        None => inner.push(dot(state_color(t, tab.state()))),
+        Some(page) => inner.push(icon(page_icon(page), 14.0, idle.icon)),
+    };
     if tab.trouble() {
         inner = inner.push(dot(t.warning));
     }
@@ -230,7 +232,7 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
 
 /// The list of rows inside the scrollable: it handles the drag protocol and the right-click
 /// over the rows (the column's children), and draws the gap where a carried tile would
-/// become a tab.
+/// become a tab or a carried tab would move to.
 struct Rows<'a> {
     window: window::Id,
     ids: Vec<TabId>,
@@ -379,9 +381,9 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Rows<'_> {
             cursor,
             viewport,
         );
-        // A carried tile: a violet line in the gap where it would become a tab.
+        // A carried tile or tab: a violet line in the gap where it would land.
         let state = tree.state.downcast_ref::<DragState>();
-        if let (Some(Carry::Tile(_)), Some(gap)) = (self.carry, state.gap) {
+        if let (Some(Carry::Tile(_) | Carry::Tab(_)), Some(gap)) = (self.carry, state.gap) {
             let bounds = layout.bounds();
             let rows = row_rects(layout);
             let y = match rows.get(gap) {

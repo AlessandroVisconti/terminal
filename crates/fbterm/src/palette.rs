@@ -383,18 +383,20 @@ pub struct PaletteState {
     pub stage: Stage,
     pub query: String,
     items: Vec<PaletteItem>,
+    terminal: bool,
     ranked: Vec<usize>,
     selected: usize,
     pub input: iced::widget::Id,
 }
 
 impl PaletteState {
-    pub fn new(items: Vec<PaletteItem>, query: String, recency: &Recency) -> Self {
+    pub fn new(items: Vec<PaletteItem>, query: String, terminal: bool, recency: &Recency) -> Self {
         let ranked = rank(&query, &items, recency);
         Self {
             stage: Stage::Launch,
             query,
             items,
+            terminal,
             ranked,
             selected: 0,
             input: iced::widget::Id::unique(),
@@ -405,19 +407,25 @@ impl PaletteState {
     pub fn staged(stage: Stage, items: Vec<PaletteItem>) -> Self {
         Self {
             stage,
-            ..Self::new(items, String::new(), &Recency::new())
+            ..Self::new(items, String::new(), true, &Recency::new())
         }
     }
 
     /// Replace the listed items (the profiles changed), keeping the query and the input. A
     /// rearranging step keeps its own list.
-    pub fn set_items(&mut self, items: Vec<PaletteItem>, recency: &Recency) {
+    pub fn set_items(&mut self, items: Vec<PaletteItem>, terminal: bool, recency: &Recency) {
         if self.stage != Stage::Launch {
             return;
         }
         self.items = items;
+        self.terminal = terminal;
         self.ranked = rank(&self.query, &self.items, recency);
         self.selected = self.selected.min(self.ranked.len().saturating_sub(1));
+    }
+
+    /// Whether the items were built for a window showing a terminal tab (not a page tab).
+    pub fn for_terminal(&self) -> bool {
+        self.terminal
     }
 
     pub fn set_query(&mut self, query: String, recency: &Recency) {
@@ -867,7 +875,7 @@ mod tests {
     fn selection_wraps_and_resets_on_query() {
         let items = vec![profile("a", ""), profile("b", ""), profile("c", "")];
         let recency = Recency::new();
-        let mut s = PaletteState::new(items, String::new(), &recency);
+        let mut s = PaletteState::new(items, String::new(), true, &recency);
         s.up();
         assert_eq!(s.selected_position(), s.ranked_len() - 1);
         s.down();

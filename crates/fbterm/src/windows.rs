@@ -37,6 +37,9 @@ pub enum DragMsg {
     HoverElapsed(u64),
     /// The carried tab was dropped on the content of the shown tab.
     DropTab { tab: TabId, at: Drop },
+    /// The carried tab was dropped on its own tab bar or sidebar: it moves to the gap
+    /// `index` (counted in the strip as it was before the move).
+    ReorderTab { tab: TabId, index: usize },
     /// A tile is being carried (`None`: no longer).
     Tile(Option<PaneId>),
     /// A carried tile was dropped on the tab bar: a tab of its own at `index`.
@@ -428,6 +431,11 @@ impl App {
             DragMsg::StartTab(tab) => {
                 self.carry = Some((wid, Carry::Tab(tab)));
                 self.hover = None;
+                self.carry_from = self
+                    .windows
+                    .get(&wid)
+                    .and_then(WindowState::active_tab)
+                    .map(|t| t.id);
                 Task::none()
             }
             DragMsg::OverTab(over) => {
@@ -469,6 +477,30 @@ impl App {
                     None => Task::none(),
                 }
             }
+            DragMsg::ReorderTab { tab, index } => {
+                // Only the drag that is under way: a stale release changes nothing.
+                if self.carry_in(wid) != Some(Carry::Tab(tab)) {
+                    return Task::none();
+                }
+                let back = self.carry_from;
+                self.end_carry();
+                let Some(window) = self.windows.get(&wid) else {
+                    return Task::none();
+                };
+                let Some(from) = window.find(tab) else {
+                    return Task::none();
+                };
+                let to = if index > from { index - 1 } else { index };
+                if to == from || to >= window.tabs.len() {
+                    return self.show_tab(wid, back);
+                }
+                self.with_window(wid, |w| {
+                    let moved = w.tabs.remove(from);
+                    w.tabs.insert(to, moved);
+                    w.active = to;
+                    true
+                })
+            }
             DragMsg::Tile(pane) => {
                 match pane {
                     Some(pane) => self.carry = Some((wid, Carry::Tile(pane))),
@@ -484,8 +516,9 @@ impl App {
                 self.tile_to_tab(wid, pane, index)
             }
             DragMsg::End => {
+                let back = self.carry_from;
                 self.end_carry();
-                Task::none()
+                self.show_tab(wid, back)
             }
         }
     }
@@ -540,6 +573,16 @@ impl App {
     fn end_carry(&mut self) {
         self.carry = None;
         self.hover = None;
+        self.carry_from = None;
+    }
+
+    /// Show tab `id` of `wid` again if a hover switch moved away from it during a drag.
+    fn show_tab(&mut self, wid: window::Id, id: Option<TabId>) -> Task<Message> {
+        let index = id.and_then(|id| self.windows.get(&wid)?.find(id));
+        match index {
+            Some(i) => self.with_window(wid, |w| w.select(i)),
+            None => Task::none(),
+        }
     }
 
     /// Merge tab `source` into tab `target` of `wid`: the source's whole layout (its
@@ -763,6 +806,72 @@ mod tests {
     }
 
     #[test]
+    fn reorder_tab_moves_it_to_the_gap_and_shows_it() {
+        let p = profile("a");
+        let (mut app, wid, _, [ta, tb]) = app_with_tabs(&p);
+        let order =
+            |app: &App| -> Vec<TabId> { app.windows[&wid].tabs.iter().map(|t| t.id).collect() };
+        let reorder = |app: &mut App, tab, index| {
+            let _ = app.drag_msg(wid, super::DragMsg::StartTab(tab));
+            let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab, index });
+        };
+        // Gaps are counted before the move: 2 is after the last tab.
+        reorder(&mut app, ta, 2);
+        assert_eq!(order(&app), [tb, ta]);
+        assert_eq!(app.windows[&wid].active, 1, "the moved tab is shown");
+        reorder(&mut app, ta, 0);
+        assert_eq!(order(&app), [ta, tb]);
+        assert_eq!(app.windows[&wid].active, 0);
+        // Next to itself, past the end or a missing tab: nothing.
+        for (tab, index) in [
+            (ta, 0),
+            (ta, 1),
+            (tb, 1),
+            (tb, 2),
+            (ta, 9),
+            (TabId::next(), 0),
+        ] {
+            reorder(&mut app, tab, index);
+            assert_eq!(order(&app), [ta, tb], "{index}");
+        }
+        // A release nobody is carrying for (cancelled, or another tab or window's drag): nothing.
+        let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab: ta, index: 2 });
+        assert_eq!(order(&app), [ta, tb], "no carry");
+        let _ = app.drag_msg(wid, super::DragMsg::StartTab(tb));
+        let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab: ta, index: 2 });
+        assert_eq!(order(&app), [ta, tb], "another tab is carried");
+        assert_eq!(
+            app.carry_in(wid),
+            Some(super::Carry::Tab(tb)),
+            "that drag goes on"
+        );
+    }
+
+    #[test]
+    fn a_drag_ending_without_a_move_shows_the_tab_that_was_active() {
+        let p = profile("a");
+        let (mut app, wid, _, [ta, _]) = app_with_tabs(&p);
+        app.state_saving_enabled = false;
+        app.windows.get_mut(&wid).unwrap().active = 0;
+        // Carry the first tab over the second long enough to switch to it.
+        let hover_switch = |app: &mut App| {
+            let _ = app.drag_msg(wid, super::DragMsg::StartTab(ta));
+            let _ = app.drag_msg(wid, super::DragMsg::OverTab(Some(1)));
+            let generation = app.hover_generation;
+            let _ = app.drag_msg(wid, super::DragMsg::HoverElapsed(generation));
+            assert_eq!(app.windows[&wid].active, 1, "the hover switched");
+        };
+        // Released at its own gap: nothing moves, and the first tab is shown again.
+        hover_switch(&mut app);
+        let _ = app.drag_msg(wid, super::DragMsg::ReorderTab { tab: ta, index: 0 });
+        assert_eq!(app.windows[&wid].active, 0);
+        // Same for a drag that ends otherwise (cancelled, pointer left the bar).
+        hover_switch(&mut app);
+        let _ = app.drag_msg(wid, super::DragMsg::End);
+        assert_eq!(app.windows[&wid].active, 0);
+    }
+
+    #[test]
     fn merge_into_self_is_noop() {
         let p = profile("a");
         let (mut app, wid, [_, _, b], [ta, tb]) = app_with_tabs(&p);
@@ -913,6 +1022,68 @@ mod tests {
     }
 
     #[test]
+    fn launcher_hides_terminal_rows_on_a_page_tab() {
+        let p = profile("a");
+        let (mut app, wid, _, _) = app_with_tabs(&p);
+        // One row of each kind that needs a terminal, and one that does not.
+        let merge = |app: &App| {
+            let all = labels(app, wid);
+            let has = |l: &str| all.iter().any(|x| x.starts_with(l));
+            let rows = [
+                "Merge tab",
+                "Maximize pane",
+                "Find in pane",
+                "Find in this tab",
+                "Split right",
+                "Split down",
+                "Move tile\u{2026}",
+                "Move tile to new tab",
+            ];
+            assert!(has("Settings"), "rows that need no terminal stay");
+            assert!(has("Find in all tabs"), "rows that need no terminal stay");
+            let listed = rows.iter().filter(|l| has(l)).count();
+            assert!(has("Export tab") == (listed > 0));
+            assert!(listed == 0 || listed == rows.len(), "all or none");
+            listed > 0
+        };
+        let _ = app.update(Message::Palette(wid, PaletteMsg::Open));
+        assert!(merge(&app), "plain shell tab");
+        let _ = app.update(Message::Palette(wid, PaletteMsg::Close));
+        let _ = app.update(Message::Shortcut(wid, Action::Settings));
+        let _ = app.update(Message::Palette(wid, PaletteMsg::Open));
+        assert!(!merge(&app), "page tab");
+        // Back on a shell tab with the launcher still up.
+        app.windows.get_mut(&wid).unwrap().active = 0;
+        let _ = app.update(Message::Palette(wid, PaletteMsg::Query(String::new())));
+        assert!(merge(&app), "shell tab again");
+        let _ = app.update(Message::Palette(wid, PaletteMsg::Close));
+        let _ = app.update(Message::Palette(wid, PaletteMsg::Open));
+        assert!(merge(&app), "reopened on a shell tab");
+    }
+
+    #[test]
+    fn pane_actions_do_nothing_on_a_page_tab() {
+        let p = profile("a");
+        let (mut app, wid, _, _) = app_with_tabs(&p);
+        let _ = app.update(Message::Shortcut(wid, Action::Settings));
+        assert!(app.windows[&wid].active_tab().unwrap().page.is_some());
+        for a in [
+            Action::FindInTab,
+            Action::Find,
+            Action::MaximizePane,
+            Action::ZoomIn,
+            Action::SplitRight,
+            Action::TileToTab,
+        ] {
+            let _ = app.update(Message::Shortcut(wid, a));
+        }
+        assert!(app.find_box.is_none());
+        let w = &app.windows[&wid];
+        assert!(w.active_tab().unwrap().focused_pane().find.is_none());
+        assert_eq!(w.tabs.len(), 3, "no tab added by Move tile to new tab");
+    }
+
+    #[test]
     fn palette_lists_only_choices_that_fit() {
         let p = profile("a");
         let (mut app, wid, _, _) = app_with_tabs(&p);
@@ -990,8 +1161,8 @@ mod tests {
         let generation = app.hover_generation;
         let _ = app.update(Message::Drag(wid, DragMsg::HoverElapsed(generation)));
         let _ = app.update(Message::Drag(wid, DragMsg::End));
+        assert_eq!(app.windows[&wid].active, 1, "the tab shown before is back");
         let tab = &app.windows[&wid].tabs[0];
-        assert_eq!(app.windows[&wid].active, 0);
         assert_eq!(
             tab.maximized,
             Some(a2),
