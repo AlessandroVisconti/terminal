@@ -2,6 +2,16 @@
 
 All notable changes to featherbit terminal (`fbterm`). The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each version links to its GitHub release, where the downloads are.
 
+## [0.8.1] - 2026-11-07
+
+### Fixed
+
+- Row tooltips in the tab column come back after the tabs move to the top while the column's edge is being dragged ([#74](https://github.com/featherbitplatform/terminal/pull/74)).
+- A link under the column's edge no longer stays underlined when a drag of the edge ends because the pointer left the window or the window lost focus ([#74](https://github.com/featherbitplatform/terminal/pull/74)).
+- With tab groups whose names differ only by case, such as `Prod` and `prod`, a folded group stays folded when the tab that named its header closes ([#74](https://github.com/featherbitplatform/terminal/pull/74)).
+- Moving the tabs to the top and back no longer unfolds each window's active group ([#74](https://github.com/featherbitplatform/terminal/pull/74)).
+- The tab column measures each tab name once instead of on every redraw ([#74](https://github.com/featherbitplatform/terminal/pull/74)).
+
 ## [0.8.0] - 2026-11-07
 
 ### Added
@@ -165,6 +175,7 @@ The first release: the daily driver milestone, macOS only.
 - Compact scrollback history: a live `scrollback_lines` setting with a Settings confirmation, and memory given back when tabs close ([#2](https://github.com/featherbitplatform/terminal/pull/2)).
 - Unsigned macOS `.dmg` packaging and the release workflow ([#1](https://github.com/featherbitplatform/terminal/pull/1)).
 
+[0.8.1]: https://github.com/featherbitplatform/terminal/releases/tag/v0.8.1
 [0.8.0]: https://github.com/featherbitplatform/terminal/releases/tag/v0.8.0
 [0.7.1]: https://github.com/featherbitplatform/terminal/releases/tag/v0.7.1
 [0.7.0]: https://github.com/featherbitplatform/terminal/releases/tag/v0.7.0
