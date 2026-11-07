@@ -292,7 +292,11 @@ fn press_message(
             }
             shortcut.map(|action| match action {
                 Action::CloseTab if !repeat => Some(Message::Schemes(SchemesMsg::Close)),
-                Action::Quit | Action::Settings | Action::EditProfiles | Action::Tunnels
+                Action::Quit
+                | Action::Settings
+                | Action::EditProfiles
+                | Action::Tunnels
+                | Action::VerticalTabs
                     if !repeat =>
                 {
                     Some(Message::Shortcut(w, action))
@@ -309,6 +313,7 @@ fn press_message(
             | Action::Tunnels
             | Action::ExportProfiles
             | Action::ImportProfiles
+            | Action::VerticalTabs
                 if !repeat =>
             {
                 Some(Message::Shortcut(w, action))
@@ -1242,6 +1247,15 @@ mod tests {
         assert!(matches!(
             press(Mode::Welcome, "t", false),
             Some(Some(Message::Shortcut(_, Action::NewTab)))
+        ));
+        // And from the windows without tabs (Color schemes, export and import).
+        assert!(matches!(
+            press(Mode::Schemes, "b", true),
+            Some(Some(Message::Shortcut(_, Action::VerticalTabs)))
+        ));
+        assert!(matches!(
+            press(Mode::Archive, "b", true),
+            Some(Some(Message::Shortcut(_, Action::VerticalTabs)))
         ));
         assert!(matches!(
             press(Mode::Editor, "b", true),

@@ -310,7 +310,6 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
                 carry,
                 modal,
                 scale: app.physical_scale(id),
-                scroll: app.sidebar_scroll.get(&id).map_or(0.0, |(o, _)| *o),
                 width,
             };
             row![

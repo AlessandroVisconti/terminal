@@ -276,6 +276,9 @@ pub struct App {
     pub(crate) sidebar_scroll: HashMap<window::Id, (f32, f32)>,
     /// The active tab each window's sidebar last scrolled into view.
     pub(crate) sidebar_shown: HashMap<window::Id, TabId>,
+    /// How many passwords the tab menu copied this run: a copy's clipboard clear runs only
+    /// while it is still the latest (see `tab_menu.rs`).
+    pub(crate) clip_generation: u64,
     /// `profiles.toml` exists but could not be parsed; the in-memory profiles are a stand-in.
     /// While set, nothing may save the profile store: that would overwrite the user's file.
     pub profiles_error: Option<ConfigError>,
@@ -682,6 +685,7 @@ impl App {
             notices_dismissed: false,
             sidebar_scroll: HashMap::new(),
             sidebar_shown: HashMap::new(),
+            clip_generation: 0,
             profiles_error,
             paths,
             secrets,
@@ -1026,15 +1030,18 @@ impl App {
         self.sync_update_state();
         self.sync_recording();
         crate::key_log::set_recording(self.recording_window());
-        let reveal = self.reveal_active_tabs();
-        let unfocus: Vec<Task<Message>> = [self.sync_panel_focus(), self.sync_tunnels_focus()]
-            .into_iter()
-            .flatten()
-            .collect();
-        if unfocus.is_empty() {
-            Task::batch([task, reveal])
+        let more: Vec<Task<Message>> = [
+            self.reveal_active_tabs(),
+            self.sync_panel_focus(),
+            self.sync_tunnels_focus(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if more.is_empty() {
+            task
         } else {
-            Task::batch([task, reveal].into_iter().chain(unfocus))
+            Task::batch(std::iter::once(task).chain(more))
         }
     }
 

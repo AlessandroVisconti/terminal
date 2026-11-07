@@ -81,8 +81,6 @@ pub(crate) struct Sidebar<'b> {
     pub modal: bool,
     /// Physical pixels per logical pixel.
     pub scale: f32,
-    /// The list's current scroll offset (rows are measured inside the scrollable).
-    pub scroll: f32,
     /// The sidebar's width (see [`sidebar_width`]).
     pub width: f32,
 }
@@ -106,7 +104,6 @@ pub(crate) fn view<'a>(s: Sidebar<'_>, tabs: &'a [Tab], active: usize) -> Elemen
         carry: s.carry,
         modal: s.modal,
         hole: (active < tabs.len()).then_some(active),
-        scroll: s.scroll,
         tokens: t,
         scale: s.scale,
         content: list.into(),
@@ -240,14 +237,17 @@ struct Rows<'a> {
     carry: Option<Carry>,
     modal: bool,
     hole: Option<usize>,
-    scroll: f32,
     tokens: &'static Tokens,
     scale: f32,
     content: Element<'a, Message>,
 }
 
 impl Rows<'_> {
-    fn strip(&self) -> Strip<'_> {
+    /// The strip as of one event. The scrollable hands its content a viewport shifted by
+    /// the scroll translation and a layout that is not: their difference is the offset the
+    /// rows and the pointer are measured at, read here rather than kept (iced reports no
+    /// scroll when the list comes to fit, and a rebuilt list starts at 0).
+    fn strip(&self, layout: Layout<'_>, viewport: &Rectangle) -> Strip<'_> {
         Strip {
             window: self.window,
             ids: &self.ids,
@@ -255,7 +255,7 @@ impl Rows<'_> {
             modal: self.modal,
             hole: self.hole,
             axis: Axis::Y,
-            scroll: self.scroll,
+            scroll: viewport.y - layout.bounds().y,
         }
     }
 }
@@ -322,7 +322,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Rows<'_> {
     ) {
         let state = tree.state.downcast_mut::<DragState>();
         let rects = row_rects(layout);
-        let strip = self.strip();
+        let strip = self.strip(layout, viewport);
         // The row pressed at the start of a drag is let go without a click: it sees the
         // release with no pointer over it.
         let cursor = if drag_event(&strip, state, event, &rects, layout.bounds(), cursor, shell) {
@@ -437,12 +437,15 @@ impl App {
     }
 
     /// After every update: a window whose active tab changed scrolls its sidebar just enough
-    /// to show the new active row, when it is not fully in view. Nothing while tabs are on
-    /// top (and the bookkeeping starts afresh when they move left).
-    pub(crate) fn reveal_active_tabs(&mut self) -> Task<Message> {
+    /// to show the new active row, when it is not fully in view; `None` when nothing is to be
+    /// scrolled (the common case, so the update's task is passed through untouched). Nothing
+    /// while tabs are on top, where the lists do not exist: what was known about them is
+    /// forgotten, so a list built afresh is read afresh.
+    pub(crate) fn reveal_active_tabs(&mut self) -> Option<Task<Message>> {
         if !self.settings.tabs_left() {
             self.sidebar_shown.clear();
-            return Task::none();
+            self.sidebar_scroll.clear();
+            return None;
         }
         let bar = crate::chrome::Chrome::current().bar_height();
         let mut tasks = Vec::new();
@@ -466,7 +469,7 @@ impl App {
                 ));
             }
         }
-        Task::batch(tasks)
+        (!tasks.is_empty()).then(|| Task::batch(tasks))
     }
 
     /// The `Vertical tabs` action: tabs to the left, or back along the top. An unanswered
@@ -576,6 +579,48 @@ mod tests {
         let _ = app.action(None, Action::VerticalTabs);
         let _ = app.open_tunnels_panel(wid);
         lay_out(&app, wid);
+    }
+
+    #[test]
+    fn nothing_to_scroll_means_no_task_and_tabs_on_top_forget_the_scroll() {
+        let (mut app, wid) = app_with_tabs(&["a", "b", "c"]);
+        assert!(app.reveal_active_tabs().is_none(), "tabs on top");
+        let _ = app.update(Message::Shortcut(wid, Action::VerticalTabs));
+        assert!(app.reveal_active_tabs().is_none(), "already shown");
+        let scrolled = TabBarMsg::Scrolled {
+            offset: 400.0,
+            height: 200.0,
+        };
+        let _ = app.update(Message::TabBar(wid, scrolled));
+        assert!(app.sidebar_scroll.contains_key(&wid));
+        // Back on top: the scrollable is gone, and so is what we knew about it.
+        let _ = app.update(Message::Shortcut(wid, Action::VerticalTabs));
+        assert!(!app.sidebar_scroll.contains_key(&wid));
+        assert!(!app.sidebar_shown.contains_key(&wid));
+    }
+
+    #[test]
+    fn switching_back_to_the_left_reveals_the_active_tab_afresh() {
+        let names: Vec<String> = (0..20).map(|i| format!("t{i}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let (mut app, wid) = app_with_tabs(&refs);
+        app.windows.get_mut(&wid).unwrap().active = 19;
+        let _ = app.update(Message::Shortcut(wid, Action::VerticalTabs));
+        // Revealed against the window's height: the list scrolled down to row 19.
+        let (offset, _) = app.sidebar_scroll[&wid];
+        assert!(offset > 0.0, "{offset}");
+        // Scrolled back up by hand, then top and left again: revealed again, from 0.
+        let _ = app.update(Message::TabBar(
+            wid,
+            TabBarMsg::Scrolled {
+                offset: 0.0,
+                height: 200.0,
+            },
+        ));
+        let _ = app.update(Message::Shortcut(wid, Action::VerticalTabs));
+        let _ = app.update(Message::Shortcut(wid, Action::VerticalTabs));
+        let (offset, _) = app.sidebar_scroll[&wid];
+        assert!(offset > 0.0, "{offset}");
     }
 
     #[test]

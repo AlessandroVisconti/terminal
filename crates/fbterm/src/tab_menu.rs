@@ -28,10 +28,10 @@ pub(crate) enum TabMenuMsg {
     Copy(window::Id, TabId),
     /// The saved secrets answered (on the blocking pool) for the profile.
     Read(window::Id, ProfileId, Delivered<Read>),
-    /// The minute after a copy passed: look at the clipboard.
-    ClearDue(Delivered<Zeroizing<String>>),
-    /// The clipboard as read for the check.
-    ClearCheck(Delivered<Zeroizing<String>>, Option<String>),
+    /// The minute after copy number `u64` passed: look at the clipboard.
+    ClearDue(Delivered<Zeroizing<String>>, u64),
+    /// The clipboard as read for copy number `u64`'s check.
+    ClearCheck(Delivered<Zeroizing<String>>, Option<Zeroizing<String>>, u64),
 }
 
 impl std::fmt::Debug for TabMenuMsg {
@@ -39,10 +39,8 @@ impl std::fmt::Debug for TabMenuMsg {
         match self {
             Self::Copy(w, t) => write!(f, "Copy({w:?}, {t:?})"),
             Self::Read(w, p, _) => write!(f, "Read({w:?}, {p:?}, ..)"),
-            Self::ClearDue(_) => write!(f, "ClearDue(..)"),
-            Self::ClearCheck(_, text) => {
-                write!(f, "ClearCheck(.., {:?})", text.as_ref().map(|t| t.len()))
-            }
+            Self::ClearDue(..) => write!(f, "ClearDue(..)"),
+            Self::ClearCheck(..) => write!(f, "ClearCheck(..)"),
         }
     }
 }
@@ -50,6 +48,18 @@ impl std::fmt::Debug for TabMenuMsg {
 /// Whether the clipboard still holds exactly the copied password: only then is it cleared.
 pub(crate) fn should_clear(copied: &str, clipboard: Option<&str>) -> bool {
     clipboard == Some(copied)
+}
+
+/// Whether copy number `generation`'s check clears: only the latest copy's (`current`), so a
+/// second copy within the minute restarts it even for the same password, and only when the
+/// clipboard still holds exactly what was copied.
+pub(crate) fn clear_now(
+    current: u64,
+    generation: u64,
+    copied: &str,
+    clipboard: Option<&str>,
+) -> bool {
+    generation == current && should_clear(copied, clipboard)
 }
 
 impl App {
@@ -60,12 +70,20 @@ impl App {
                 Some(read) => self.password_read(wid, id, read),
                 None => Task::none(),
             },
-            TabMenuMsg::ClearDue(copied) => iced::clipboard::read()
-                .map(move |text| Message::TabMenu(TabMenuMsg::ClearCheck(copied.clone(), text))),
-            TabMenuMsg::ClearCheck(copied, text) => {
-                let clear = copied
-                    .take()
-                    .is_some_and(|copied| should_clear(&copied, text.as_deref()));
+            TabMenuMsg::ClearDue(copied, generation) => iced::clipboard::read().map(move |text| {
+                let text = text.map(Zeroizing::new);
+                Message::TabMenu(TabMenuMsg::ClearCheck(copied.clone(), text, generation))
+            }),
+            TabMenuMsg::ClearCheck(copied, text, generation) => {
+                let current = self.clip_generation;
+                let clear = copied.take().is_some_and(|copied| {
+                    clear_now(
+                        current,
+                        generation,
+                        &copied,
+                        text.as_deref().map(String::as_str),
+                    )
+                });
                 if clear {
                     iced::clipboard::write(String::new())
                 } else {
@@ -100,13 +118,15 @@ impl App {
     fn password_read(&mut self, wid: window::Id, id: ProfileId, read: Read) -> Task<Message> {
         match read {
             Ok(Some(password)) => {
+                self.clip_generation += 1;
+                let generation = self.clip_generation;
                 let copied = Delivered::new(password.clone());
                 let text = password.to_string();
                 drop(password);
                 Task::batch([
                     iced::clipboard::write(text),
                     Task::perform(async { tokio::time::sleep(CLEAR_AFTER).await }, move |()| {
-                        Message::TabMenu(TabMenuMsg::ClearDue(copied.clone()))
+                        Message::TabMenu(TabMenuMsg::ClearDue(copied.clone(), generation))
                     }),
                 ])
             }
@@ -195,7 +215,7 @@ mod tests {
     use fbterm_secrets::{MemoryStore, SecretBackend, SecretKind, SecretStore};
     use iced::{Point, window};
 
-    use super::{TabMenuMsg, should_clear};
+    use super::{TabMenuMsg, clear_now, should_clear};
     use crate::app::{App, Message, TabBarMsg};
     use crate::context_menu::{MenuItem, MenuMsg};
     use crate::restore_tests::{paths_with, profile};
@@ -326,6 +346,41 @@ mod tests {
         assert!(!should_clear("s3cret", None));
         // The first copy's check after a second copy finds the second value: left alone.
         assert!(!should_clear("first", Some("second")));
+    }
+
+    #[test]
+    fn a_second_copy_restarts_the_minute_even_for_the_same_password() {
+        // Only the latest copy's check may clear, and only an exact match.
+        assert!(clear_now(2, 2, "p", Some("p")));
+        assert!(!clear_now(2, 1, "p", Some("p")));
+        assert!(!clear_now(2, 2, "p", Some("q")));
+        let ssh = ssh_password_profile("prod");
+        let (mut app, wid) = app_with_tabs(std::slice::from_ref(&ssh), std::slice::from_ref(&ssh));
+        app.blocking_inline = true;
+        app.secrets
+            .set(&ssh.id, SecretKind::Password, "s3cret")
+            .unwrap();
+        let tab = app.windows[&wid].tabs[0].id;
+        assert_eq!(app.clip_generation, 0);
+        let _ = app.update(Message::TabMenu(TabMenuMsg::Copy(wid, tab)));
+        let _ = app.update(Message::TabMenu(TabMenuMsg::Copy(wid, tab)));
+        assert_eq!(app.clip_generation, 2);
+    }
+
+    #[test]
+    fn messages_never_print_the_password_or_its_length() {
+        use zeroize::Zeroizing;
+        let m = TabMenuMsg::ClearCheck(
+            crate::app::Delivered::new(Zeroizing::new("s3cret".to_string())),
+            Some(Zeroizing::new("s3cret".to_string())),
+            1,
+        );
+        assert_eq!(format!("{m:?}"), "ClearCheck(..)");
+        let m = TabMenuMsg::ClearDue(
+            crate::app::Delivered::new(Zeroizing::new("s3cret".to_string())),
+            1,
+        );
+        assert_eq!(format!("{m:?}"), "ClearDue(..)");
     }
 
     #[test]

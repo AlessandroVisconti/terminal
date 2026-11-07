@@ -79,6 +79,10 @@ pub(crate) fn gap_at(
     p: Point,
     axis: Axis,
 ) -> Option<usize> {
+    // A strip listing no tabs (the bar while tabs are on the left) takes no drop.
+    if rects.is_empty() {
+        return None;
+    }
     if let Some(i) = rects.iter().position(|r| r.contains(p)) {
         if Some(i) == own {
             return None;
@@ -252,5 +256,47 @@ mod tests {
         );
         assert_eq!(gap_at(&tabs, None, Point::new(20.0, 5.0), Axis::X), Some(0));
         assert_eq!(gap_at(&tabs, Some(0), Point::new(20.0, 5.0), Axis::X), None);
+        // A strip with no tabs (the bar while tabs are on the left) takes no drop.
+        assert_eq!(gap_at(&[], None, Point::new(20.0, 5.0), Axis::X), None);
+    }
+
+    #[test]
+    fn a_right_click_reports_the_menu_at_the_pointer_in_window_coordinates() {
+        use iced::advanced::Shell;
+        // Content coordinates: the list is scrolled by 400, so its rows and the pointer the
+        // scrollable hands down are 400 below the window's.
+        let rows = [
+            Rectangle::new(Point::new(0.0, 400.0), Size::new(100.0, 30.0)),
+            Rectangle::new(Point::new(0.0, 434.0), Size::new(100.0, 30.0)),
+        ];
+        let ids = [TabId::next(), TabId::next()];
+        let strip = Strip {
+            window: window::Id::unique(),
+            ids: &ids,
+            carry: None,
+            modal: false,
+            hole: Some(0),
+            axis: Axis::Y,
+            // The rows are measured inside a scrollable scrolled by 400: a pointer at
+            // content y 440 is at window y 40.
+            scroll: 400.0,
+        };
+        let mut state = DragState::default();
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        let taken = drag_event(
+            &strip,
+            &mut state,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+            &rows,
+            Rectangle::new(Point::new(0.0, 400.0), Size::new(100.0, 64.0)),
+            mouse::Cursor::Available(Point::new(10.0, 440.0)),
+            &mut shell,
+        );
+        assert!(taken);
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::TabBar(_, TabBarMsg::Menu { index: 1, at })] if *at == Point::new(10.0, 40.0)
+        ));
     }
 }
