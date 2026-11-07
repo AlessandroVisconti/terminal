@@ -22,6 +22,9 @@ pub struct SavedWindow {
     /// The tab sidebar's chosen width in logical pixels, when the user changed it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidebar_width: Option<f32>,
+    /// The tab groups folded in the sidebar, by name (`tab_groups`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub collapsed_groups: Vec<String>,
 }
 
 /// One tab to bring back. A bare profile id (what 0.1.0 wrote, and what a single unzoomed pane
@@ -112,7 +115,34 @@ mod tests {
             active: 0,
             size: (900.0, 500.0),
             sidebar_width,
+            collapsed_groups: vec![],
         }
+    }
+
+    #[test]
+    fn collapsed_groups_round_trip_and_default() {
+        let state = SavedState {
+            windows: vec![
+                SavedWindow {
+                    collapsed_groups: vec!["staging".into(), "other".into()],
+                    ..window(None)
+                },
+                window(None),
+            ],
+            ..Default::default()
+        };
+        let text = toml::to_string_pretty(&state).unwrap();
+        assert_eq!(
+            text.matches("collapsed_groups").count(),
+            1,
+            "empty: not written"
+        );
+        let back: SavedState = toml::from_str(&text).unwrap();
+        assert_eq!(back.windows[0].collapsed_groups, vec!["staging", "other"]);
+        assert!(back.windows[1].collapsed_groups.is_empty());
+        let old = "[[windows]]\ntabs = [\"00000000-0000-0000-0000-000000000000\"]\nactive = 0\nsize = [900.0, 500.0]\n";
+        let state: SavedState = toml::from_str(old).unwrap();
+        assert!(state.windows[0].collapsed_groups.is_empty());
     }
 
     #[test]

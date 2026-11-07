@@ -91,6 +91,10 @@ impl App {
             if let Some(width) = saved.sidebar_width {
                 self.sidebar_widths.insert(wid, width);
             }
+            if !saved.collapsed_groups.is_empty() {
+                self.collapsed
+                    .insert(wid, saved.collapsed_groups.iter().cloned().collect());
+            }
             let window = self.windows.get_mut(&wid).expect("just inserted");
             for tab in &saved.tabs {
                 if let Some(tab) = restore::build_tab(tab, &self.profiles) {
@@ -329,6 +333,7 @@ impl App {
             &self.windows,
             &self.sizes,
             &self.sidebar_widths,
+            &self.collapsed,
             &self.recency,
         );
         state.file_panel_width = self.file_panels.saved_width();

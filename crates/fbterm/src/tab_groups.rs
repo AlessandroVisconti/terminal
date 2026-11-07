@@ -170,6 +170,61 @@ pub(crate) fn travel(rows: &[usize], active: usize, step: Step) -> Option<usize>
     }
 }
 
+impl crate::app::App {
+    /// Folding is on: `tab_groups` with tabs on the left.
+    pub(crate) fn groups_on(&self) -> bool {
+        self.settings.tab_groups_on()
+    }
+
+    /// Each tab's group in window `wid`, in window order.
+    pub(crate) fn tab_groups(&self, wid: iced::window::Id) -> Vec<Group> {
+        self.windows.get(&wid).map_or_else(Vec::new, |w| {
+            w.tabs.iter().map(|t| group_of(t, &self.profiles)).collect()
+        })
+    }
+
+    /// The sidebar's sections in window `wid`. With folding off: one open section holding
+    /// every row, so callers need no special case.
+    pub(crate) fn sections_of(&self, wid: iced::window::Id) -> Vec<Section> {
+        let Some(w) = self.windows.get(&wid) else {
+            return Vec::new();
+        };
+        if !self.groups_on() {
+            return vec![Section {
+                group: Group::Other,
+                rows: (0..w.tabs.len()).collect(),
+                collapsed: false,
+            }];
+        }
+        let empty = BTreeSet::new();
+        let collapsed = self.collapsed.get(&wid).unwrap_or(&empty);
+        sections(&self.tab_groups(wid), collapsed)
+    }
+
+    /// The window indices of the rows that can be seen in window `wid`, in sidebar order.
+    pub(crate) fn visible_rows(&self, wid: iced::window::Id) -> Vec<usize> {
+        visible_rows(&self.sections_of(wid))
+    }
+
+    /// A header click: fold or unfold the sidebar's section at `index`, and remember it.
+    pub(crate) fn toggle_group(
+        &mut self,
+        wid: iced::window::Id,
+        index: usize,
+    ) -> iced::Task<crate::app::Message> {
+        let Some(section) = self.sections_of(wid).into_iter().nth(index) else {
+            return iced::Task::none();
+        };
+        let key = section.group.key();
+        let set = self.collapsed.entry(wid).or_default();
+        if !set.remove(&key) {
+            set.insert(key);
+        }
+        self.save_state();
+        iced::Task::none()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -320,5 +375,65 @@ mod tests {
         for step in [Step::Next, Step::Prev, Step::Number(1), Step::Number(9)] {
             assert_eq!(travel(&[], 0, step), None);
         }
+    }
+
+    use fbterm_config::TabBar;
+    use iced::window;
+
+    use crate::app::{App, Message, TabBarMsg};
+    use crate::restore_tests::paths_with;
+    use crate::tabs::WindowState;
+
+    /// An app with one window holding one tab per `(name, group)`, in that order, the first
+    /// active; folding and the left side off until a test turns them on.
+    pub(crate) fn app_with_groups(specs: &[(&str, Option<&str>)]) -> (App, window::Id) {
+        let profiles: Vec<_> = specs
+            .iter()
+            .map(|(name, group)| {
+                let mut p = profile(name);
+                p.group = group.map(str::to_owned);
+                p
+            })
+            .collect();
+        let (mut app, _) = App::build(paths_with(&profiles), true);
+        app.state_saving_enabled = false;
+        let wid = window::Id::unique();
+        let mut w = WindowState::new();
+        for p in &profiles {
+            w.push(Tab::single(Pane::for_profile(p)));
+        }
+        w.active = 0;
+        app.windows.clear();
+        app.windows.insert(wid, w);
+        app.sizes.insert(wid, (900.0, 600.0));
+        (app, wid)
+    }
+
+    pub(crate) fn fold(app: &mut App) {
+        app.settings.tab_groups = true;
+        app.settings.tab_bar = Some(TabBar::Left);
+    }
+
+    #[test]
+    fn toggling_a_group_collapses_it_and_saves() {
+        let (mut app, wid) = app_with_groups(&[("a", Some("prod")), ("b", None)]);
+        fold(&mut app);
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(0)));
+        assert!(app.collapsed[&wid].contains("prod"));
+        assert_eq!(app.visible_rows(wid), vec![1]);
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(0)));
+        assert!(!app.collapsed[&wid].contains("prod"));
+        assert_eq!(app.visible_rows(wid), vec![0, 1]);
+    }
+
+    #[test]
+    fn sections_without_folding_are_one_open_section() {
+        let (mut app, wid) = app_with_groups(&[("a", Some("prod")), ("b", None)]);
+        app.collapsed.entry(wid).or_default().insert("prod".into());
+        assert!(!app.groups_on());
+        let s = app.sections_of(wid);
+        assert_eq!(s.len(), 1);
+        assert!(!s[0].collapsed, "nothing is hidden while folding is off");
+        assert_eq!(app.visible_rows(wid), vec![0, 1]);
     }
 }

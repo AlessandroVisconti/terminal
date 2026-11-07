@@ -63,6 +63,8 @@ pub enum TabBarMsg {
     SidebarResize(f32),
     /// The drag ended (or a double-click reset the width): remember it.
     SidebarResizeEnd,
+    /// A click on the header of the sidebar.s section at this index: fold or unfold it.
+    ToggleGroup(usize),
     New,
     Profiles,
     /// The tunnels indicator: shows or hides the window's tunnels panel.
@@ -285,6 +287,8 @@ pub struct App {
     pub(crate) sidebar_widths: HashMap<window::Id, f32>,
     /// Windows whose sidebar rule is being dragged (no row tooltips meanwhile).
     pub(crate) sidebar_resizing: HashSet<window::Id>,
+    /// Each window.s folded tab groups, by key (see `tab_groups.rs`).
+    pub(crate) collapsed: HashMap<window::Id, std::collections::BTreeSet<String>>,
     /// How many passwords the tab menu copied this run: a copy's clipboard clear runs only
     /// while it is still the latest (see `tab_menu.rs`).
     pub(crate) clip_generation: u64,
@@ -699,6 +703,7 @@ impl App {
             sidebar_shown: HashMap::new(),
             sidebar_widths: HashMap::new(),
             sidebar_resizing: HashSet::new(),
+            collapsed: HashMap::new(),
             clip_generation: 0,
             profiles_error,
             paths,
@@ -1206,6 +1211,7 @@ impl App {
                         Task::none()
                     }
                     TabBarMsg::SidebarResizeEnd => self.sidebar_resize_end(wid),
+                    TabBarMsg::ToggleGroup(section) => self.toggle_group(wid, section),
                     TabBarMsg::New => self.action(Some(wid), Action::NewTab),
                     TabBarMsg::Profiles => self.action(Some(wid), Action::EditProfiles),
                     TabBarMsg::Tunnels => self.action(Some(wid), Action::Tunnels),
@@ -1233,6 +1239,7 @@ impl App {
                 self.sidebar_shown.remove(&id);
                 self.sidebar_widths.remove(&id);
                 self.sidebar_resizing.remove(&id);
+                self.collapsed.remove(&id);
                 // Closed by the OS button or Quit: same teardown as closing the tab.
                 let pages: Vec<Page> = self
                     .windows

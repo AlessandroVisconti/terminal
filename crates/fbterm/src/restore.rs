@@ -1,7 +1,7 @@
 //! Session restore as plain functions over plain state: what to reopen from `state.toml`, and
 //! what to write back.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use fbterm_config::{
     ProfileStore, SavedAxis, SavedLayout, SavedSplitTab, SavedState, SavedTab, SavedWindow,
@@ -47,6 +47,7 @@ pub fn plan(state: &SavedState, store: &ProfileStore) -> Vec<SavedWindow> {
                 active,
                 size,
                 sidebar_width: w.sidebar_width.map(crate::tab_sidebar::clamp_sidebar_width),
+                collapsed_groups: w.collapsed_groups.clone(),
             })
         })
         .collect()
@@ -220,6 +221,7 @@ pub fn snapshot(
     windows: &BTreeMap<window::Id, WindowState>,
     sizes: &HashMap<window::Id, (f32, f32)>,
     sidebar_widths: &HashMap<window::Id, f32>,
+    collapsed: &HashMap<window::Id, BTreeSet<String>>,
     recency: &Recency,
 ) -> SavedState {
     SavedState {
@@ -242,6 +244,10 @@ pub fn snapshot(
                         .get(id)
                         .copied()
                         .filter(|w| *w != crate::tab_sidebar::SIDEBAR_WIDTH),
+                    collapsed_groups: collapsed
+                        .get(id)
+                        .map(|set| set.iter().cloned().collect())
+                        .unwrap_or_default(),
                 })
             })
             .collect(),
@@ -288,6 +294,7 @@ mod tests {
             active,
             size: (900.0, 500.0),
             sidebar_width: None,
+            collapsed_groups: vec![],
         }
     }
 
@@ -302,14 +309,17 @@ mod tests {
                 w,
                 SavedWindow {
                     sidebar_width: Some(10.0),
+                    collapsed_groups: vec![],
                     ..saved(vec![a], 0)
                 },
                 SavedWindow {
                     sidebar_width: Some(5000.0),
+                    collapsed_groups: vec![],
                     ..saved(vec![a], 0)
                 },
                 SavedWindow {
                     sidebar_width: Some(300.0),
+                    collapsed_groups: vec![],
                     ..saved(vec![a], 0)
                 },
                 saved(vec![a], 0),
@@ -325,6 +335,42 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_writes_collapsed_groups_per_window() {
+        use std::collections::BTreeSet;
+        let a = ProfileId::new();
+        let (w1, w2) = (window::Id::unique(), window::Id::unique());
+        let mut one = WindowState::new();
+        one.push(Tab::single(Pane::new(a, "a", None)));
+        let mut two = WindowState::new();
+        two.push(Tab::single(Pane::new(a, "a", None)));
+        let windows = BTreeMap::from([(w1, one), (w2, two)]);
+        let collapsed = HashMap::from([(w1, BTreeSet::from(["staging".to_string()]))]);
+        let state = snapshot(
+            &windows,
+            &HashMap::new(),
+            &HashMap::new(),
+            &collapsed,
+            &Recency::new(),
+        );
+        assert_eq!(state.windows[0].collapsed_groups, vec!["staging"]);
+        assert!(state.windows[1].collapsed_groups.is_empty());
+    }
+
+    #[test]
+    fn plan_keeps_collapsed_names_as_they_are() {
+        let a = ProfileId::new();
+        let state = SavedState {
+            windows: vec![SavedWindow {
+                collapsed_groups: vec!["a".into(), "b".into()],
+                ..saved(vec![a], 0)
+            }],
+            ..Default::default()
+        };
+        let plan = plan(&state, &store(&[a]));
+        assert_eq!(plan[0].collapsed_groups, vec!["a", "b"]);
+    }
+
+    #[test]
     fn snapshot_keeps_sidebar_widths_with_tabs_on_top() {
         // `snapshot` has no idea where the tabs are: a chosen width is written whatever
         // `tab_bar` says, and the default is not written.
@@ -337,7 +383,7 @@ mod tests {
         let windows = BTreeMap::from([(w1, one), (w2, two)]);
         let sizes = HashMap::new();
         let widths = HashMap::from([(w1, 300.0), (w2, crate::tab_sidebar::SIDEBAR_WIDTH)]);
-        let state = snapshot(&windows, &sizes, &widths, &Recency::new());
+        let state = snapshot(&windows, &sizes, &widths, &HashMap::new(), &Recency::new());
         assert_eq!(state.windows[0].sidebar_width, Some(300.0));
         assert_eq!(
             state.windows[1].sidebar_width, None,
@@ -373,6 +419,7 @@ mod tests {
             active: 0,
             size: (900.0, 500.0),
             sidebar_width: None,
+            collapsed_groups: vec![],
         }
     }
 
@@ -427,7 +474,13 @@ mod tests {
         zoomed.zoom = 2;
         win.push(Tab::single(zoomed));
         let windows = BTreeMap::from([(w, win)]);
-        let state = snapshot(&windows, &HashMap::new(), &HashMap::new(), &Recency::new());
+        let state = snapshot(
+            &windows,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &Recency::new(),
+        );
         assert_eq!(state.windows[0].tabs[0], SavedTab::Profile(a));
         assert_eq!(
             state.windows[0].tabs[1],
@@ -514,7 +567,7 @@ mod tests {
         let sizes = HashMap::from([(w1, (1200.0, 700.0))]);
         let mut recency = Recency::new();
         recency.bump(a, 7);
-        let state = snapshot(&windows, &sizes, &HashMap::new(), &recency);
+        let state = snapshot(&windows, &sizes, &HashMap::new(), &HashMap::new(), &recency);
         assert_eq!(state.windows.len(), 2, "a window without tabs is not saved");
         assert_eq!(profiles(&state.windows[0].tabs), vec![a, b]);
         assert_eq!(state.windows[0].active, 0);
@@ -551,6 +604,7 @@ mod tests {
             let id = window::Id::unique();
             let saved = snapshot(
                 &BTreeMap::from([(id, w)]),
+                &HashMap::new(),
                 &HashMap::new(),
                 &HashMap::new(),
                 &Recency::new(),
