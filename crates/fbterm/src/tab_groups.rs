@@ -98,9 +98,16 @@ pub(crate) fn group_of(tab: &Tab, profiles: &ProfileStore) -> Group {
 
 /// The indices of `groups` in grouped order: stable, so tabs of one group keep their order,
 /// and names differing only by case count as one group.
+#[cfg(test)]
 pub(crate) fn grouped_order(groups: &[Group]) -> Vec<usize> {
+    grouped_order_moved(groups, &vec![false; groups.len()])
+}
+
+/// [`grouped_order`], with the tabs flagged in `moved` (their group just changed) after the
+/// others of their group, so they land at its end.
+pub(crate) fn grouped_order_moved(groups: &[Group], moved: &[bool]) -> Vec<usize> {
     let mut order: Vec<usize> = (0..groups.len()).collect();
-    order.sort_by_key(|&i| groups[i].rank());
+    order.sort_by_cached_key(|&i| (groups[i].rank(), moved.get(i).copied().unwrap_or(false)));
     order
 }
 
@@ -210,13 +217,28 @@ impl crate::app::App {
         if !self.groups_on() {
             return false;
         }
-        let order = grouped_order(&self.tab_groups(wid));
-        if order.iter().enumerate().all(|(i, &o)| i == o) {
-            return false;
-        }
+        let groups = self.tab_groups(wid);
         let Some(w) = self.windows.get_mut(&wid) else {
             return false;
         };
+        // A tab whose group changed since the last regroup goes to the end of its new group.
+        let moved: Vec<bool> = w
+            .tabs
+            .iter()
+            .zip(&groups)
+            .map(|(t, g)| {
+                self.tab_group_seen
+                    .get(&t.id)
+                    .is_some_and(|seen| !seen.same(g))
+            })
+            .collect();
+        for (t, g) in w.tabs.iter().zip(&groups) {
+            self.tab_group_seen.insert(t.id, g.clone());
+        }
+        let order = grouped_order_moved(&groups, &moved);
+        if order.iter().enumerate().all(|(i, &o)| i == o) {
+            return false;
+        }
         let active = w.active_tab().map(|t| t.id);
         let mut tabs: Vec<Option<Tab>> = w.tabs.drain(..).map(Some).collect();
         w.tabs = order.into_iter().filter_map(|i| tabs[i].take()).collect();
@@ -231,6 +253,13 @@ impl crate::app::App {
     pub(crate) fn regroup_all(&mut self) {
         let ids: Vec<_> = self.windows.keys().copied().collect();
         let moved = ids.into_iter().fold(false, |m, wid| self.regroup(wid) | m);
+        // Closed tabs need no remembered group.
+        let live: std::collections::HashSet<_> = self
+            .windows
+            .values()
+            .flat_map(|w| w.tabs.iter().map(|t| t.id))
+            .collect();
+        self.tab_group_seen.retain(|id, _| live.contains(id));
         if moved {
             self.save_state();
         }
@@ -534,6 +563,29 @@ pub(crate) mod tests {
         app.regroup_all();
         assert_eq!(names(&app, wid), ["p", "a", "d", "b", "c"]);
         assert_eq!(app.windows[&wid].active, 2, "d stays active");
+    }
+
+    #[test]
+    fn a_tab_whose_group_changes_moves_to_the_end_of_its_new_group() {
+        let (mut app, wid) = app_with_groups(&[
+            ("a", Some("prod")),
+            ("x", Some("prod")),
+            ("s1", Some("staging")),
+            ("s2", Some("staging")),
+        ]);
+        fold(&mut app);
+        app.regroup_all();
+        assert_eq!(names(&app, wid), ["a", "x", "s1", "s2"]);
+        // The profile's group is edited: x now belongs to staging.
+        let x = app
+            .profiles
+            .profiles
+            .iter_mut()
+            .find(|p| p.name == "x")
+            .unwrap();
+        x.group = Some("staging".into());
+        app.regroup_all();
+        assert_eq!(names(&app, wid), ["a", "s1", "s2", "x"]);
     }
 
     #[test]

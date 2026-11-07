@@ -289,6 +289,8 @@ pub struct App {
     pub(crate) sidebar_resizing: HashSet<window::Id>,
     /// Each window.s folded tab groups, by key (see `tab_groups.rs`).
     pub(crate) collapsed: HashMap<window::Id, std::collections::BTreeSet<String>>,
+    /// Each tab's group at the last regroup, to move a tab whose group changes.
+    pub(crate) tab_group_seen: HashMap<TabId, crate::tab_groups::Group>,
     /// How many passwords the tab menu copied this run: a copy's clipboard clear runs only
     /// while it is still the latest (see `tab_menu.rs`).
     pub(crate) clip_generation: u64,
@@ -704,6 +706,7 @@ impl App {
             sidebar_widths: HashMap::new(),
             sidebar_resizing: HashSet::new(),
             collapsed: HashMap::new(),
+            tab_group_seen: HashMap::new(),
             clip_generation: 0,
             profiles_error,
             paths,

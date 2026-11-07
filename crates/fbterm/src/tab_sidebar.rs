@@ -587,6 +587,20 @@ impl Rows<'_> {
     }
 }
 
+/// Where the drop marker for strip gap `gap` is drawn among `rows` (the list starts at
+/// `top`): 2 px above the row the gap precedes; under the previous row when more than the
+/// list's spacing lies between them (a group header), so a drop at a group's end shows inside
+/// that group; under the last row after the end.
+pub(crate) fn gap_marker_y(rows: &[Rectangle], gap: usize, top: f32) -> f32 {
+    let below = |r: &Rectangle| r.y + r.height;
+    match (gap.checked_sub(1).and_then(|p| rows.get(p)), rows.get(gap)) {
+        (Some(prev), Some(next)) if next.y - below(prev) > ROW_SPACING + 0.5 => below(prev),
+        (_, Some(next)) => next.y - 2.0,
+        (Some(prev), None) => below(prev),
+        (None, None) => top,
+    }
+}
+
 /// The rows' bounds: the column's children that are rows, in order.
 fn row_rects(layout: Layout<'_>, is_row: &[bool]) -> Vec<Rectangle> {
     layout
@@ -716,10 +730,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Rows<'_> {
         if let (Some(Carry::Tile(_) | Carry::Tab(_)), Some(gap)) = (self.carry, state.gap) {
             let bounds = layout.bounds();
             let rows = row_rects(layout, &self.is_row);
-            let y = match rows.get(gap) {
-                Some(next) => next.y - 2.0,
-                None => rows.last().map_or(bounds.y, |r| r.y + r.height),
-            };
+            let y = gap_marker_y(&rows, gap, bounds.y);
             let marker = snap_rect(
                 Rectangle {
                     x: bounds.x + LIST_PADDING,
@@ -863,7 +874,7 @@ mod tests {
 
     use super::{
         Item, LIST_PADDING, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, ROW_HEIGHT, SIDEBAR_WIDTH,
-        clamp_sidebar_width, clipped, item_tops, items, label_width, reveal, row_tip,
+        clamp_sidebar_width, clipped, gap_marker_y, item_tops, items, label_width, reveal, row_tip,
         sidebar_width, text_width,
     };
     use crate::app::{App, Message, TabBarMsg};
@@ -1098,6 +1109,36 @@ mod tests {
             "a gap above a later header"
         );
         assert_eq!(tops[3], tops[2] + 26.0 + 2.0 + 8.0);
+    }
+
+    /// The drop marker sits 2 px above the row a gap precedes, unless a header lies between
+    /// that row and the one before: then it sits under the previous row, inside its group.
+    #[test]
+    fn the_gap_marker_stays_in_the_group_at_its_end() {
+        let row = |y: f32| iced::Rectangle::new(iced::Point::new(0.0, y), Size::new(100.0, 32.0));
+        // Two rows of one group, a header (26 + gaps) and a row of the next group.
+        let rows = [
+            row(6.0),
+            row(40.0),
+            row(40.0 + 32.0 + 2.0 + 8.0 + 26.0 + 2.0),
+        ];
+        assert_eq!(gap_marker_y(&rows, 0, 0.0), 4.0, "before the first row");
+        assert_eq!(
+            gap_marker_y(&rows, 1, 0.0),
+            38.0,
+            "between two rows of a group"
+        );
+        assert_eq!(
+            gap_marker_y(&rows, 2, 0.0),
+            72.0,
+            "at the group's end: under the last row, not under the next header"
+        );
+        assert_eq!(
+            gap_marker_y(&rows, 3, 0.0),
+            rows[2].y + 32.0,
+            "after the last row"
+        );
+        assert_eq!(gap_marker_y(&[], 0, 50.0), 50.0, "no rows: the list's top");
     }
 
     #[test]
