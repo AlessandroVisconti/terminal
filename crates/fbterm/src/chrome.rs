@@ -977,21 +977,71 @@ impl Chrome {
             blur: blur && translucent,
         }
     }
+
+    /// Whether a window with `backdrop` asks the window library for its blur. Never on macOS:
+    /// the library blurs there through a private window-server call that keeps the window's
+    /// pre-26 shape, which shrinks the corners of every blurred window on macOS 26 and later.
+    /// macOS windows get [`system_backdrop`] instead, the system's own blur view.
+    pub fn window_blur(self, backdrop: Backdrop) -> bool {
+        backdrop.blur && self != Self::Unified
+    }
 }
 
 /// What blurs what shows through terminal window `id`, beyond what its window settings ask
-/// for (`blur` there covers macOS and the KDE blur protocol on Linux): on Windows, the acrylic
-/// system backdrop. Nothing elsewhere.
+/// for (`blur` there covers the KDE blur protocol on Linux, see [`Chrome::window_blur`]): on
+/// Windows, the acrylic system backdrop; on macOS, the system's blur view behind the content,
+/// clipped to the window's own corners. Nothing elsewhere.
 pub fn system_backdrop<T: Send + 'static>(id: window::Id) -> iced::Task<T> {
     #[cfg(target_os = "windows")]
     {
         window::run(id, set_acrylic_backdrop).discard()
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        window::run(id, add_blur_view).discard()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = id;
         iced::Task::none()
     }
+}
+
+/// Put the system's blur view (`NSVisualEffectView`, blending behind the window) under
+/// `window`'s content view, filling the window and following its size. It sits inside the
+/// window's frame view, so the window's corner mask clips it: the blur keeps the window's
+/// current shape. The content view still draws the terminal at its opacity on top of it.
+#[cfg(target_os = "macos")]
+fn add_blur_view(window: &dyn window::Window) {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{
+        NSAutoresizingMaskOptions, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
+        NSVisualEffectState, NSVisualEffectView, NSWindowOrderingMode,
+    };
+
+    let Some(ns_window) = ns_window(window) else {
+        return;
+    };
+    // `ns_window` is only `Some` on the main thread.
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let Some(content) = ns_window.contentView() else {
+        return;
+    };
+    // SAFETY: called on the main thread with the window's live content view; the frame view
+    // that holds it is AppKit's and lives as long as the window.
+    let Some(frame_view) = (unsafe { content.superview() }) else {
+        return;
+    };
+    let blur = NSVisualEffectView::initWithFrame(mtm.alloc(), frame_view.bounds());
+    blur.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+    blur.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
+    blur.setState(NSVisualEffectState::Active);
+    blur.setAutoresizingMask(
+        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
+    );
+    frame_view.addSubview_positioned_relativeTo(&blur, NSWindowOrderingMode::Below, Some(&content));
 }
 
 /// Ask DWM for the acrylic backdrop behind `window` (Windows 11 22H2 and later; older builds
@@ -1653,6 +1703,29 @@ mod tests {
                 blur: false
             }
         );
+    }
+
+    /// On macOS the window library's blur (a private window-server call) keeps the old window
+    /// shape, so the window never asks for it there: fbterm's own system backdrop blurs instead.
+    #[test]
+    fn macos_windows_never_ask_the_window_library_for_blur() {
+        let blurred = Backdrop {
+            transparent: true,
+            blur: true,
+        };
+        assert!(!Chrome::Unified.window_blur(blurred));
+        assert!(
+            Chrome::Native.window_blur(blurred),
+            "the KDE blur protocol on Linux"
+        );
+        assert!(Chrome::Drawn.window_blur(blurred));
+        let clear = Backdrop {
+            transparent: true,
+            blur: false,
+        };
+        for chrome in [Chrome::Unified, Chrome::Native, Chrome::Drawn] {
+            assert!(!chrome.window_blur(clear));
+        }
     }
 
     #[test]
