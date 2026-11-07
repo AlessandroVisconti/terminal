@@ -234,6 +234,7 @@ fn press_message(
                 | Action::Tunnels
                 | Action::ExportProfiles
                 | Action::ImportProfiles
+                | Action::VerticalTabs
                     if !repeat =>
                 {
                     Some(Message::Shortcut(w, action))
@@ -249,7 +250,11 @@ fn press_message(
             {
                 Some(Message::Shortcut(w, action))
             }
-            Action::Quit | Action::EditProfiles | Action::EditSchemes | Action::Tunnels
+            Action::Quit
+            | Action::EditProfiles
+            | Action::EditSchemes
+            | Action::Tunnels
+            | Action::VerticalTabs
                 if !repeat =>
             {
                 Some(Message::Shortcut(w, action))
@@ -1197,6 +1202,15 @@ mod tests {
         assert!(matches!(
             press(Mode::Settings, "t", false),
             Some(Some(Message::Shortcut(_, Action::NewTab)))
+        ));
+        // Vertical tabs flips the side from the page tabs too.
+        assert!(matches!(
+            press(Mode::Settings, "b", true),
+            Some(Some(Message::Shortcut(_, Action::VerticalTabs)))
+        ));
+        assert!(matches!(
+            press(Mode::Editor, "b", true),
+            Some(Some(Message::Shortcut(_, Action::VerticalTabs)))
         ));
         let (key, mods) = if cfg!(target_os = "macos") {
             (
