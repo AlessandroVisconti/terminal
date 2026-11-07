@@ -244,6 +244,7 @@ impl Action {
             Self::CloseTab => "Close tab or pane".into(),
             Self::NextTab => "Next tab".into(),
             Self::PrevTab => "Previous tab".into(),
+            Self::SelectTab(9) => "Last tab".into(),
             Self::SelectTab(n) => format!("Tab {n}"),
             Self::Palette => "Command palette".into(),
             Self::NewWindow => "New window".into(),
@@ -1601,6 +1602,9 @@ mod tests {
         }
         assert_eq!(Action::CloseTab.name(), "close_tab");
         assert_eq!(Action::CloseTab.title(), "Close tab or pane");
+        assert_eq!(Action::SelectTab(9).title(), "Last tab");
+        assert_eq!(Action::SelectTab(8).title(), "Tab 8");
+        assert_eq!(Action::SelectTab(9).name(), "select_tab_9");
         assert_eq!(Action::SplitRight.group(), ActionGroup::Panes);
         assert_eq!(Action::MaximizePane.group(), ActionGroup::Panes);
         assert_eq!(ActionGroup::ALL[1], ActionGroup::Panes, "after Tabs");
