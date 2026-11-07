@@ -63,7 +63,7 @@ pub enum TabBarMsg {
     SidebarResize(f32),
     /// The drag ended (or a double-click reset the width): remember it.
     SidebarResizeEnd,
-    /// A click on the header of the sidebar.s section at this index: fold or unfold it.
+    /// A click on the header of the sidebar's section at this index: fold or unfold it.
     ToggleGroup(usize),
     New,
     Profiles,
@@ -287,7 +287,7 @@ pub struct App {
     pub(crate) sidebar_widths: HashMap<window::Id, f32>,
     /// Windows whose sidebar rule is being dragged (no row tooltips meanwhile).
     pub(crate) sidebar_resizing: HashSet<window::Id>,
-    /// Each window.s folded tab groups, by key (see `tab_groups.rs`).
+    /// Each window's folded tab groups, by key (see `tab_groups.rs`).
     pub(crate) collapsed: HashMap<window::Id, std::collections::BTreeSet<String>>,
     /// Each tab's group at the last regroup, to move a tab whose group changes.
     pub(crate) tab_group_seen: HashMap<TabId, crate::tab_groups::Group>,

@@ -516,7 +516,7 @@ pub(crate) mod tests {
     fn toggling_a_group_collapses_it_and_saves() {
         let (mut app, wid) = app_with_groups(&[("a", Some("prod")), ("b", None)]);
         fold(&mut app);
-        // The window.s first update counts as a new active tab (restore unfolds its group):
+        // The window's first update counts as a new active tab (restore unfolds its group):
         // settle that before the click.
         let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0)));
         let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(0)));
@@ -646,7 +646,7 @@ pub(crate) mod tests {
     fn selecting_a_hidden_tab_expands_its_group_but_collapsing_the_active_one_keeps_it() {
         let (mut app, wid) = mixed();
         fold(&mut app);
-        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0))); // regrouped; b... no: p
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0))); // regrouped to [p, a, d, b, c]
         // Order [p, a, d, b, c]; make b (staging) active, then collapse prod (section 1).
         let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(3)));
         let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(1)));
