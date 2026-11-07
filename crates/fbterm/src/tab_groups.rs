@@ -43,14 +43,6 @@ impl Group {
         self.title().to_owned()
     }
 
-    pub(crate) fn from_key(key: &str) -> Self {
-        match key {
-            "featherbit" => Self::Featherbit,
-            "other" => Self::Other,
-            name => Self::Named(name.to_owned()),
-        }
-    }
-
     /// How two groups compare for sorting and for being one group: the privileged ones by
     /// kind, named ones by name, case-insensitive.
     fn rank(&self) -> (u8, String) {
@@ -296,7 +288,7 @@ impl crate::app::App {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::BTreeSet;
 
     use fbterm_config::{ProfileId, ProfileStore};
@@ -343,10 +335,10 @@ mod tests {
     }
 
     #[test]
-    fn keys_round_trip() {
-        for g in [Group::Featherbit, named("prod"), Group::Other] {
-            assert_eq!(Group::from_key(&g.key()), g);
-        }
+    fn keys_are_the_titles() {
+        assert_eq!(Group::Featherbit.key(), "featherbit");
+        assert_eq!(named("prod").key(), "prod");
+        assert_eq!(Group::Other.key(), "other");
         assert_eq!(Group::Featherbit.title(), "featherbit");
         assert_eq!(Group::Other.title(), "other");
         assert_eq!(named("prod").title(), "prod");

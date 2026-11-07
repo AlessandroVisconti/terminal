@@ -111,7 +111,6 @@ mod settings_window;
 mod shortcuts;
 mod sidebar_resize;
 mod tab_drag;
-#[allow(dead_code)]
 mod tab_groups;
 mod tab_look;
 mod tab_menu;

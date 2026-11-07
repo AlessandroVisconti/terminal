@@ -298,9 +298,12 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
             DockContent::Tunnels => Mode::TunnelsPanel,
         });
     let docked_area = dock(terminal_area, panel);
+    // What the sidebar lists: rows, under group headers while folding is on.
+    let items = crate::tab_sidebar::items(&app.sections_of(id), win.active, app.groups_on());
     body = body.push(match sidebar {
         Some(width) => {
             let side = crate::tab_sidebar::Sidebar {
+                items: &items,
                 window: id,
                 tokens: t,
                 around: Surroundings {
