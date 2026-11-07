@@ -566,22 +566,28 @@ impl App {
         }
         let bar = crate::chrome::Chrome::current().bar_height();
         let mut tasks = Vec::new();
-        for (wid, w) in &self.windows {
-            let Some(tab) = w.active_tab() else {
-                continue;
-            };
-            if self.sidebar_shown.get(wid) == Some(&tab.id) {
-                continue;
-            }
-            self.sidebar_shown.insert(*wid, tab.id);
-            let (offset, height) = match self.sidebar_scroll.get(wid) {
+        // The windows whose active tab changed since the sidebar last showed it.
+        let changed: Vec<(window::Id, TabId, usize)> = self
+            .windows
+            .iter()
+            .filter_map(|(wid, w)| {
+                let tab = w.active_tab()?;
+                (self.sidebar_shown.get(wid) != Some(&tab.id)).then_some((*wid, tab.id, w.active))
+            })
+            .collect();
+        for (wid, id, active) in changed {
+            self.sidebar_shown.insert(wid, id);
+            // Selected by other means than keyboard travel (which never lands in a folded
+            // group): its group unfolds.
+            self.expand_active(wid);
+            let (offset, height) = match self.sidebar_scroll.get(&wid) {
                 Some(&v) => v,
-                None => (0.0, self.sizes.get(wid).map_or(f32::MAX, |(_, h)| h - bar)),
+                None => (0.0, self.sizes.get(&wid).map_or(f32::MAX, |(_, h)| h - bar)),
             };
-            if let Some(y) = reveal(w.active, offset, height) {
-                self.sidebar_scroll.insert(*wid, (y, height));
+            if let Some(y) = reveal(active, offset, height) {
+                self.sidebar_scroll.insert(wid, (y, height));
                 tasks.push(iced::widget::operation::scroll_to(
-                    scroll_id(*wid),
+                    scroll_id(wid),
                     iced::widget::operation::AbsoluteOffset { x: 0.0, y },
                 ));
             }

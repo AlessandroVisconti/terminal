@@ -1051,6 +1051,8 @@ impl App {
         self.sync_update_state();
         self.sync_recording();
         crate::key_log::set_recording(self.recording_window());
+        // Folding keeps each window's tab order grouped, before the sidebar reveals a row.
+        self.regroup_all();
         let more: Vec<Task<Message>> = [
             self.reveal_active_tabs(),
             self.sync_panel_focus(),

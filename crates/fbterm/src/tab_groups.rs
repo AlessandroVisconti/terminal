@@ -206,6 +206,59 @@ impl crate::app::App {
         visible_rows(&self.sections_of(wid))
     }
 
+    /// While folding is on, put window `wid`'s tabs in grouped order (stable, the active tab
+    /// followed by id). Returns whether anything moved.
+    pub(crate) fn regroup(&mut self, wid: iced::window::Id) -> bool {
+        if !self.groups_on() {
+            return false;
+        }
+        let order = grouped_order(&self.tab_groups(wid));
+        if order.iter().enumerate().all(|(i, &o)| i == o) {
+            return false;
+        }
+        let Some(w) = self.windows.get_mut(&wid) else {
+            return false;
+        };
+        let active = w.active_tab().map(|t| t.id);
+        let mut tabs: Vec<Option<Tab>> = w.tabs.drain(..).map(Some).collect();
+        w.tabs = order.into_iter().filter_map(|i| tabs[i].take()).collect();
+        if let Some(i) = active.and_then(|id| w.find(id)) {
+            w.active = i;
+        }
+        true
+    }
+
+    /// After every update: every window's tabs in grouped order while folding is on, saved
+    /// once when anything moved.
+    pub(crate) fn regroup_all(&mut self) {
+        let ids: Vec<_> = self.windows.keys().copied().collect();
+        let moved = ids.into_iter().fold(false, |m, wid| self.regroup(wid) | m);
+        if moved {
+            self.save_state();
+        }
+    }
+
+    /// The active tab of window `wid` became active by other means than keyboard travel: its
+    /// group unfolds if it was folded. Returns whether it did.
+    pub(crate) fn expand_active(&mut self, wid: iced::window::Id) -> bool {
+        let Some(key) = self
+            .windows
+            .get(&wid)
+            .and_then(|w| w.active_tab())
+            .map(|t| group_of(t, &self.profiles).key())
+        else {
+            return false;
+        };
+        let removed = self
+            .collapsed
+            .get_mut(&wid)
+            .is_some_and(|set| set.remove(&key));
+        if removed {
+            self.save_state();
+        }
+        removed
+    }
+
     /// A header click: fold or unfold the sidebar's section at `index`, and remember it.
     pub(crate) fn toggle_group(
         &mut self,
@@ -418,12 +471,126 @@ mod tests {
     fn toggling_a_group_collapses_it_and_saves() {
         let (mut app, wid) = app_with_groups(&[("a", Some("prod")), ("b", None)]);
         fold(&mut app);
+        // The window.s first update counts as a new active tab (restore unfolds its group):
+        // settle that before the click.
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0)));
         let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(0)));
         assert!(app.collapsed[&wid].contains("prod"));
         assert_eq!(app.visible_rows(wid), vec![1]);
         let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(0)));
         assert!(!app.collapsed[&wid].contains("prod"));
         assert_eq!(app.visible_rows(wid), vec![0, 1]);
+    }
+
+    /// The window of the regroup tests: `b(staging) a(prod) c(none) d(prod)`, then a page
+    /// tab `p` pushed last, active `d`.
+    fn mixed() -> (App, window::Id) {
+        let (mut app, wid) = app_with_groups(&[
+            ("b", Some("staging")),
+            ("a", Some("prod")),
+            ("c", None),
+            ("d", Some("prod")),
+        ]);
+        let w = app.windows.get_mut(&wid).unwrap();
+        w.push(Tab::page(Page::Settings));
+        w.active = 3;
+        (app, wid)
+    }
+
+    fn names(app: &App, wid: window::Id) -> Vec<String> {
+        app.windows[&wid]
+            .tabs
+            .iter()
+            .map(|t| {
+                if t.page.is_some() {
+                    "p".to_owned()
+                } else {
+                    t.name().to_owned()
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn switching_folding_on_sorts_tabs_stably_and_keeps_the_active_tab() {
+        let (mut app, wid) = mixed();
+        fold(&mut app);
+        app.regroup_all();
+        assert_eq!(names(&app, wid), ["p", "a", "d", "b", "c"]);
+        assert_eq!(app.windows[&wid].active, 2, "d stays active");
+    }
+
+    #[test]
+    fn folding_off_keeps_the_order() {
+        let (mut app, wid) = mixed();
+        fold(&mut app);
+        app.regroup_all();
+        app.settings.tab_groups = false;
+        let mut e = profile("e");
+        e.group = Some("prod".into());
+        app.windows
+            .get_mut(&wid)
+            .unwrap()
+            .push(Tab::single(Pane::for_profile(&e)));
+        app.regroup_all();
+        assert_eq!(names(&app, wid), ["p", "a", "d", "b", "c", "e"]);
+    }
+
+    #[test]
+    fn folding_on_with_tabs_on_top_changes_nothing() {
+        let (mut app, wid) = mixed();
+        app.settings.tab_groups = true;
+        app.settings.tab_bar = Some(TabBar::Top);
+        app.regroup_all();
+        assert_eq!(names(&app, wid), ["b", "a", "c", "d", "p"]);
+    }
+
+    #[test]
+    fn a_new_tab_lands_at_the_end_of_its_group() {
+        let (mut app, wid) = mixed();
+        fold(&mut app);
+        app.regroup_all();
+        let prod = app
+            .profiles
+            .profiles
+            .iter()
+            .find(|p| p.name == "a")
+            .unwrap()
+            .id;
+        let _ = app.open_tab(wid, prod);
+        app.regroup_all();
+        assert_eq!(names(&app, wid), ["p", "a", "d", "a", "b", "c"]);
+        assert_eq!(
+            app.windows[&wid].active, 3,
+            "the new tab is active, after d"
+        );
+    }
+
+    #[test]
+    fn the_post_update_hook_regroups() {
+        let (mut app, wid) = mixed();
+        fold(&mut app);
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0)));
+        assert_eq!(names(&app, wid), ["p", "a", "d", "b", "c"]);
+    }
+
+    #[test]
+    fn selecting_a_hidden_tab_expands_its_group_but_collapsing_the_active_one_keeps_it() {
+        let (mut app, wid) = mixed();
+        fold(&mut app);
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0))); // regrouped; b... no: p
+        // Order [p, a, d, b, c]; make b (staging) active, then collapse prod (section 1).
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(3)));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(1)));
+        assert!(app.collapsed[&wid].contains("prod"));
+        // Selecting a (hidden) by a click expands prod.
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(1)));
+        assert!(!app.collapsed[&wid].contains("prod"));
+        assert_eq!(app.windows[&wid].active, 1);
+        // Collapsing the active tab's own group sticks.
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(1)));
+        assert!(app.collapsed[&wid].contains("prod"));
+        assert_eq!(app.windows[&wid].active, 1);
     }
 
     #[test]
