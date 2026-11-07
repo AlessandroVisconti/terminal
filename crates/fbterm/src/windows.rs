@@ -128,7 +128,7 @@ impl App {
     }
 
     /// The window and index of the open `page` tab.
-    fn page_tab(&self, page: Page) -> Option<(window::Id, usize)> {
+    pub(crate) fn page_tab(&self, page: Page) -> Option<(window::Id, usize)> {
         self.windows.iter().find_map(|(wid, w)| {
             let i = w.tabs.iter().position(|t| t.page == Some(page))?;
             Some((*wid, i))
@@ -172,14 +172,19 @@ impl App {
     }
 
     /// What a closed page tab leaves behind: the editor's drafts go, Settings writes what is
-    /// still waiting.
-    pub(crate) fn page_closed(&mut self, page: Page) {
+    /// still waiting, the Welcome tab answers its open questions with the defaults.
+    pub(crate) fn page_closed(&mut self, page: Page) -> Task<Message> {
         match page {
-            Page::Profiles => self.editor = None,
+            Page::Profiles => {
+                self.editor = None;
+                Task::none()
+            }
             Page::Settings => {
                 self.write_pending_settings();
                 self.settings_win = None;
+                Task::none()
             }
+            Page::Welcome => self.welcome_closed(),
         }
     }
 
@@ -235,9 +240,10 @@ impl App {
         let Some(closed) = window.close(index) else {
             return Task::none();
         };
-        if let Some(page) = closed.tab.page {
-            self.page_closed(page);
-        }
+        let left_behind = match closed.tab.page {
+            Some(page) => self.page_closed(page),
+            None => Task::none(),
+        };
         let freed = crate::memory::weak_terminals(closed.tab.panes.iter());
         let gone: Vec<_> = closed.tab.panes.iter().map(|p| p.id).collect();
         self.forget_panes(&gone);
@@ -245,11 +251,12 @@ impl App {
         self.sync_all_shell_tunnels();
         self.save_state();
         self.release_closed(freed);
-        if closed.window_empty {
+        let next = if closed.window_empty {
             self.close_window(wid)
         } else {
             self.shown(wid)
-        }
+        };
+        Task::batch([left_behind, next])
     }
 
     /// A tab or window the user closed freed `terminals`: request the memory release once none

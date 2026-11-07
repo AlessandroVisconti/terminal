@@ -1,7 +1,8 @@
 //! The Settings tab against a temporary config directory: live apply, in-place writes,
 //! own-write suppression and edits on disk.
 
-use fbterm_config::{Paths, ProfileId, SETTINGS_TEMPLATE, Settings, ThemeMode};
+use fbterm_config::keys::Action;
+use fbterm_config::{Paths, ProfileId, SETTINGS_TEMPLATE, Settings, TabBar, ThemeMode};
 
 use super::SettingsMsg;
 use crate::app::{App, Message};
@@ -52,6 +53,27 @@ fn a_click_applies_live_and_writes_the_template_with_the_key_set() {
     let _ = app.update(Message::ConfigChanged(SETTINGS_CHANGED));
     assert_eq!(app.notices, before);
     assert_eq!(app.settings.theme, ThemeMode::Light);
+}
+
+#[test]
+fn the_tabs_row_and_the_action_flip_the_side_and_write_it() {
+    let (mut app, paths) = app();
+    send(&mut app, SettingsMsg::TabBar(TabBar::Left));
+    assert!(app.settings.tabs_left());
+    assert!(
+        read(&paths)
+            .unwrap()
+            .contains("#tab_bar = \"top\"\ntab_bar = \"left\"\n")
+    );
+    let _ = app.action(None, Action::VerticalTabs);
+    assert_eq!(app.settings.tab_bar, Some(TabBar::Top));
+    assert!(read(&paths).unwrap().contains("\ntab_bar = \"top\"\n"));
+    // The open Settings tab shows the new value.
+    let (_, state) = app.settings_win.as_ref().unwrap();
+    assert_eq!(state.values.tab_bar, Some(TabBar::Top));
+    let _ = app.action(None, Action::VerticalTabs);
+    assert_eq!(app.settings.tab_bar, Some(TabBar::Left));
+    assert!(read(&paths).unwrap().contains("\ntab_bar = \"left\"\n"));
 }
 
 #[test]

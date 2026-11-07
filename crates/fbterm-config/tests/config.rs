@@ -583,9 +583,11 @@ fn settings_template_parses_to_defaults_with_every_setting_uncommented() {
     let path = tmp("settings.toml");
     std::fs::write(&path, &uncommented).unwrap();
     let (loaded, warning) = Settings::load_checked(&path).unwrap();
-    // `check_updates` left out means "never asked"; written out, it is the answer "no".
+    // `check_updates` and `tab_bar` left out mean "never asked"; written out, they are the
+    // answers "no" and "top".
     let answered = Settings {
         check_updates: Some(false),
+        tab_bar: Some(TabBar::Top),
         ..Settings::default()
     };
     assert_eq!(loaded, answered);

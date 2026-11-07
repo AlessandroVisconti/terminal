@@ -20,6 +20,7 @@ featherbit terminal (`fbterm`) is a native terminal emulator built around SSH. I
 Everything you set up is plain TOML in one directory, written atomically and reloaded when it changes on disk, so you can keep it in version control or edit it by hand.
 
 - [Profiles and jump hosts](profiles) describes `profiles.toml`.
+- [Tabs](tabs) covers the tab bar, tabs down the left side, the tab menu and the Welcome tab.
 - [Where files live](files) lists every file, its location on each system, and the settings you can change.
 - [Keyboard shortcuts](keyboard-shortcuts) lists every shortcut.
 
