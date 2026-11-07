@@ -1,4 +1,4 @@
-//! The saved-secret write of an editor Save or Duplicate outliving the editor window, against
+//! The saved-secret write of an editor Save or Duplicate outliving the editor tab, against
 //! a temporary config folder and in-memory secret storage (never the real keychain). The write
 //! stays in flight (background work is not run here) until a test delivers its result.
 
@@ -15,6 +15,7 @@ const PW: &str = "job-pw-3b81";
 
 fn ssh(name: &str) -> Profile {
     Profile {
+        icon: None,
         id: ProfileId::new(),
         name: name.into(),
         group: None,

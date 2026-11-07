@@ -1,5 +1,5 @@
 //! Debug aid `FBTERM_LOG_KEYS=1` (read once at startup; works in release builds): while the
-//! Settings window records a chord, every keyboard event the app receives, in any window, is
+//! Settings tab records a chord, every keyboard event the app receives, in any window, is
 //! logged at INFO, once from the window-level event listener (`App::subscription`: does the
 //! system deliver the event at all, and did any widget capture it?) and once from each
 //! [`Shortcuts`](crate::shortcuts) wrapper it reaches (was it captured before the wrapper saw
@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 /// Whether `FBTERM_LOG_KEYS` was set at startup.
 static ENABLED: OnceLock<bool> = OnceLock::new();
 
-/// The Settings window while it records a chord.
+/// The Settings tab while it records a chord.
 static RECORDING: Mutex<Option<window::Id>> = Mutex::new(None);
 
 /// Read `FBTERM_LOG_KEYS` (any value but empty or `0` turns the log on).

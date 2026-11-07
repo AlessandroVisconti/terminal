@@ -11,6 +11,7 @@ fn tmp(name: &str) -> PathBuf {
 
 fn ssh(name: &str, jump: Vec<ProfileId>) -> Profile {
     Profile {
+        icon: None,
         id: ProfileId::new(),
         name: name.into(),
         group: None,
@@ -30,6 +31,7 @@ fn ssh(name: &str, jump: Vec<ProfileId>) -> Profile {
 
 fn local(name: &str) -> Profile {
     Profile {
+        icon: None,
         id: ProfileId::new(),
         name: name.into(),
         group: Some("shells".into()),
@@ -581,9 +583,11 @@ fn settings_template_parses_to_defaults_with_every_setting_uncommented() {
     let path = tmp("settings.toml");
     std::fs::write(&path, &uncommented).unwrap();
     let (loaded, warning) = Settings::load_checked(&path).unwrap();
-    // `check_updates` left out means "never asked"; written out, it is the answer "no".
+    // `check_updates` and `tab_bar` left out mean "never asked"; written out, they are the
+    // answers "no" and "top".
     let answered = Settings {
         check_updates: Some(false),
+        tab_bar: Some(TabBar::Top),
         ..Settings::default()
     };
     assert_eq!(loaded, answered);
@@ -939,6 +943,7 @@ fn blank_target_port_blocks_save() {
     use fbterm_config::{StartMode, TunnelDef, TunnelKind, ValidationError};
     let mut store = ProfileStore::default();
     let mut p = Profile {
+        icon: None,
         id: ProfileId::new(),
         name: "web".into(),
         group: None,
@@ -1253,4 +1258,18 @@ fn check_updates_is_unasked_until_written() {
             .unwrap()
             .contains("check_updates")
     );
+}
+
+#[test]
+fn icon_is_written_only_when_set() {
+    let path = tmp("profiles.toml");
+    let mut db = local("db");
+    db.icon = Some("database".into());
+    let store = ProfileStore {
+        profiles: vec![local("plain"), db],
+    };
+    store.save(&path).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(text.matches("icon").count(), 1, "{text}");
+    assert_eq!(ProfileStore::load(&path).unwrap(), store);
 }

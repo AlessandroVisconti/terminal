@@ -30,7 +30,7 @@ pub enum Action {
     /// Copy a profile (the one selected in the profile editor, or the focused pane's) and
     /// open the copy in the editor (no chord by default).
     DuplicateProfile,
-    /// The Settings window: Cmd+, on macOS, Ctrl+, elsewhere.
+    /// The Settings tab: Cmd+, on macOS, Ctrl+, elsewhere.
     Settings,
     /// The Color schemes window (no chord by default).
     EditSchemes,
@@ -43,6 +43,9 @@ pub enum Action {
     /// Show or hide the file panel of the active tab: Cmd+Shift+E on macOS, Ctrl+Shift+E
     /// elsewhere.
     FilePanel,
+    /// List the tabs down the left side of the window, or along the top again: Cmd+Shift+B on
+    /// macOS, Ctrl+Shift+B elsewhere.
+    VerticalTabs,
     /// Create `settings.toml` if missing and open it with the system's default app (no chord
     /// by default).
     OpenSettingsFile,
@@ -89,7 +92,7 @@ pub enum Action {
     TileToTab,
 }
 
-/// The groups the Settings window lists actions in.
+/// The groups the Settings tab lists actions in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionGroup {
     Tabs,
@@ -120,8 +123,8 @@ impl ActionGroup {
 }
 
 impl Action {
-    /// Every action, in the order the Settings window lists them.
-    pub const ALL: [Action; 45] = [
+    /// Every action, in the order the Settings tab lists them.
+    pub const ALL: [Action; 46] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -158,6 +161,7 @@ impl Action {
         Action::EditSchemes,
         Action::Tunnels,
         Action::FilePanel,
+        Action::VerticalTabs,
         Action::Find,
         Action::FindAll,
         Action::FindNext,
@@ -196,6 +200,7 @@ impl Action {
             Self::ExportProfiles => "export_profiles",
             Self::ImportProfiles => "import_profiles",
             Self::FilePanel => "file_panel",
+            Self::VerticalTabs => "vertical_tabs",
             Self::OpenSettingsFile => "open_settings_file",
             Self::RevealConfigFolder => "reveal_config_folder",
             Self::ExportTab => "export_tab",
@@ -236,7 +241,7 @@ impl Action {
             Self::Palette => "Command palette".into(),
             Self::NewWindow => "New window".into(),
             Self::Quit => "Quit".into(),
-            Self::EditProfiles => "Edit profiles".into(),
+            Self::EditProfiles => "Profiles".into(),
             Self::DuplicateProfile => "Duplicate profile".into(),
             Self::Settings => "Settings".into(),
             Self::EditSchemes => "Color schemes".into(),
@@ -244,6 +249,7 @@ impl Action {
             Self::ExportProfiles => "Export profiles\u{2026}".into(),
             Self::ImportProfiles => "Import profiles\u{2026}".into(),
             Self::FilePanel => "File panel".into(),
+            Self::VerticalTabs => "Vertical tabs".into(),
             Self::OpenSettingsFile => "Open settings file".into(),
             Self::RevealConfigFolder => "Reveal config folder".into(),
             Self::ExportTab => "Export tab to file".into(),
@@ -297,7 +303,8 @@ impl Action {
             | Self::Tunnels
             | Self::ExportProfiles
             | Self::ImportProfiles
-            | Self::FilePanel => ActionGroup::Windows,
+            | Self::FilePanel
+            | Self::VerticalTabs => ActionGroup::Windows,
             Self::Find | Self::FindAll | Self::FindNext | Self::FindPrevious | Self::FindInTab => {
                 ActionGroup::Search
             }
@@ -700,7 +707,7 @@ pub fn reserved(mac: bool, chord: Chord) -> Option<&'static str> {
     None
 }
 
-/// A shortcut outside the binding table, shown read-only in the Settings window: its chord is
+/// A shortcut outside the binding table, shown read-only in the Settings tab: its chord is
 /// one [`reserved`] keeps, so it can neither be changed nor taken by an action. (Quit on macOS
 /// is an action of its own, listed with the others as fixed, see [`Action::is_fixed`].)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -799,6 +806,7 @@ pub fn default_chord(mac: bool, action: Action) -> Option<Chord> {
         Action::PrevTab => ('[', true),
         Action::Palette => ('p', true),
         Action::FilePanel => ('e', true),
+        Action::VerticalTabs => ('b', true),
         Action::SelectTab(n @ 1..=9) => (char::from(b'0' + n), false),
         Action::EditProfiles => (',', true),
         Action::Settings if !mac => return Some(ctrl_chord(',', false, false)),
@@ -1611,6 +1619,23 @@ mod tests {
         let d = |mac| default_chord(mac, a).map(|c| c.to_config(mac));
         assert_eq!(d(true).as_deref(), Some("shift+cmd+e"));
         assert_eq!(d(false).as_deref(), Some("ctrl+shift+e"));
+        for mac in [true, false] {
+            let chord = default_chord(mac, a).unwrap();
+            assert_eq!(reserved(mac, chord), None);
+        }
+    }
+
+    #[test]
+    fn vertical_tabs_action_has_a_name_a_group_and_a_free_chord() {
+        let a = Action::VerticalTabs;
+        assert!(Action::ALL.contains(&a));
+        assert_eq!(a.name(), "vertical_tabs");
+        assert_eq!(Action::from_name("vertical_tabs"), Some(a));
+        assert_eq!(a.title(), "Vertical tabs");
+        assert_eq!(a.group(), ActionGroup::Windows);
+        let d = |mac| default_chord(mac, a).map(|c| c.to_config(mac));
+        assert_eq!(d(true).as_deref(), Some("shift+cmd+b"));
+        assert_eq!(d(false).as_deref(), Some("ctrl+shift+b"));
         for mac in [true, false] {
             let chord = default_chord(mac, a).unwrap();
             assert_eq!(reserved(mac, chord), None);

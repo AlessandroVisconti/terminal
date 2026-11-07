@@ -16,6 +16,7 @@ use crate::keys::{Action, Bindings};
 use crate::layout::{Drop, PaneId, Side};
 use crate::tabs::{Tab, TabId, WindowState};
 use crate::theme::{Tokens, UI_FONT};
+use crate::ui;
 
 /// The footer line: what Shift+Enter does.
 pub const SPLIT_HINT: &str = "Shift+Enter opens in a split";
@@ -47,6 +48,8 @@ pub enum PaletteItem {
         name: String,
         /// `user@host` (plus ` via <hops>`) for SSH, the program path for local shells.
         detail: String,
+        /// The row's icon glyph (`ui::profile_icon`).
+        icon: &'static str,
     },
     /// A tunnel: choosing it switches it on or off.
     Tunnel {
@@ -254,7 +257,7 @@ fn actions() -> Vec<PaletteItem> {
         (Action::FindInTab, "Find in this tab"),
         (Action::FindAll, "Find in all tabs"),
         (Action::ExportTab, "Export tab to file…"),
-        (Action::EditProfiles, "Edit profiles"),
+        (Action::EditProfiles, "Profiles"),
         (Action::DuplicateProfile, "Duplicate profile"),
         (Action::ExportProfiles, "Export profiles\u{2026}"),
         (Action::ImportProfiles, "Import profiles\u{2026}"),
@@ -262,6 +265,7 @@ fn actions() -> Vec<PaletteItem> {
         (Action::EditSchemes, "Color schemes"),
         (Action::Tunnels, "Tunnels"),
         (Action::FilePanel, "File panel"),
+        (Action::VerticalTabs, "Vertical tabs"),
         (Action::OpenSettingsFile, "Open settings file"),
         (Action::RevealConfigFolder, "Reveal config folder"),
         (Action::Quit, "Quit"),
@@ -304,6 +308,7 @@ pub fn items(store: &ProfileStore, tunnels: Vec<PaletteItem>) -> Vec<PaletteItem
                 id: p.id,
                 name: p.name.clone(),
                 detail,
+                icon: ui::profile_icon(p.icon.as_deref(), matches!(p.kind, ProfileKind::Ssh(_))),
             }
         })
         .collect();
@@ -378,18 +383,20 @@ pub struct PaletteState {
     pub stage: Stage,
     pub query: String,
     items: Vec<PaletteItem>,
+    terminal: bool,
     ranked: Vec<usize>,
     selected: usize,
     pub input: iced::widget::Id,
 }
 
 impl PaletteState {
-    pub fn new(items: Vec<PaletteItem>, query: String, recency: &Recency) -> Self {
+    pub fn new(items: Vec<PaletteItem>, query: String, terminal: bool, recency: &Recency) -> Self {
         let ranked = rank(&query, &items, recency);
         Self {
             stage: Stage::Launch,
             query,
             items,
+            terminal,
             ranked,
             selected: 0,
             input: iced::widget::Id::unique(),
@@ -400,19 +407,25 @@ impl PaletteState {
     pub fn staged(stage: Stage, items: Vec<PaletteItem>) -> Self {
         Self {
             stage,
-            ..Self::new(items, String::new(), &Recency::new())
+            ..Self::new(items, String::new(), true, &Recency::new())
         }
     }
 
     /// Replace the listed items (the profiles changed), keeping the query and the input. A
     /// rearranging step keeps its own list.
-    pub fn set_items(&mut self, items: Vec<PaletteItem>, recency: &Recency) {
+    pub fn set_items(&mut self, items: Vec<PaletteItem>, terminal: bool, recency: &Recency) {
         if self.stage != Stage::Launch {
             return;
         }
         self.items = items;
+        self.terminal = terminal;
         self.ranked = rank(&self.query, &self.items, recency);
         self.selected = self.selected.min(self.ranked.len().saturating_sub(1));
+    }
+
+    /// Whether the items were built for a window showing a terminal tab (not a page tab).
+    pub fn for_terminal(&self) -> bool {
+        self.terminal
     }
 
     pub fn set_query(&mut self, query: String, recency: &Recency) {
@@ -606,15 +619,17 @@ fn item_row<'a>(
         | PaletteItem::Action { label, .. }
         | PaletteItem::Choice { label, .. } => (label.as_str(), None),
     };
-    let mut content = row![
+    let mut content = row![].spacing(12).align_y(Alignment::Center);
+    if let PaletteItem::Profile { icon, .. } = item {
+        content = content.push(ui::icon(icon, 14.0, t.text_muted));
+    }
+    content = content.push(
         text(label)
             .font(UI_FONT)
             .size(13.5)
             .wrapping(text::Wrapping::None)
-            .color(t.text)
-    ]
-    .spacing(12)
-    .align_y(Alignment::Center);
+            .color(t.text),
+    );
     match (detail, item) {
         (_, PaletteItem::Tunnel { state, .. }) => {
             content = content.push(
@@ -701,6 +716,7 @@ mod tests {
             id: ProfileId::new(),
             name: name.into(),
             detail: detail.into(),
+            icon: ui::ICON_TERMINAL,
         }
     }
 
@@ -761,7 +777,7 @@ mod tests {
                 "Find in this tab",
                 "Find in all tabs",
                 "Export tab to file\u{2026}",
-                "Edit profiles",
+                "Profiles",
                 "Duplicate profile",
                 "Export profiles\u{2026}",
                 "Import profiles\u{2026}",
@@ -769,6 +785,7 @@ mod tests {
                 "Color schemes",
                 "Tunnels",
                 "File panel",
+                "Vertical tabs",
                 "Open settings file",
                 "Reveal config folder",
                 "Quit"
@@ -858,7 +875,7 @@ mod tests {
     fn selection_wraps_and_resets_on_query() {
         let items = vec![profile("a", ""), profile("b", ""), profile("c", "")];
         let recency = Recency::new();
-        let mut s = PaletteState::new(items, String::new(), &recency);
+        let mut s = PaletteState::new(items, String::new(), true, &recency);
         s.up();
         assert_eq!(s.selected_position(), s.ranked_len() - 1);
         s.down();
@@ -887,6 +904,7 @@ mod tests {
     fn items_describe_ssh_profiles_with_their_jump_chain() {
         use fbterm_config::{AuthMethod, Profile, SshProfile};
         let ssh = |name: &str, host: &str, jump: Vec<ProfileId>| Profile {
+            icon: None,
             id: ProfileId::new(),
             name: name.into(),
             group: None,
@@ -916,7 +934,7 @@ mod tests {
         };
         assert_eq!(detail("bastion").as_deref(), Some("root@b.example.com"));
         assert_eq!(detail("web").as_deref(), Some("root@10.0.0.5 via bastion"));
-        assert_eq!(list.iter().filter(|i| i.is_action()).count(), 24);
+        assert_eq!(list.iter().filter(|i| i.is_action()).count(), 25);
     }
 
     #[test]

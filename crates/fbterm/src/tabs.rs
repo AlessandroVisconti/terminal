@@ -92,9 +92,32 @@ impl Pane {
     }
 }
 
+/// What a tab shows instead of terminals: the app's own pages. At most one tab of each kind
+/// exists app-wide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Page {
+    Profiles,
+    Settings,
+    /// The first-launch questions (`crate::welcome`).
+    Welcome,
+}
+
+impl Page {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Profiles => "Profiles",
+            Self::Settings => "Settings",
+            Self::Welcome => "Welcome",
+        }
+    }
+}
+
 /// A tab: one or more panes laid out by `layout`. The tab bar shows the focused pane.
 pub struct Tab {
     pub id: TabId,
+    /// Set for a page tab: its one pane is a stand-in that never starts a session, and the tab
+    /// is neither saved nor merged.
+    pub page: Option<Page>,
     pub layout: Layout,
     /// Every pane of `layout`, in no particular order.
     pub panes: Vec<Pane>,
@@ -111,11 +134,22 @@ impl Tab {
         let id = pane.id;
         Self {
             id: TabId::next(),
+            page: None,
             layout: Layout::Pane(id),
             panes: vec![pane],
             focused: id,
             maximized: None,
             recent: vec![id],
+        }
+    }
+
+    /// A page tab.
+    pub fn page(page: Page) -> Self {
+        let mut pane = Pane::new(ProfileId::new(), page.title(), None);
+        pane.state = TabState::Exited(None);
+        Self {
+            page: Some(page),
+            ..Self::single(pane)
         }
     }
 
@@ -218,8 +252,7 @@ impl Tab {
         &self.focused_pane().title
     }
 
-    /// The focused pane's profile name.
-    #[allow(dead_code)] // read by tests; part of the tab's read surface
+    /// The focused pane's profile name (what the tab button shows).
     pub fn name(&self) -> &str {
         &self.focused_pane().name
     }

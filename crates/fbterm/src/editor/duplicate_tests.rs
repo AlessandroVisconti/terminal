@@ -25,6 +25,7 @@ const PP: &str = "saved-pp-dup-19f0";
 
 fn ssh(name: &str, auth: AuthMethod) -> Profile {
     Profile {
+        icon: None,
         id: ProfileId::new(),
         name: name.into(),
         group: Some("prod".into()),
@@ -313,8 +314,8 @@ fn the_action_from_a_terminal_window_duplicates_the_focused_panes_profile() {
     assert_eq!(state.selected, Some(copy), "the editor opens on the copy");
     assert_eq!(state.notice.as_deref(), Some(DUPLICATED));
 
-    // With unsaved changes in the open editor, the action from the terminal window is
-    // refused there (the editor is raised to say so) and nothing is written.
+    // With unsaved changes in the open editor, the action from the terminal tab is
+    // refused there (the Profiles tab is selected to say so) and nothing is written.
     editor(&mut app, EditorMsg::Host("edited.example.com".into()));
     let before = std::fs::read_to_string(app.paths.profiles()).unwrap();
     let _ = app.update(Message::Shortcut(wid, Action::DuplicateProfile));
@@ -325,6 +326,28 @@ fn the_action_from_a_terminal_window_duplicates_the_focused_panes_profile() {
     let ed = ed(&app);
     assert_eq!(ed.notice.as_deref(), Some(DIRTY));
     assert!(ed.dirty, "the edits are kept");
+}
+
+#[test]
+fn the_action_from_a_terminal_tab_ignores_a_background_profiles_tab() {
+    let a = ssh("a", AuthMethod::Agent);
+    let b = ssh("b", AuthMethod::Agent);
+    let mut app = app_with(&[a.clone(), b.clone()]);
+    let wid = window::Id::unique();
+    let mut w = WindowState::new();
+    w.push(Tab::single(Pane::new(a.id, "a", None)));
+    app.windows.insert(wid, w);
+    app.focused = Some(wid);
+    editor(&mut app, EditorMsg::Open);
+    editor(&mut app, EditorMsg::Select(b.id));
+    assert_eq!(app.editor_window(), Some(wid));
+    // The Profiles tab is open in `wid`, but the terminal tab is the active one.
+    app.windows.get_mut(&wid).unwrap().select(0);
+    let _ = app.update(Message::Shortcut(wid, Action::DuplicateProfile));
+    let store = on_disk(&app);
+    copy_of(&store, &a, "a copy");
+    let copies = names(&store).into_iter().filter(|n| n.ends_with(" copy"));
+    assert_eq!(copies.count(), 1, "only a was copied");
 }
 
 #[test]
@@ -457,4 +480,49 @@ fn the_copy_draft_matches_the_original_draft() {
         )
     );
     assert_eq!(copy.group, original.group);
+}
+
+#[test]
+fn a_double_click_on_a_saved_profile_opens_it_in_a_new_tab() {
+    let a = ssh("a", AuthMethod::Agent);
+    let b = ssh("b", AuthMethod::Agent);
+    let mut app = app_with(&[a.clone(), b.clone()]);
+    editor(&mut app, EditorMsg::Open);
+    let tabs = |app: &App| app.windows.values().map(|w| w.tabs.len()).sum::<usize>();
+    let before = tabs(&app);
+
+    // One click, or two on different rows: selection only.
+    editor(&mut app, EditorMsg::Select(a.id));
+    editor(&mut app, EditorMsg::Select(b.id));
+    assert_eq!(tabs(&app), before);
+    assert_eq!(ed(&app).selected, Some(b.id));
+
+    // Two on the same row open it, and a third click starts counting afresh.
+    editor(&mut app, EditorMsg::Select(b.id));
+    assert_eq!(tabs(&app), before + 1);
+    editor(&mut app, EditorMsg::Select(b.id));
+    assert_eq!(tabs(&app), before + 1);
+
+    // Too slow to be a double click.
+    editor(&mut app, EditorMsg::Select(a.id));
+    if let Some(old) = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(2)) {
+        app.editor.as_mut().unwrap().1.last_click = Some((a.id, old));
+        editor(&mut app, EditorMsg::Select(a.id));
+        assert_eq!(tabs(&app), before + 1);
+    }
+}
+
+#[test]
+fn a_double_click_on_a_row_with_unsaved_edits_does_not_open_the_old_profile() {
+    let a = ssh("a", AuthMethod::Agent);
+    let mut app = app_with(std::slice::from_ref(&a));
+    editor(&mut app, EditorMsg::Open);
+    let tabs = |app: &App| app.windows.values().map(|w| w.tabs.len()).sum::<usize>();
+    let before = tabs(&app);
+
+    editor(&mut app, EditorMsg::Select(a.id));
+    editor(&mut app, EditorMsg::Host("edited.example".into()));
+    editor(&mut app, EditorMsg::Select(a.id));
+    assert_eq!(tabs(&app), before);
+    assert!(ed(&app).notice.is_some());
 }

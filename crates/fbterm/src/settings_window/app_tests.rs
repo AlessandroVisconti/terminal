@@ -1,7 +1,8 @@
-//! The Settings window against a temporary config directory: live apply, in-place writes,
+//! The Settings tab against a temporary config directory: live apply, in-place writes,
 //! own-write suppression and edits on disk.
 
-use fbterm_config::{Paths, ProfileId, SETTINGS_TEMPLATE, Settings, ThemeMode};
+use fbterm_config::keys::Action;
+use fbterm_config::{Paths, ProfileId, SETTINGS_TEMPLATE, Settings, TabBar, ThemeMode};
 
 use super::SettingsMsg;
 use crate::app::{App, Message};
@@ -52,6 +53,27 @@ fn a_click_applies_live_and_writes_the_template_with_the_key_set() {
     let _ = app.update(Message::ConfigChanged(SETTINGS_CHANGED));
     assert_eq!(app.notices, before);
     assert_eq!(app.settings.theme, ThemeMode::Light);
+}
+
+#[test]
+fn the_tabs_row_and_the_action_flip_the_side_and_write_it() {
+    let (mut app, paths) = app();
+    send(&mut app, SettingsMsg::TabBar(TabBar::Left));
+    assert!(app.settings.tabs_left());
+    assert!(
+        read(&paths)
+            .unwrap()
+            .contains("#tab_bar = \"top\"\ntab_bar = \"left\"\n")
+    );
+    let _ = app.action(None, Action::VerticalTabs);
+    assert_eq!(app.settings.tab_bar, Some(TabBar::Top));
+    assert!(read(&paths).unwrap().contains("\ntab_bar = \"top\"\n"));
+    // The open Settings tab shows the new value.
+    let (_, state) = app.settings_win.as_ref().unwrap();
+    assert_eq!(state.values.tab_bar, Some(TabBar::Top));
+    let _ = app.action(None, Action::VerticalTabs);
+    assert_eq!(app.settings.tab_bar, Some(TabBar::Left));
+    assert!(read(&paths).unwrap().contains("\ntab_bar = \"left\"\n"));
 }
 
 #[test]
@@ -259,6 +281,26 @@ fn leaving_the_settings_window_stops_recording() {
 }
 
 #[test]
+fn switching_away_from_the_settings_tab_stops_recording() {
+    use crate::app::TabBarMsg;
+    use crate::tabs::{Pane, Tab};
+    use fbterm_config::keys::Action;
+    let (mut app, _) = app();
+    let wid = app.settings_window().unwrap();
+    let terminal = app.windows.get_mut(&wid).unwrap();
+    terminal.push(Tab::single(Pane::for_profile(
+        &crate::restore_tests::profile("a"),
+    )));
+    let settings = terminal.tabs.iter().position(|t| t.page.is_some()).unwrap();
+    let shell = terminal.tabs.iter().position(|t| t.page.is_none()).unwrap();
+    let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(settings)));
+    send(&mut app, SettingsMsg::Record(Action::NewTab));
+    assert_eq!(app.recording_window(), Some(wid));
+    let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(shell)));
+    assert_eq!(app.recording_window(), None);
+}
+
+#[test]
 fn the_gear_button_opens_the_settings_window() {
     let dir = std::env::temp_dir().join(format!("fbterm-settings-test-{}", ProfileId::new()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -292,7 +334,7 @@ fn clearing_a_chord_does_not_bring_back_an_entry_load_dropped() {
     assert!(app.settings_notice.is_none());
 }
 
-/// An app with the Settings window open and one tab whose history holds `lines` lines (the
+/// An app with the Settings tab open and one tab whose history holds `lines` lines (the
 /// default limit, 10,000, is what is saved).
 fn app_with_history(lines: usize) -> (App, Paths, fbterm_term::SharedTerminal) {
     use crate::restore_tests::{fill_history, first_terminal, paths_with, profile, saved};
@@ -455,6 +497,8 @@ fn lowering_scrollback_refreshes_an_open_find_bar() {
     use crate::find::FindMsg;
     let (mut app, _paths, term) = app_with_history(500);
     let wid = *app.windows.keys().next().unwrap();
+    // Settings is a tab of its own: find works in the terminal tab beside it.
+    app.windows.get_mut(&wid).unwrap().select(0);
     let _ = app.find(wid, FindMsg::Open);
     let _ = app.find(wid, FindMsg::Query("line".into()));
     finish_search(&mut app, wid, &term);

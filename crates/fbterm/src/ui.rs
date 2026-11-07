@@ -46,6 +46,35 @@ pub const ICON_PARENT: &str = "\u{e0a4}"; // corner-left-up
 pub const ICON_FILE_OTHER: &str = "\u{e322}"; // file-question-mark
 pub const ICON_MINUS: &str = "\u{e11c}"; // minimize
 pub const ICON_SQUARE: &str = "\u{e167}"; // maximize (`copy` restores)
+pub const ICON_DOWNLOAD: &str = "\u{e0b2}";
+pub const ICON_UPLOAD: &str = "\u{e19e}";
+pub const ICON_TERMINAL: &str = "\u{e181}";
+pub const ICON_SERVER: &str = "\u{e153}";
+
+/// The icons a profile can pick, by the name written in `profiles.toml`; the first two are the
+/// defaults of a local and an SSH profile.
+pub const PROFILE_ICONS: [(&str, &str); 13] = [
+    ("terminal", ICON_TERMINAL),
+    ("server", ICON_SERVER),
+    ("database", "\u{e0ad}"),
+    ("cloud", "\u{e088}"),
+    ("globe", "\u{e0e8}"),
+    ("container", "\u{e4d5}"),
+    ("square-terminal", "\u{e20a}"),
+    ("shield", "\u{e158}"),
+    ("cpu", "\u{e0a9}"),
+    ("hard-drive", "\u{e0ed}"),
+    ("router", "\u{e3bf}"),
+    ("laptop", "\u{e1cd}"),
+    ("rocket", "\u{e286}"),
+];
+
+/// The glyph for a profile's saved icon name; an unknown or missing name (a file edited by
+/// hand, an archive from a newer version) falls back to the default for its kind.
+pub fn profile_icon(name: Option<&str>, ssh: bool) -> &'static str {
+    let found = PROFILE_ICONS.iter().find(|(n, _)| Some(*n) == name);
+    found.map_or(PROFILE_ICONS[usize::from(ssh)].1, |(_, glyph)| glyph)
+}
 
 /// An icon `size` pixels square. The font draws each icon on the full em square (the 24-unit
 /// SVG grid scaled to the em, baseline at the bottom), so a one-em line holds it exactly.
@@ -188,10 +217,15 @@ pub fn text_button<'a>(
     on_press: Option<Message>,
     style: fn(&Tokens, button::Status) -> button::Style,
 ) -> button::Button<'a, Message> {
-    button(text(caption).font(UI_FONT).size(13))
-        .on_press_maybe(on_press)
-        .padding(Padding::from([6.0, 14.0]))
-        .style(move |_, status| style(t, status))
+    button(
+        text(caption)
+            .font(UI_FONT)
+            .size(13)
+            .wrapping(text::Wrapping::None),
+    )
+    .on_press_maybe(on_press)
+    .padding(Padding::from([6.0, 14.0]))
+    .style(move |_, status| style(t, status))
 }
 
 /// A card surface (radius 8).
@@ -269,22 +303,54 @@ pub fn edge_scrollbar_margin(drawn: bool, margin: f32) -> f32 {
     }
 }
 
-/// A vertical scrollbar `width` wide (its scroller `scroller_width`) with `margin` around it,
-/// for a scrollable along a window's right edge: clear of the resize band where the chrome is
-/// `drawn` (see [`edge_scrollbar_margin`]).
-pub fn edge_scrollbar(
-    drawn: bool,
-    width: f32,
-    scroller_width: f32,
-    margin: f32,
-) -> scrollable::Scrollbar {
+/// The width of every scrollbar in the app.
+pub const SCROLLBAR_WIDTH: f32 = 6.0;
+
+/// The one scrollbar of the app, vertical or horizontal, for a scrollable along a window's edge:
+/// clear of the resize band where the chrome is `drawn` (see [`edge_scrollbar_margin`]).
+pub fn edge_scrollbar(drawn: bool) -> scrollable::Scrollbar {
     scrollable::Scrollbar::new()
-        .width(width)
-        .scroller_width(scroller_width)
-        .margin(edge_scrollbar_margin(drawn, margin))
+        .width(SCROLLBAR_WIDTH)
+        .scroller_width(SCROLLBAR_WIDTH)
+        .margin(edge_scrollbar_margin(drawn, 0.0))
 }
 
-/// The bar of the editor and Settings windows where the OS title bar is gone: room for the
+/// The right padding that keeps a list's rows clear of the scrollbar floating over it: its
+/// width, its margin where `drawn`, and a 4 px gap. Lists use at least their usual padding.
+pub fn scrollbar_clearance(drawn: bool) -> f32 {
+    SCROLLBAR_WIDTH + edge_scrollbar_margin(drawn, 0.0) + 4.0
+}
+
+/// The padding of a sidebar's list: 8 px, and on the right clear of the scrollbar.
+pub fn sidebar_list_padding(drawn: bool) -> Padding {
+    Padding {
+        top: 0.0,
+        right: 8.0_f32.max(scrollbar_clearance(drawn)),
+        bottom: 0.0,
+        left: 8.0,
+    }
+}
+
+/// The one scrollbar look of the app: no rail, a rounded scroller in the border color.
+pub fn scroll_style(
+    t: &Tokens,
+    theme: &iced::Theme,
+    status: scrollable::Status,
+) -> scrollable::Style {
+    let mut s = scrollable::default(theme, status);
+    for rail in [&mut s.vertical_rail, &mut s.horizontal_rail] {
+        rail.background = None;
+        rail.border = Border::default();
+        rail.scroller.background = Background::Color(t.border);
+        rail.scroller.border = Border {
+            radius: (SCROLLBAR_WIDTH / 2.0).into(),
+            ..Border::default()
+        };
+    }
+    s
+}
+
+/// The bar of the editor and Settings tabs where the OS title bar is gone: room for the
 /// window buttons (or the drawn controls) and to move the window. It stays blank otherwise;
 /// the window's content titles it.
 pub fn window_header<'a>(
@@ -506,6 +572,10 @@ mod icon_font_tests {
             seen += 1;
         }
         assert!(seen >= 8, "found only {seen} ICON_ constants");
+        for (name, glyph) in super::PROFILE_ICONS {
+            let ch = glyph.chars().next().unwrap();
+            assert!(cmap.map_codepoint(ch).is_some(), "missing glyph of {name}");
+        }
     }
 }
 
@@ -537,5 +607,18 @@ mod tests {
         for margin in [0.0, 1.0, 3.0] {
             assert_eq!(edge_scrollbar_margin(false, margin), margin);
         }
+    }
+}
+
+#[cfg(test)]
+mod profile_icon_tests {
+    use super::*;
+
+    #[test]
+    fn unknown_or_missing_names_fall_back_to_the_kind_default() {
+        assert_eq!(profile_icon(None, false), ICON_TERMINAL);
+        assert_eq!(profile_icon(None, true), ICON_SERVER);
+        assert_eq!(profile_icon(Some("nope"), true), ICON_SERVER);
+        assert_eq!(profile_icon(Some("database"), false), PROFILE_ICONS[2].1);
     }
 }

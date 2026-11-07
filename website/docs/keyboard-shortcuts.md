@@ -6,7 +6,7 @@ sidebar_label: Keyboard shortcuts
 
 Application shortcuts use `Cmd` on macOS. On Linux and Windows shortcuts are `Ctrl+Shift`, so plain `Ctrl` keys (such as `Ctrl+T`, `Ctrl+W` and `Ctrl+P`) keep reaching your shell and the programs running in it. The exceptions are `Ctrl+,` for Settings, `Ctrl+Alt+F` for find in all tabs and `Ctrl+Alt` with an arrow key to move between panes.
 
-These are the defaults. Every application shortcut can be changed or removed in the **Keyboard** section of the Settings window (see [Changing shortcuts](#changing-shortcuts)); the tables below list the defaults, and the Settings window, the palette and the tab-bar tooltips always show the shortcuts in force.
+These are the defaults. Every application shortcut can be changed or removed in the **Keyboard** section of the Settings tab (see [Changing shortcuts](#changing-shortcuts)); the tables below list the defaults, and the Settings tab, the palette and the tab-bar tooltips always show the shortcuts in force.
 
 Hover over a button in the tab bar to see what it does and its shortcut. The gear button at the end of the tab bar opens Settings. The tunnels button after the tab buttons opens or closes the [tunnels panel](tunnels#the-tunnels-panel), shows how many tunnels are up and is highlighted while the panel is open. While the focused pane is an SSH session whose server offers SFTP, a folder button appears before the gear: it opens or closes the [file panel](file-panel) and is highlighted while the panel is open.
 
@@ -45,6 +45,7 @@ These shortcuts cannot be changed; Settings lists them under **Fixed** at the en
 | New window | `Cmd+N` | `Ctrl+Shift+N` |
 | Quit (saves the layout first) | `Cmd+Q` | `Ctrl+Shift+Q` |
 | Show or hide the [file panel](file-panel) | `Cmd+Shift+E` | `Ctrl+Shift+E` |
+| Tabs down the left side, or back along the top ([vertical tabs](tabs#tabs-on-the-left)) | `Cmd+Shift+B` | `Ctrl+Shift+B` |
 
 ## Panes
 
@@ -67,7 +68,7 @@ Move tile, Move tile to new tab, Merge tab into and Find in this tab have no sho
 
 ### The title bar on macOS
 
-On macOS the tab bar is the title bar: the window buttons sit at its left end and the tabs follow them. Drag any empty part of the tab bar (around and after the tabs) to move the window, and double-click it to zoom the window or restore its size. The profile editor and Settings windows work the same way with their own header. The window title, shown in the Dock, Mission Control and the Window menu, is the active tab's name.
+On macOS the tab bar is the title bar: the window buttons sit at its left end and the tabs follow them. Drag any empty part of the tab bar (around and after the tabs) to move the window, and double-click it to zoom the window or restore its size. The window title, shown in the Dock, Mission Control and the Window menu, is the active tab's name.
 
 On Linux and Windows the window keeps the system title bar for now.
 
@@ -107,7 +108,7 @@ While the find bar is open:
 | Open Settings | `Cmd+,` | `Ctrl+,` |
 | Open the profile editor | `Cmd+Shift+,` | `Ctrl+Shift+,` |
 
-The profiles button after the new-tab button in the tab bar opens the profile editor too, and the gear button after it opens Settings. The Settings window has a control for every option in [`settings.toml`](files#settingstoml); changes apply at once and are saved to the file. In the profile editor and Settings windows, `Cmd+W` (`Ctrl+Shift+W`) closes the window, and each window's shortcut opens the other.
+The profiles button after the new-tab button in the tab bar opens the profile editor too, and the gear button after it opens Settings. The Settings tab has a control for every option in [`settings.toml`](files#settingstoml); changes apply at once and are saved to the file. Profiles and Settings are tabs like any other: each opens once, and its shortcut or button selects the tab where it is already open. In either tab, `Cmd+W` (`Ctrl+Shift+W`) closes the tab, and the other page's shortcut opens or selects that page. These two tabs are not restored when fbterm starts again, and they cannot be split or merged.
 
 ## Palette actions
 
@@ -115,7 +116,7 @@ These actions are listed after your profiles, each with its shortcut when it has
 
 | Action | Does |
 | --- | --- |
-| New tab | Choose a profile to open in a new tab. |
+| New tab | Choose a profile to open in a new tab. With no local profile to start, picking it from the palette opens the Profiles tab instead. |
 | New window | Open a new window. |
 | Close pane | Close the focused pane; the last pane closes the tab. |
 | Split right | Open the focused pane's profile in a new pane to its right. |
@@ -127,11 +128,12 @@ These actions are listed after your profiles, each with its shortcut when it has
 | Find in pane | Open the focused pane's find bar. |
 | Find in all tabs | Open the search over every tab. |
 | Find in this tab | Open the same search restricted to the panes of the current tab. |
-| Edit profiles | Open the profile editor. |
-| Duplicate profile | Save a copy of the focused pane's profile (in the profile editor, of the selected one) and open it in the editor; see [Duplicating a profile](profiles#duplicating-a-profile). It has no shortcut by default. |
-| Settings | Open the Settings window. |
+| Profiles | Open the Profiles tab (the profile editor), or select it where it is open. |
+| Duplicate profile | Save a copy of the focused pane's profile (in the Profiles tab, of the selected one) and open it in the editor; see [Duplicating a profile](profiles#duplicating-a-profile). It has no shortcut by default. |
+| Settings | Open the Settings tab, or select it where it is open. |
 | Tunnels | Show or hide the [tunnels panel](tunnels#the-tunnels-panel) beside the terminal. It has no shortcut by default. |
 | File panel | Show or hide the [file panel](file-panel) beside the focused pane's terminal. |
+| Vertical tabs | List the tabs down the left side of every window, or along the top again; see [Tabs on the left](tabs#tabs-on-the-left). |
 | Tunnel: _profile_ / _name_ | One row per tunnel, with its state on the right. Choosing a row switches that tunnel on or off. |
 | Color schemes | Open the Color schemes window to duplicate, rename, edit and delete color schemes. It also opens from **Edit schemes…** in Settings and in the profile editor. |
 | Open settings file | Open [`settings.toml`](files#settingstoml) in your default app. If the file does not exist yet, it is first created with every setting written out as a comment, showing its default. |
@@ -140,6 +142,8 @@ These actions are listed after your profiles, each with its shortcut when it has
 | Export profiles… | Open the [export window](export-import#exporting). It has no shortcut by default. |
 | Import profiles… | Open the [import window](export-import#importing). It has no shortcut by default. |
 | Quit | Save the layout and quit. |
+
+While the Profiles or Settings tab is the active tab, the palette leaves out the actions that need a terminal: Split right, Split down, Maximize pane, Merge tab into…, Move tile…, Move tile to new tab, Find in pane, Find in this tab and Export tab to file…. Their shortcuts do nothing there either. Select a terminal tab to use them again.
 
 ## Inside the palette
 
@@ -196,11 +200,11 @@ A shortcut is its modifiers and a key joined by `+`. Modifiers are `ctrl`, `alt`
 | `zoom_in`, `zoom_out`, `zoom_reset` | Text size of the focused pane |
 | `find_in_tab`, `merge_tab`, `move_tile`, `tile_to_tab` | Find in this tab (all panes of the tab), merge this tab into another, move the focused tile, move it to a tab of its own (no default shortcut) |
 | `select_tab_1` to `select_tab_9` | Select tab 1 to 9 |
-| `new_window`, `edit_profiles`, `settings`, `edit_schemes`, `tunnels`, `file_panel` | New window, the profile editor, Settings, the Color schemes window, the tunnels panel (no default shortcut), the file panel (`Cmd+Shift+E`, `Ctrl+Shift+E`) |
+| `new_window`, `edit_profiles`, `settings`, `edit_schemes`, `tunnels`, `file_panel`, `vertical_tabs` | New window, the profile editor, Settings, the Color schemes window, the tunnels panel (no default shortcut), the file panel (`Cmd+Shift+E`, `Ctrl+Shift+E`), tabs on the left or on top (`Cmd+Shift+B`, `Ctrl+Shift+B`) |
 | `find`, `find_all`, `find_next`, `find_previous` | Find in pane, find in all tabs, older and newer match in the find bar |
 | `palette`, `open_settings_file`, `reveal_config_folder`, `quit` | The palette, the palette actions of the same names, quit |
 
-Edits to the table apply while the app runs, like every setting. An entry that names no action, a shortcut that cannot be read, is not allowed or is reserved, a shortcut another action already has, and `quit` on macOS are reported like other problems in `settings.toml`, with the file and line, and that action keeps its default; the rest of the file still applies. The Settings window writes only the lines of the actions you change there, keeping your comments (a comment above a removed line moves to the next one). An entry it could not read stays as you wrote it; an entry it could read but did not use (for example one that took another action's shortcut) is replaced when you change shortcuts there, so what runs is always what the file says.
+Edits to the table apply while the app runs, like every setting. An entry that names no action, a shortcut that cannot be read, is not allowed or is reserved, a shortcut another action already has, and `quit` on macOS are reported like other problems in `settings.toml`, with the file and line, and that action keeps its default; the rest of the file still applies. The Settings tab writes only the lines of the actions you change there, keeping your comments (a comment above a removed line moves to the next one). An entry it could not read stays as you wrote it; an entry it could read but did not use (for example one that took another action's shortcut) is replaced when you change shortcuts there, so what runs is always what the file says.
 
 ## Search in detail
 

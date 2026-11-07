@@ -55,7 +55,7 @@ jobs:
 
   package:
     name: unsigned universal macOS dmg
-    runs-on: macos-14
+    runs-on: macos-15
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -294,7 +294,7 @@ jobs:
       TAG: ${{ github.ref_name }}
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      # Put above the generated notes.
+      # Put below the version's CHANGELOG.md section and above the generated notes.
       NOTES: >-
         Downloads for macOS (universal `.dmg`), Linux (`.deb`, `.rpm` and `.tar.gz` for x86_64
         and aarch64) and Windows (x86_64 `.msi`), each with its `.sha256` checksum, plus
@@ -304,11 +304,30 @@ jobs:
         [Linux](https://featherbitplatform.github.io/terminal/install-linux),
         [Windows](https://featherbitplatform.github.io/terminal/install-windows).
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: fbterm-*
           merge-multiple: true
           path: dist
+      - name: Release notes from the changelog
+        # The version's section of CHANGELOG.md (its lines after the heading, trimmed), then
+        # the downloads paragraph; the generated notes follow.
+        run: |
+          set -euo pipefail
+          awk -v v="$VERSION" '
+            /^## \[/ { p = ($2 == "[" v "]"); next }
+            p { l[++n] = $0 }
+            END {
+              while (n > 0 && l[n] == "") n--
+              for (i = 1; i <= n; i++) if (l[i] != "" || s) { s = 1; print l[i] }
+            }' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "::error::CHANGELOG.md has no section for $VERSION"
+            exit 1
+          fi
+          printf '\n%s\n' "$NOTES" >> "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
       - name: Check every file is here
         run: |
           set -euo pipefail
@@ -357,7 +376,7 @@ jobs:
           prerelease=()
           if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
           gh release create "$TAG" --draft --verify-tag --title "$TAG" \
-            --notes "$NOTES" --generate-notes "${prerelease[@]}"
+            --notes-file "$RUNNER_TEMP/notes.md" --generate-notes "${prerelease[@]}"
       - name: Upload the files
         run: |
           set -euo pipefail

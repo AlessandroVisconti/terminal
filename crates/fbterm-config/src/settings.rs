@@ -60,6 +60,27 @@ impl WindowDecorations {
     }
 }
 
+/// Where a window lists its open sessions (`tab_bar`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TabBar {
+    /// A row of tabs along the top of the window.
+    #[default]
+    Top,
+    /// A column down the left side of the window, scrolling when it overflows.
+    Left,
+}
+
+impl TabBar {
+    /// The value as written in `settings.toml`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Left => "left",
+        }
+    }
+}
+
 /// The most redraws per second caused by program output (`max_fps`). Typing, scrolling and
 /// resizing always redraw at once; this only caps how often streaming output is drawn.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -158,6 +179,10 @@ pub struct Settings {
     pub background_blur: bool,
     /// Who draws the window title bar on Linux; ignored elsewhere.
     pub window_decorations: WindowDecorations,
+    /// Where open sessions are listed. `None`: never answered (absent from the file), which
+    /// counts as [`TabBar::Top`]; the Welcome tab asks once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tab_bar: Option<TabBar>,
     /// Most redraws per second caused by program output.
     pub max_fps: MaxFps,
     /// Automatic reconnect attempts for a tunnel whose connection dropped (0 = off).
@@ -166,7 +191,7 @@ pub struct Settings {
     /// file), which counts as off; the app asks once at launch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check_updates: Option<bool>,
-    /// Where saved secrets live. Changed through the Settings window, which moves them; a
+    /// Where saved secrets live. Changed through the Settings tab, which moves them; a
     /// hand edit applies on the next launch and moves nothing.
     pub secret_storage: SecretStorage,
     /// Keyboard shortcuts changed from their defaults (the `[keys]` table).
@@ -185,6 +210,7 @@ impl Default for Settings {
             background_opacity: 1.0,
             background_blur: false,
             window_decorations: WindowDecorations::Fbterm,
+            tab_bar: None,
             max_fps: MaxFps::default(),
             tunnel_max_retries: 10,
             check_updates: None,
@@ -203,7 +229,7 @@ pub const OPACITY_RANGE: (f32, f32) = (0.05, 1.0);
 pub const TUNNEL_RETRIES_RANGE: (u32, u32) = (0, 100);
 /// Allowed range of `scrollback_lines`.
 pub const SCROLLBACK_RANGE: (usize, usize) = (0, 1_000_000);
-/// Above this many lines the Settings window notes that resizing can pause while history
+/// Above this many lines the Settings tab notes that resizing can pause while history
 /// rewraps. Measured (feathercritty `benches/RESULTS.md`): a 100,000-line rewrap takes 3 to
 /// 33 ms (one first full-width pass 57 ms); the next measured size, 1,000,000, takes about
 /// 0.3 s. The owner chose to warn above 100,000.
@@ -385,7 +411,7 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 #font_size = 13.0
 
 # Lines of history kept per tab, from 0 to 1000000. Applies to open tabs at once: lowering it
-# drops their oldest lines (the Settings window asks first). Above 100000, resizing a window
+# drops their oldest lines (the Settings tab asks first). Above 100000, resizing a window
 # can pause briefly while history rewraps.
 #scrollback_lines = 10000
 
@@ -408,6 +434,11 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 # Window title bar on Linux: "fbterm" draws it in the tab bar, "system" uses the desktop's.
 #window_decorations = "fbterm"
 
+# Where open sessions are listed: "top" (a row of tabs along the top of the window) or
+# "left" (a column down the left side, scrolling when it overflows). Left out, the Welcome
+# tab asks once.
+#tab_bar = "top"
+
 # Most redraws per second caused by program output: a whole number from 30 to 240, or
 # "display" to follow the refresh rate of the screen (60 when it cannot be detected).
 # Caps redraws caused by program output; typing always redraws immediately. Higher values
@@ -423,11 +454,11 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 
 # Where saved passwords and key passphrases live: "auto" (the system keychain where it
 # works, else the encrypted vault), "keychain" or "vault" (an encrypted file opened with a
-# main password). Change it in the Settings window, which moves the saved secrets across.
+# main password). Change it in the Settings tab, which moves the saved secrets across.
 #secret_storage = "auto"
 
 # Keyboard shortcuts changed from their defaults, by action. The Keyboard section of the
-# Settings window lists every action with its chord and changes them for you.
+# Settings tab lists every action with its chord and changes them for you.
 # A chord is modifiers and a key joined by "+": ctrl, alt, shift and cmd (written super
 # outside macOS), then a key such as t, 1, ",", f5, up, pageup, space or plus.
 # "none" leaves an action without a chord. For example:
@@ -437,6 +468,11 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 "##;
 
 impl Settings {
+    /// Tabs are listed down the left side (`tab_bar = "left"`); unanswered counts as top.
+    pub fn tabs_left(&self) -> bool {
+        self.tab_bar == Some(TabBar::Left)
+    }
+
     /// Whether the update check runs: only when the user said yes.
     pub fn checks_updates(&self) -> bool {
         self.check_updates == Some(true)

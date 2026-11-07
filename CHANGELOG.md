@@ -2,6 +2,33 @@
 
 All notable changes to featherbit terminal (`fbterm`). The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each version links to its GitHub release, where the downloads are.
 
+## [0.7.0] - 2026-11-07
+
+With contributions from [AlessandroVisconti](https://github.com/AlessandroVisconti): the Settings and Profiles page tabs, profile icons and the tab controls ([#57](https://github.com/featherbitplatform/terminal/pull/57), [#58](https://github.com/featherbitplatform/terminal/pull/58), [#61](https://github.com/featherbitplatform/terminal/pull/61)).
+
+### Added
+
+- Tabs down the left side of every window: the `tab_bar` setting, the `Vertical tabs` action (`Cmd+Shift+B`, `Ctrl+Shift+B` on Linux and Windows), a `Tabs` row in Settings. The column scrolls, a newly selected tab scrolls into view, and it yields in a window too narrow for it ([#63](https://github.com/featherbitplatform/terminal/pull/63)).
+- A right-click menu on a tab, on the bar or in the column: `Copy password` for a password SSH profile's tab, cleared from the clipboard a minute later if still there, and `Close tab` ([#63](https://github.com/featherbitplatform/terminal/pull/63)).
+- A Welcome tab opens once at launch and asks the tab layout and whether to check for updates, in place of the update popup. Closing it keeps the defaults ([#63](https://github.com/featherbitplatform/terminal/pull/63)).
+- Profile icons: an icon picker in the profile editor; the icon shows on the profile's tabs and in the palette, in the profile's accent color ([#57](https://github.com/featherbitplatform/terminal/pull/57), by AlessandroVisconti).
+- Reorder tabs by dragging along the bar, or up and down the column: a marker shows the gap where the tab will land ([#61](https://github.com/featherbitplatform/terminal/pull/61), by AlessandroVisconti).
+- Double-clicking a profile in the Profiles tab opens it in a new tab ([#61](https://github.com/featherbitplatform/terminal/pull/61), by AlessandroVisconti).
+
+### Changed
+
+- Settings and Profiles are page tabs in a terminal window instead of separate windows: one of each, opened by their buttons, shortcuts and the palette, closed like a tab, never split or merged. Import and export moved to the Profiles sidebar, and `Edit profiles` is now `Profiles` ([#57](https://github.com/featherbitplatform/terminal/pull/57), [#58](https://github.com/featherbitplatform/terminal/pull/58), by AlessandroVisconti).
+- Tab titles show the profile name instead of the path, and tabs shrink to share the bar as it fills ([#61](https://github.com/featherbitplatform/terminal/pull/61), by AlessandroVisconti).
+- A wheel click on a tab closes it ([#57](https://github.com/featherbitplatform/terminal/pull/57), by AlessandroVisconti).
+- macOS 26: window corners are rounded as the system rounds the windows around them ([#60](https://github.com/featherbitplatform/terminal/pull/60)).
+- SSH library updated to russh 0.65.0 for its published advisories, and the docs site's dependencies for theirs ([#59](https://github.com/featherbitplatform/terminal/pull/59)).
+
+### Fixed
+
+- With no profiles saved, `New tab` opens the Profiles tab instead of doing nothing ([#61](https://github.com/featherbitplatform/terminal/pull/61), by AlessandroVisconti).
+- Palette actions that need a terminal (find, zoom, maximize, merge) are hidden while a Settings or Profiles tab is shown, where they did nothing ([#61](https://github.com/featherbitplatform/terminal/pull/61), by AlessandroVisconti).
+- Disabled switches in Settings no longer react to clicks ([#57](https://github.com/featherbitplatform/terminal/pull/57), by AlessandroVisconti).
+
 ## [0.6.4] - 2026-10-30
 
 ### Fixed
@@ -110,6 +137,7 @@ The first release: the daily driver milestone, macOS only.
 - Compact scrollback history: a live `scrollback_lines` setting with a Settings confirmation, and memory given back when tabs close ([#2](https://github.com/featherbitplatform/terminal/pull/2)).
 - Unsigned macOS `.dmg` packaging and the release workflow ([#1](https://github.com/featherbitplatform/terminal/pull/1)).
 
+[0.7.0]: https://github.com/featherbitplatform/terminal/releases/tag/v0.7.0
 [0.6.4]: https://github.com/featherbitplatform/terminal/releases/tag/v0.6.4
 [0.6.3]: https://github.com/featherbitplatform/terminal/releases/tag/v0.6.3
 [0.6.2]: https://github.com/featherbitplatform/terminal/releases/tag/v0.6.2

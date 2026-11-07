@@ -5,7 +5,7 @@
 //!   in `<dir>` instead of the platform config directory.
 //! - `FBTERM_SECRETS=memory`: keep secrets in memory only; the OS keychain is never touched.
 //!
-//! - `FBTERM_LOG_KEYS=1` (works in release builds, see `key_log.rs`): while the Settings window
+//! - `FBTERM_LOG_KEYS=1` (works in release builds, see `key_log.rs`): while the Settings tab
 //!   records a shortcut, log every keyboard event the app receives to stderr.
 //!
 //! Measurement mode (works in release builds, see `perf.rs`): `--perf-tabs <N> | --perf-panes <N>
@@ -20,11 +20,12 @@
 //! - `FBTERM_PALETTE_QUERY=<text>`: open the quick-launch palette in the first window, pre-filled.
 //! - `FBTERM_SCREENSHOT=<path.png>`: once the first window has rendered for a moment, capture
 //!   that window only (never the screen), write it as PNG and exit.
-//! - `FBTERM_SCREENSHOT_WINDOW=editor|settings|schemes|archive`: capture the profile editor,
-//!   the Settings window, the Color schemes window or the export and import window instead.
-//! - `FBTERM_OPEN_EDITOR=<profile name>`: open the profile editor at startup, that profile
+//! - `FBTERM_SCREENSHOT_WINDOW=editor|settings|schemes|archive`: capture the window showing the
+//!   Profiles tab, the one showing the Settings tab, the Color schemes window or the export and
+//!   import window instead.
+//! - `FBTERM_OPEN_EDITOR=<profile name>`: open the Profiles tab at startup, that profile
 //!   selected.
-//! - `FBTERM_OPEN_SETTINGS=1`: open the Settings window at startup (`secrets`: scrolled to the
+//! - `FBTERM_OPEN_SETTINGS=1`: open the Settings tab at startup (`secrets`: scrolled to the
 //!   Saved secrets section).
 //! - `FBTERM_DEMO_VAULT=1`: with `FBTERM_SECRETS=memory`, make the in-memory backend's vault
 //!   (in its temporary folder, main password `demo`) so Settings shows `Reset vault`.
@@ -108,7 +109,10 @@ mod schemes_window;
 mod sessions;
 mod settings_window;
 mod shortcuts;
+mod tab_drag;
 mod tab_look;
+mod tab_menu;
+mod tab_sidebar;
 mod tabs;
 mod theme;
 mod tiles;
@@ -121,6 +125,7 @@ mod ui;
 mod update;
 mod visibility;
 mod watch;
+mod welcome;
 mod window;
 mod windows;
 

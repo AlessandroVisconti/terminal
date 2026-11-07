@@ -1454,7 +1454,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fbterm"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "block2 0.6.2",
@@ -1494,7 +1494,7 @@ dependencies = [
 
 [[package]]
 name = "fbterm-config"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "directories",
  "serde",
@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "fbterm-secrets"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "age",
  "base64 0.22.1",
@@ -1527,7 +1527,7 @@ dependencies = [
 
 [[package]]
 name = "fbterm-session"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "data-encoding",
@@ -1552,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "fbterm-term"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "fbterm-config",
  "feathercritty",
@@ -4387,9 +4387,9 @@ dependencies = [
 
 [[package]]
 name = "russh"
-version = "0.64.1"
+version = "0.65.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba61e87b9ec9a39a59a6bbed4c0b8ff7fb07073405b24a767a1f2c8560ac8f58"
+checksum = "3bb77a4b259312b2abbc541bca1c13cb4e9b61c560a7fd894068c3b92e0c9dc3"
 dependencies = [
  "aes",
  "bitflags 2.13.2",

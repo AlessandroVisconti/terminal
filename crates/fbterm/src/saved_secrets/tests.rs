@@ -27,6 +27,7 @@ const SAVED: &str = "saved-pw-9e07";
 
 fn ssh(name: &str) -> Profile {
     Profile {
+        icon: None,
         id: ProfileId::new(),
         name: name.into(),
         group: None,
@@ -971,7 +972,7 @@ fn storage_choice_and_reset_wait_for_an_editor_save_even_after_it_closed() {
     let job = app
         .editor_job
         .expect("the save's secrets are being written");
-    let _ = app.update(Message::WindowClosed(app.editor_window().unwrap()));
+    let _ = app.update(Message::Editor(EditorMsg::Close));
     assert!(app.secrets_section().busy, "the section shows it busy");
     assert!(app.secrets_section().editor_saving, "as the editor's save");
 

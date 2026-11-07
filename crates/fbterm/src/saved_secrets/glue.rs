@@ -18,7 +18,7 @@ impl App {
         self.backend.active()
     }
 
-    /// What the Settings window's `Saved secrets` section shows.
+    /// What the Settings tab's `Saved secrets` section shows.
     pub(crate) fn secrets_section(&self) -> SectionInfo {
         SectionInfo {
             choice: self.settings.secret_storage,
@@ -90,7 +90,7 @@ impl App {
         self.notices_dismissed = false;
     }
 
-    /// Set `secret_storage` in memory, in the Settings window and in `settings.toml`.
+    /// Set `secret_storage` in memory, in the Settings tab and in `settings.toml`.
     fn write_secret_storage(&mut self, choice: SecretStorage) {
         if choice != SecretStorage::Auto {
             // An explicit choice is never switched over by Auto's check.

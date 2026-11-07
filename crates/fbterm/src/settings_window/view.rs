@@ -1,9 +1,9 @@
-//! The Settings window: Appearance, Terminal, Tunnels, Saved secrets, Updates and Keyboard
+//! The Settings tab: Appearance, Terminal, Tunnels, Saved secrets, Updates and Keyboard
 //! cards of labelled controls, and a footer with the settings file actions.
 
 use fbterm_config::keys::{Action, ActionGroup, Bindings, FixedShortcut, fixed_shortcuts, risk};
 use fbterm_config::settings::{FONT_SIZE_RANGE, OPACITY_RANGE};
-use fbterm_config::{SecretStorage, ThemeMode, WindowDecorations};
+use fbterm_config::{SecretStorage, TabBar, ThemeMode, WindowDecorations};
 use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, slider, text, text_input, toggler,
 };
@@ -87,23 +87,11 @@ pub fn view<'a>(
             .center_x(Length::Fill),
     )
     .id(state.page.clone())
+    // The app scrollbar, kept clear of the window's resize edge.
     .direction(scrollable::Direction::Vertical(crate::ui::edge_scrollbar(
         crate::chrome::Chrome::current().draws_controls(),
-        6.0,
-        6.0,
-        3.0,
     )))
-    .style(move |theme, status| {
-        let mut s = scrollable::default(theme, status);
-        s.vertical_rail.background = None;
-        s.vertical_rail.border = Border::default();
-        s.vertical_rail.scroller.background = Background::Color(t.border);
-        s.vertical_rail.scroller.border = Border {
-            radius: 3.0.into(),
-            ..Border::default()
-        };
-        s
-    })
+    .style(move |theme, status| crate::ui::scroll_style(t, theme, status))
     .height(Length::Fill);
     container(column![page, footer(t, state, notice)])
         .width(Length::Fill)
@@ -158,7 +146,7 @@ fn read_only_banner<'a>(
 }
 
 /// A titled card of setting rows, separated by hairlines.
-fn section<'a>(
+pub(crate) fn section<'a>(
     t: &'static Tokens,
     title: &'a str,
     rows: Vec<Element<'a, Message>>,
@@ -202,14 +190,22 @@ fn setting<'a>(
     control: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let mut words = column![text(label).font(UI_FONT).size(13).color(if dimmed {
-        t.text_secondary
+        t.text_muted
     } else {
         t.text
     })]
     .spacing(3)
     .width(Length::Fill);
     if let Some(h) = hint {
-        words = words.push(text(h).font(UI_FONT).size(12).color(t.text_muted));
+        let hint_color = if dimmed {
+            Color {
+                a: 0.5,
+                ..t.text_muted
+            }
+        } else {
+            t.text_muted
+        };
+        words = words.push(text(h).font(UI_FONT).size(12).color(hint_color));
     }
     row![words, control.into()]
         .spacing(16)
@@ -359,6 +355,24 @@ fn appearance<'a>(
             v.background_opacity,
         ),
     ];
+    // Where open sessions are listed; an unanswered setting shows `Top`.
+    let tabs = row![
+        segment(
+            t,
+            "Top",
+            !v.tabs_left(),
+            editable.then(|| msg(SettingsMsg::TabBar(TabBar::Top))),
+        ),
+        segment(
+            t,
+            "Left",
+            v.tabs_left(),
+            editable.then(|| msg(SettingsMsg::TabBar(TabBar::Left))),
+        ),
+    ]
+    .spacing(2);
+    let tabs = container(tabs).padding(2).style(move |_| well(t));
+    rows.push(setting(t, "Tabs", None, false, tabs));
     if shows_title_bar_row(chrome::setup().look) {
         let shown = title_bar_shown(v.window_decorations, chrome_fell_back);
         let title_bar = row![
@@ -425,7 +439,7 @@ pub fn title_bar_shown(setting: WindowDecorations, fell_back: bool) -> WindowDec
     }
 }
 
-/// Whether the Settings window offers the `Title bar` choice: only where windows follow
+/// Whether the Settings tab offers the `Title bar` choice: only where windows follow
 /// Linux's conventions (the `window_decorations` setting is ignored elsewhere).
 pub fn shows_title_bar_row(look: Platform) -> bool {
     look == Platform::Linux
@@ -1148,7 +1162,7 @@ fn switch<'a>(
 }
 
 /// One button of a segmented control; `on_press`: `None` while it cannot change.
-fn segment<'a>(
+pub(crate) fn segment<'a>(
     t: &'static Tokens,
     caption: &'a str,
     selected: bool,
@@ -1181,7 +1195,7 @@ fn segment<'a>(
         .into()
 }
 
-fn well(t: &Tokens) -> container::Style {
+pub(crate) fn well(t: &Tokens) -> container::Style {
     container::Style {
         background: Some(t.app.into()),
         border: Border {
@@ -1252,8 +1266,11 @@ pub(crate) fn toggler_style(t: &Tokens, status: toggler::Status, inert: bool) ->
         background: Background::Color(track),
         background_border_width: if disabled { 1.0 } else { 0.0 },
         background_border_color: t.border,
-        foreground: Background::Color(if disabled || inert {
+        foreground: Background::Color(if disabled || (inert && !on) {
             t.text_muted
+        } else if inert {
+            // On, muted: the knob must not vanish into the muted track.
+            t.app
         } else {
             Color::WHITE
         }),

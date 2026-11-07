@@ -40,6 +40,12 @@ Notes under the password fields and the **Remember** checkbox in prompts name th
 
 While a connection's **Unlock saved secrets** (or **Set a main password**) is open, switching storage and **Reset vault** do nothing yet: Settings shows the notice `Finish unlocking saved secrets first.` (or `Finish setting the main password first.`). Answer that dialog, then choose again. A save in the profile editor that needs the vault shows the same notice and keeps your edits unsaved; answer the dialog, then save again.
 
+## Copying a password
+
+Right-click the tab of an SSH profile that logs in with a password and choose **Copy password** (see [The tab menu](tabs#the-tab-menu)): the password saved for that profile goes on the clipboard, for a web console, `sudo` on the host or another tool. Only a saved password is copied; the menu item is not shown for key, agent or local profiles. If nothing is saved for the profile, the window shows `No saved password for <profile>.` and the clipboard is left alone. If the vault is locked, **Unlock saved secrets** opens first and the copy follows the unlock. If the system keychain refuses, its message shows in the window.
+
+Sixty seconds after the copy, if the clipboard still holds exactly that password, fbterm replaces it with an empty string, so a password does not stay around once you have pasted it. Copying something else first leaves the clipboard alone. The clear runs only while fbterm is running (quitting within the minute leaves the password where any copy would), and on Wayland a window without focus cannot read or replace the selection, so there it takes effect only if fbterm has focus when the minute is up.
+
 ## When a secret cannot be saved
 
 If a password or passphrase you asked to remember cannot be saved (the keychain refused, the vault stayed locked, the storage failed), the connection still goes ahead and the app says so once per session, naming the storage, for example `Your password could not be saved in the system keychain, so fbterm will ask for it next time.` (on Windows, `could not be saved for your Windows account`) Declining **Set a main password** is your choice and is not reported.
@@ -48,4 +54,4 @@ A key passphrase remembered when you connect also marks the profile's key as hav
 
 ## Editing the setting by hand
 
-`secret_storage` is `"auto"`, `"keychain"` or `"vault"` in [`settings.toml`](files#settingstoml). Prefer the Settings window: it moves the secrets. A hand edit made while the app runs takes effect at the next launch and moves nothing, so secrets saved in the old place are not found until you switch back.
+`secret_storage` is `"auto"`, `"keychain"` or `"vault"` in [`settings.toml`](files#settingstoml). Prefer the Settings tab: it moves the secrets. A hand edit made while the app runs takes effect at the next launch and moves nothing, so secrets saved in the old place are not found until you switch back.

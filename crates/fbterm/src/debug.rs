@@ -140,7 +140,7 @@ impl App {
         task
     }
 
-    /// `FBTERM_OPEN_SETTINGS=1` (debug aid): open the Settings window at startup.
+    /// `FBTERM_OPEN_SETTINGS=1` (debug aid): open the Settings tab at startup.
     pub(crate) fn open_debug_settings(&mut self) -> Task<Message> {
         let Some(value) = debug_env("FBTERM_OPEN_SETTINGS") else {
             return Task::none();
@@ -244,6 +244,15 @@ impl App {
             );
         }
         task
+    }
+
+    /// `FBTERM_OPEN_WELCOME=1` (debug aid): open the Welcome tab at startup, due or not.
+    pub(crate) fn open_debug_welcome(&mut self) -> Task<Message> {
+        if debug_env("FBTERM_OPEN_WELCOME").is_none() {
+            return Task::none();
+        }
+        self.ask_welcome = false;
+        self.show_page(crate::tabs::Page::Welcome).1
     }
 
     /// `FBTERM_OPEN_TUNNELS=1` (debug aid): open the first window's tunnels panel at startup.
@@ -399,7 +408,7 @@ impl App {
         Task::batch([search, focus])
     }
 
-    /// `FBTERM_DEMO_PROMPT=hostkey|password|keyfile|changed|unlock|setpassword|updates` (debug aid): show a sample dialog in the
+    /// `FBTERM_DEMO_PROMPT=hostkey|password|keyfile|changed|unlock|setpassword` (debug aid): show a sample dialog in the
     /// first window. Nothing waits for its answer.
     pub(crate) fn open_debug_prompt(&mut self) -> Task<Message> {
         let Some(kind) = debug_env("FBTERM_DEMO_PROMPT") else {
@@ -444,11 +453,6 @@ impl App {
                     )
                 };
                 return self.open_vault_dialog(w, kind, purpose);
-            }
-            // The first-launch update question (answering it writes `check_updates`).
-            "updates" => {
-                self.prompts.push(w, None, Dialog::CheckUpdates);
-                return Task::none();
             }
             "changed" => {
                 self.prompts.push(

@@ -96,25 +96,13 @@ pub(crate) fn panel(app: &App, wid: window::Id) -> Option<(Element<'_, Message>,
     let drawn = app.chrome.get().draws_controls();
     let mut list = scrollable(container(list).padding(Padding {
         top: 2.0,
-        right: PAD_X,
+        right: PAD_X.max(ui::scrollbar_clearance(drawn)),
         bottom: 12.0,
         left: PAD_X,
     }))
     .on_scroll(move |v| msg(TunnelsMsg::Scrolled(wid, v.absolute_offset())))
-    .direction(scrollable::Direction::Vertical(ui::edge_scrollbar(
-        drawn, 6.0, 6.0, 3.0,
-    )))
-    .style(move |theme, status| {
-        let mut s = scrollable::default(theme, status);
-        s.vertical_rail.background = None;
-        s.vertical_rail.border = Border::default();
-        s.vertical_rail.scroller.background = Background::Color(t.border);
-        s.vertical_rail.scroller.border = Border {
-            radius: 3.0.into(),
-            ..Border::default()
-        };
-        s
-    })
+    .direction(scrollable::Direction::Vertical(ui::edge_scrollbar(drawn)))
+    .style(move |theme, status| crate::ui::scroll_style(t, theme, status))
     .height(Length::Fill);
     if let Some(id) = panels.list.get(&wid) {
         list = list.id(id.clone());

@@ -1,4 +1,4 @@
-//! The Settings window's state: one control per `settings.toml` option, as plain data so its
+//! The Settings tab's state: one control per `settings.toml` option, as plain data so its
 //! rules (ranges, typed numbers, when to write) are testable without a GUI. Changes apply at
 //! once; the file is written in place (see [`Settings::write_field`]), right away for a click
 //! and after a quiet period for a slider drag or typing. The window is drawn by [`view`] and
@@ -12,7 +12,8 @@ use fbterm_config::settings::{
     TUNNEL_RETRIES_RANGE,
 };
 use fbterm_config::{
-    ConfigError, MaxFps, SecretStorage, SettingChange, Settings, ThemeMode, WindowDecorations,
+    ConfigError, MaxFps, SecretStorage, SettingChange, Settings, TabBar, ThemeMode,
+    WindowDecorations,
 };
 
 mod fonts;
@@ -26,7 +27,7 @@ pub(crate) use glue::{intern, terminal_style};
 /// Quiet period after the last slider or typing change before the file is written.
 pub const WRITE_DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// What the Settings window asks for. `Open`, `Close`, `OpenFile`, `RevealFolder` and `Flush`
+/// What the Settings tab asks for. `Open`, `Close`, `OpenFile`, `RevealFolder` and `Flush`
 /// are the app's; the rest change a value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsMsg {
@@ -55,6 +56,8 @@ pub enum SettingsMsg {
     Blur(bool),
     /// Who draws the title bar (Linux).
     TitleBar(WindowDecorations),
+    /// The Appearance card's `Tabs` row: where open sessions are listed.
+    TabBar(TabBar),
     ScrollbackText(String),
     ScrollbackSubmit,
     /// Confirm lowering the scrollback below what an open tab holds: save and trim.
@@ -466,6 +469,7 @@ impl SettingsState {
             SettingsMsg::ColorScheme(id) => self.change(SettingChange::ColorScheme(id), false),
             SettingsMsg::Blur(v) => self.change(SettingChange::BackgroundBlur(v), false),
             SettingsMsg::TitleBar(v) => self.change(SettingChange::WindowDecorations(v), false),
+            SettingsMsg::TabBar(v) => self.change(SettingChange::TabBar(v), false),
             SettingsMsg::Kitty(v) => self.change(SettingChange::KittyKeyboard(v), false),
             SettingsMsg::MaxFps(v) => self.change(SettingChange::MaxFps(v), false),
             SettingsMsg::CheckUpdates(v) => self.change(SettingChange::CheckUpdates(v), false),

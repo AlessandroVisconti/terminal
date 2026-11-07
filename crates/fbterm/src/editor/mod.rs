@@ -1,4 +1,4 @@
-//! Profile editor state: the form behind the editor window, as plain data so its rules are
+//! Profile editor state: the form behind the editor tab, as plain data so its rules are
 //! testable without a GUI. The window itself is drawn by [`view`].
 //!
 //! The editor works on drafts of every profile and touches the real store only in
@@ -50,7 +50,7 @@ pub enum AuthChoice {
     Agent,
 }
 
-/// What the editor window asks for. The first group is handled by the app (windows, files,
+/// What the editor tab asks for. The first group is handled by the app (windows, files,
 /// disk); the rest edit the selected draft.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorMsg {
@@ -84,6 +84,8 @@ pub enum EditorMsg {
     Name(String),
     Group(String),
     Accent(Option<Rgb>),
+    /// A name from `ui::PROFILE_ICONS`; none is the default for the kind.
+    Icon(Option<&'static str>),
     AccentStyle(AccentStyle),
     /// The profile's own scheme id, or `None` to follow the global one.
     ColorScheme(Option<String>),
@@ -332,6 +334,7 @@ pub struct Draft {
     pub group: String,
     pub accent: Option<Rgb>,
     pub accent_style: AccentStyle,
+    pub icon: Option<String>,
     /// Carried through unchanged until the form edits it.
     pub color_scheme: Option<String>,
     pub kind: DraftKind,
@@ -383,6 +386,7 @@ impl Draft {
             group: p.group.clone().unwrap_or_default(),
             accent: p.accent,
             accent_style: p.accent_style,
+            icon: p.icon.clone(),
             color_scheme: p.color_scheme.clone(),
             kind,
         }
@@ -432,6 +436,7 @@ impl Draft {
             } else {
                 AccentStyle::default()
             },
+            icon: self.icon.clone(),
             color_scheme: self.color_scheme.clone(),
             kind,
         }
@@ -468,7 +473,7 @@ impl Draft {
     }
 }
 
-/// The editor window's state.
+/// The editor tab's state.
 pub struct EditorState {
     drafts: Vec<Draft>,
     pub selected: Option<ProfileId>,
@@ -493,6 +498,8 @@ pub struct EditorState {
     pub name_input: iced::widget::Id,
     /// Tells this editor apart from one opened (or reloaded) after it.
     instance: u64,
+    /// The last profile row pressed and when, to tell a double click.
+    pub last_click: Option<(ProfileId, std::time::Instant)>,
 }
 
 /// The next editor's [`EditorState::instance`].
@@ -537,6 +544,7 @@ impl EditorState {
             removed_kinds: Vec::new(),
             errors: Vec::new(),
             notice: None,
+            last_click: None,
             read_only,
             dirty: false,
             secrets,
@@ -720,6 +728,7 @@ impl EditorState {
             group: String::new(),
             accent: None,
             accent_style: AccentStyle::default(),
+            icon: None,
             color_scheme: None,
             kind,
         };
@@ -1125,6 +1134,7 @@ fn edit(d: &mut Draft, msg: EditorMsg) -> bool {
         (EditorMsg::Name(v), _) => d.name = v,
         (EditorMsg::Group(v), _) => d.group = v,
         (EditorMsg::Accent(v), _) => d.accent = v,
+        (EditorMsg::Icon(v), _) => d.icon = v.map(str::to_owned),
         (EditorMsg::AccentStyle(v), _) => d.accent_style = v,
         (EditorMsg::ColorScheme(v), _) => d.color_scheme = v,
         (EditorMsg::Host(v), DraftKind::Ssh(s)) => s.host = v,

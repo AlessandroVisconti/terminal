@@ -17,7 +17,7 @@ pub use profile::{
     StartMode, TunnelDef, TunnelKind,
 };
 pub use settings::{
-    MaxFps, SETTINGS_TEMPLATE, SecretStorage, Settings, ThemeMode, WindowDecorations,
+    MaxFps, SETTINGS_TEMPLATE, SecretStorage, Settings, TabBar, ThemeMode, WindowDecorations,
 };
 pub use settings_edit::SettingChange;
 pub use shells::discover_shells;
