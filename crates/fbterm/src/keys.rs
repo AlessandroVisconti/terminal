@@ -268,9 +268,10 @@ pub fn modifiers(chord: Chord) -> Modifiers {
 mod tests {
     use super::*;
 
-    const ALL: [Action; 45] = [
+    const ALL: [Action; 46] = [
         Action::NewTab,
         Action::CloseTab,
+        Action::CopyPassword,
         Action::NextTab,
         Action::PrevTab,
         Action::SelectTab(1),
@@ -357,6 +358,11 @@ mod tests {
         assert_eq!(l(true, Action::Settings).as_deref(), Some("⌘,"));
         assert_eq!(l(false, Action::Settings).as_deref(), Some("Ctrl+,"));
         assert_eq!(l(true, Action::Find).as_deref(), Some("⌘F"));
+        assert_eq!(l(true, Action::CopyPassword).as_deref(), Some("⇧⌘K"));
+        assert_eq!(
+            l(false, Action::CopyPassword).as_deref(),
+            Some("Ctrl+Shift+K")
+        );
         assert_eq!(l(true, Action::FindAll).as_deref(), Some("⇧⌘F"));
         assert_eq!(l(true, Action::FindNext).as_deref(), Some("⌘G"));
         assert_eq!(l(true, Action::FindPrevious).as_deref(), Some("⇧⌘G"));

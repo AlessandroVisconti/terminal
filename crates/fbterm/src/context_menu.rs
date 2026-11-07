@@ -50,9 +50,8 @@ impl MenuItem {
         }
     }
 
-    /// Its chord, from the fixed shortcuts (never a hardcoded label). The tab menu's items
-    /// show none: the close chord closes the active tab, not the right-clicked one.
-    fn chord_label(self) -> Option<String> {
+    /// The chord of `Copy` and `Paste`, from the fixed shortcuts (never a hardcoded label).
+    fn fixed_chord_label(self) -> Option<String> {
         if !matches!(self, MenuItem::Copy | MenuItem::Paste) {
             return None;
         }
@@ -84,6 +83,9 @@ pub(crate) struct ContextMenu {
     /// The items in order, each with whether it can be chosen.
     pub items: Vec<(MenuItem, bool)>,
     pub selected: MenuItem,
+    /// The chord shown beside a tab-menu item: given by the opener, for the items whose
+    /// action the key would do on this very tab (the chords act on the active tab).
+    chords: Vec<(MenuItem, String)>,
 }
 
 impl ContextMenu {
@@ -99,14 +101,34 @@ impl ContextMenu {
     }
 
     /// The tab menu for `tab`: `Copy password` when the tab is a password SSH profile's
-    /// (`password`), then `Close tab`.
-    pub fn for_tab(window: window::Id, tab: TabId, at: Point, password: bool) -> Self {
+    /// (`password`), then `Close tab`; `chords` are shown beside those items (see
+    /// [`App::open_tab_menu`] for which ones).
+    pub fn for_tab(
+        window: window::Id,
+        tab: TabId,
+        at: Point,
+        password: bool,
+        chords: Vec<(MenuItem, String)>,
+    ) -> Self {
         let mut items = Vec::new();
         if password {
             items.push((MenuItem::CopyPassword, true));
         }
         items.push((MenuItem::CloseTab, true));
-        Self::build(window, MenuTarget::Tab(tab), at, items)
+        let mut menu = Self::build(window, MenuTarget::Tab(tab), at, items);
+        menu.chords = chords;
+        menu
+    }
+
+    /// The chord label shown beside `item`: the fixed one for `Copy` and `Paste`, else the
+    /// one the opener gave.
+    pub fn chord_label(&self, item: MenuItem) -> Option<String> {
+        item.fixed_chord_label().or_else(|| {
+            self.chords
+                .iter()
+                .find(|(i, _)| *i == item)
+                .map(|(_, label)| label.clone())
+        })
     }
 
     fn build(
@@ -127,6 +149,7 @@ impl ContextMenu {
             at,
             items,
             selected,
+            chords: Vec::new(),
         }
     }
 
@@ -355,7 +378,15 @@ pub(crate) fn view<'a>(
     let msg = move |m| Message::ContextMenu(window, m);
     let mut items = column![];
     for &(item, enabled) in &menu.items {
-        items = items.push(item_view(t, window, item, enabled, item == menu.selected));
+        let chord = menu.chord_label(item);
+        items = items.push(item_view(
+            t,
+            window,
+            item,
+            enabled,
+            item == menu.selected,
+            chord,
+        ));
     }
     let card = container(items)
         .width(MENU_WIDTH)
@@ -535,6 +566,7 @@ fn item_view<'a>(
     item: MenuItem,
     enabled: bool,
     selected: bool,
+    chord: Option<String>,
 ) -> Element<'a, Message> {
     let color = if enabled { t.text } else { t.text_muted };
     let mut line = row![
@@ -542,7 +574,7 @@ fn item_view<'a>(
         Space::new().width(Length::Fill),
     ]
     .align_y(Alignment::Center);
-    if let Some(chord) = item.chord_label() {
+    if let Some(chord) = chord {
         line = line.push(text(chord).font(MONO).size(11.5).color(t.text_muted));
     }
     button(line)
@@ -614,13 +646,28 @@ mod tests {
         let m = ContextMenu::for_pane(w, p, Point::ORIGIN, true);
         assert!(m.enabled(MenuItem::Copy) && m.enabled(MenuItem::Paste));
         assert_eq!(m.selected, MenuItem::Copy);
-        assert!(MenuItem::CloseTab.chord_label().is_none());
-        assert!(MenuItem::CopyPassword.chord_label().is_none());
         assert_eq!(MenuItem::CopyPassword.title(), "Copy password");
         let mac = cfg!(target_os = "macos");
         let paste = if mac { "\u{2318}V" } else { "Ctrl+Shift+V" };
-        assert_eq!(MenuItem::Paste.chord_label().as_deref(), Some(paste));
-        assert!(MenuItem::Copy.chord_label().is_some());
+        assert_eq!(m.chord_label(MenuItem::Paste).as_deref(), Some(paste));
+        assert!(m.chord_label(MenuItem::Copy).is_some());
+    }
+
+    /// A tab menu shows the chords it was opened with and no other: the close and copy
+    /// chords act on the active tab, so the opener decides where they belong.
+    #[test]
+    fn a_tab_menu_shows_only_the_chords_it_was_given() {
+        let (w, tab) = (window::Id::unique(), TabId::next());
+        let chords = vec![(MenuItem::CloseTab, "\u{2318}W".to_string())];
+        let m = ContextMenu::for_tab(w, tab, Point::ORIGIN, true, chords);
+        assert_eq!(
+            m.chord_label(MenuItem::CloseTab).as_deref(),
+            Some("\u{2318}W")
+        );
+        assert!(m.chord_label(MenuItem::CopyPassword).is_none());
+        let m = ContextMenu::for_tab(w, tab, Point::ORIGIN, false, vec![]);
+        assert!(m.chord_label(MenuItem::CloseTab).is_none());
+        assert_eq!(m.items, vec![(MenuItem::CloseTab, true)]);
     }
 
     fn app_with_pane() -> (App, window::Id, PaneId) {

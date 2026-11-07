@@ -18,7 +18,7 @@ A pane whose profile has an accent color also gets a thin border in that accent 
 | --- | --- | --- |
 | Split right | `Cmd+D` | `Ctrl+Shift+D` |
 | Split down | `Cmd+Shift+D` | `Ctrl+Shift+Alt+D` |
-| Close pane | `Cmd+W` | `Ctrl+Shift+W` |
+| Close tab or pane | `Cmd+W` | `Ctrl+Shift+W` |
 | Focus the pane to the left, right, above, below | `Cmd+Option+Left`, `Right`, `Up`, `Down` | `Ctrl+Alt+Left`, `Right`, `Up`, `Down` |
 
 Splitting opens the focused pane's profile in a new pane and moves focus there. To open a different profile in a split, select it in the palette and press `Shift+Enter` instead of `Enter`; the palette also lists **Split right** and **Split down**. A split is refused, silently, when a pane would end up smaller than 20 columns by 5 rows.
