@@ -20,13 +20,14 @@ use crate::file_panel::FilePanelMsg;
 use crate::keys::{Action, Bindings};
 use crate::palette;
 use crate::shortcuts::{Mode, Shortcuts};
+use crate::tab_drag::{Axis, DragState, Strip, drag_event};
 use crate::tab_look::{Surroundings, look};
 use crate::tabs::{Page, Pane, Tab, TabId, TabState};
 use crate::theme::{Tokens, UI_FONT};
 use crate::tooltip::{DemoTip, tip, tooltip_text};
 use crate::tunnels_panel::TunnelsMsg;
 use crate::ui::{ICON_FOLDER, ICON_PLUS, ICON_SETTINGS, ICON_TUNNELS, ICON_USERS, ICON_X, icon};
-use crate::windows::{Carry, DragMsg};
+use crate::windows::Carry;
 
 /// Space around the terminal area. Where the chrome is drawn the window's resize band lies
 /// within it, so a press on the terminal's text never resizes the window.
@@ -39,8 +40,6 @@ pub(crate) const TERMINAL_PADDING: Padding = Padding {
 
 /// Gap between the top of the tab bar and the top of a tab.
 const TAB_TOP_GAP: f32 = 4.0;
-/// How far a pressed tab must travel before it is carried (less is a click).
-const TAB_DRAG_THRESHOLD: f32 = 6.0;
 
 pub fn view(app: &App, id: window::Id) -> Element<'_, Message> {
     let content = window_view(app, id);
@@ -1357,7 +1356,7 @@ fn outline(
 /// the bar's row), which draws its own, and its flares; and the inactive tabs' backgrounds
 /// (hover, tint), kept off the flares.
 ///
-/// It also turns a press on a tab that travels `TAB_DRAG_THRESHOLD` into a tab drag (a shorter
+/// It also turns a press on a tab that travels `tab_drag::DRAG_THRESHOLD` into a tab drag (a shorter
 /// one stays a click), reports the tab a carried tab hovers, and takes a tile dropped on the
 /// bar as a new tab at the gap nearest the pointer.
 struct BarBackground<'a> {
@@ -1380,23 +1379,6 @@ struct BarBackground<'a> {
     outline_end: Option<f32>,
 }
 
-/// A press on a tab button, until its release.
-struct TabPress {
-    index: usize,
-    origin: Point,
-    /// Travelled past the threshold: the tab is carried, the release is no click.
-    dragging: bool,
-}
-
-#[derive(Default)]
-struct BarState {
-    press: Option<TabPress>,
-    /// The tab button a carried tab hovers, as last reported.
-    over: Option<usize>,
-    /// Where a carried tile would become a tab, as last drawn.
-    gap: Option<usize>,
-}
-
 /// The tab buttons' bounds: the first `n` children of the bar's row (container -> row).
 fn tab_rects(layout: Layout<'_>, n: usize) -> Vec<Rectangle> {
     layout
@@ -1406,136 +1388,13 @@ fn tab_rects(layout: Layout<'_>, n: usize) -> Vec<Rectangle> {
         .unwrap_or_default()
 }
 
-/// Where a tile dropped at `p` becomes a tab: before the tab whose left half is under `p`,
-/// after the one whose right half is, else at the nearest gap. Over its own tab (`own`):
-/// nowhere.
-fn tab_gap(buttons: &[Rectangle], own: Option<usize>, p: Point) -> Option<usize> {
-    if let Some(i) = buttons.iter().position(|r| r.contains(p)) {
-        if Some(i) == own {
-            return None;
-        }
-        return Some(if p.x < buttons[i].center_x() {
-            i
-        } else {
-            i + 1
-        });
-    }
-    Some(
-        buttons
-            .iter()
-            .position(|r| p.x < r.center_x())
-            .unwrap_or(buttons.len()),
-    )
-}
-
-impl BarBackground<'_> {
-    fn publish(&self, shell: &mut Shell<'_, Message>, msg: DragMsg) {
-        shell.publish(Message::Drag(self.window, msg));
-    }
-
-    /// The tab-drag side of `event`. Returns `true` when the content must not see where the
-    /// pointer is (the release that ends a tab drag is no click on a button).
-    fn drag_event(
-        &self,
-        state: &mut BarState,
-        event: &Event,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        shell: &mut Shell<'_, Message>,
-    ) -> bool {
-        let bounds = layout.bounds();
-        let buttons = tab_rects(layout, self.ids.len());
-        let under = |p: Point| buttons.iter().position(|r| r.contains(p));
-        let tile = matches!(self.carry, Some(Carry::Tile(_)));
-        // A tile drag that ended elsewhere (Escape) leaves no gap behind.
-        if !tile && state.gap.take().is_some() {
-            shell.request_redraw();
-        }
-        let gap = |p: Option<Point>| {
-            p.filter(|_| tile)
-                .and_then(|p| tab_gap(&buttons, self.hole, p))
-        };
-        match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                state.press = cursor
-                    .position_over(bounds)
-                    .filter(|_| !self.modal)
-                    .and_then(|p| {
-                        under(p).map(|index| TabPress {
-                            index,
-                            origin: p,
-                            dragging: false,
-                        })
-                    });
-            }
-            // A wheel click on a tab closes it, as in a browser.
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) if !self.modal => {
-                if let Some(index) = cursor.position_over(bounds).and_then(under) {
-                    shell.publish(Message::TabBar(self.window, TabBarMsg::Close(index)));
-                }
-            }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if let (Some(press), Some(p)) = (&mut state.press, cursor.position()) {
-                    if !press.dragging && p.distance(press.origin) >= TAB_DRAG_THRESHOLD {
-                        press.dragging = true;
-                        if let Some(id) = self.ids.get(press.index) {
-                            shell.publish(Message::Drag(self.window, DragMsg::StartTab(*id)));
-                        }
-                    }
-                    if press.dragging && matches!(self.carry, Some(Carry::Tab(_))) {
-                        let over = cursor
-                            .position_over(bounds)
-                            .and_then(under)
-                            .filter(|i| *i != press.index);
-                        if over != state.over {
-                            state.over = over;
-                            self.publish(shell, DragMsg::OverTab(over));
-                        }
-                    }
-                }
-                let at = gap(cursor.position_over(bounds));
-                if at != state.gap {
-                    state.gap = at;
-                    shell.request_redraw();
-                }
-            }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if state.gap.take().is_some() {
-                    shell.request_redraw();
-                }
-                if let Some(TabPress { dragging: true, .. }) = state.press.take() {
-                    state.over = None;
-                    self.publish(shell, DragMsg::End);
-                    return true;
-                }
-                if let (Some(Carry::Tile(pane)), Some(index)) =
-                    (self.carry, gap(cursor.position_over(bounds)))
-                {
-                    self.publish(shell, DragMsg::TileToTab { pane, index });
-                }
-            }
-            Event::Mouse(mouse::Event::CursorLeft) | Event::Window(window::Event::Unfocused) => {
-                if let Some(TabPress { dragging: true, .. }) = state.press.take() {
-                    self.publish(shell, DragMsg::End);
-                }
-                state.over = None;
-                if state.gap.take().is_some() {
-                    shell.request_redraw();
-                }
-            }
-            _ => {}
-        }
-        false
-    }
-}
-
 impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
     fn tag(&self) -> tree::Tag {
-        tree::Tag::of::<BarState>()
+        tree::Tag::of::<DragState>()
     }
 
     fn state(&self) -> tree::State {
-        tree::State::new(BarState::default())
+        tree::State::new(DragState::default())
     }
 
     fn children(&self) -> Vec<Tree> {
@@ -1584,10 +1443,20 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        let state = tree.state.downcast_mut::<BarState>();
+        let state = tree.state.downcast_mut::<DragState>();
+        let strip = Strip {
+            window: self.window,
+            ids: &self.ids,
+            carry: self.carry,
+            modal: self.modal,
+            hole: self.hole,
+            axis: Axis::X,
+            scroll: 0.0,
+        };
+        let rects = tab_rects(layout, self.ids.len());
         // The button pressed at the start of a drag is let go without a click: it sees the
         // release with no pointer over it.
-        let cursor = if self.drag_event(state, event, layout, cursor, shell) {
+        let cursor = if drag_event(&strip, state, event, &rects, layout.bounds(), cursor, shell) {
             mouse::Cursor::Unavailable
         } else {
             cursor
@@ -1778,7 +1647,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
             viewport,
         );
         // A carried tile: a violet bar in the gap where it would become a tab.
-        let state = tree.state.downcast_ref::<BarState>();
+        let state = tree.state.downcast_ref::<DragState>();
         if let (Some(Carry::Tile(_)), Some(gap)) = (self.carry, state.gap) {
             let x = match buttons.get(gap) {
                 Some(next) => next.x - 2.0,

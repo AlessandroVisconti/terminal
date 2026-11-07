@@ -43,10 +43,15 @@ use crate::visibility;
 use crate::watch::{self, Changed, ConfigDir};
 
 /// What a tab bar asks of its own window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TabBarMsg {
     Select(usize),
     Close(usize),
+    /// A right-click on the tab at `index`: its menu, at `at` (window logical pixels).
+    Menu {
+        index: usize,
+        at: iced::Point,
+    },
     New,
     Profiles,
     /// The tunnels indicator: shows or hides the window's tunnels panel.
@@ -1138,6 +1143,8 @@ impl App {
                 match msg {
                     TabBarMsg::Select(i) => self.with_window(wid, |w| w.select(i)),
                     TabBarMsg::Close(i) => self.close_tab_asking(wid, i),
+                    // The tab menu arrives with `tab_menu.rs`.
+                    TabBarMsg::Menu { .. } => Task::none(),
                     TabBarMsg::New => self.action(Some(wid), Action::NewTab),
                     TabBarMsg::Profiles => self.action(Some(wid), Action::EditProfiles),
                     TabBarMsg::Tunnels => self.action(Some(wid), Action::Tunnels),
