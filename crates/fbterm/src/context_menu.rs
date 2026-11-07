@@ -1,4 +1,5 @@
-//! The terminal's right-click menu: `Copy` and `Paste` at the pointer.
+//! The terminal's right-click menu: `Copy` and `Paste` at the pointer; and, with the same
+//! layer, placement and keys, the tab menu (`tab_menu.rs`): `Copy password` and `Close tab`.
 //!
 //! On macOS every right-click asks for this menu ([`TerminalOutput::ContextMenu`]) and keeps
 //! the selection; `Copy` is enabled when there is one and copies it as the copy chord does,
@@ -24,6 +25,7 @@ use iced::{keyboard, mouse, window};
 
 use crate::app::{App, Message};
 use crate::layout::PaneId;
+use crate::tabs::TabId;
 use crate::theme::{Tokens, UI_FONT};
 use crate::ui::MONO;
 
@@ -32,28 +34,28 @@ use crate::ui::MONO;
 pub(crate) enum MenuItem {
     Copy,
     Paste,
+    /// The tab menu: the saved password of the tab's password SSH profile to the clipboard.
+    CopyPassword,
+    /// The tab menu: what the tab's close button does.
+    CloseTab,
 }
 
 impl MenuItem {
-    const ALL: [MenuItem; 2] = [MenuItem::Copy, MenuItem::Paste];
-
     fn title(self) -> &'static str {
         match self {
             MenuItem::Copy => "Copy",
             MenuItem::Paste => "Paste",
+            MenuItem::CopyPassword => "Copy password",
+            MenuItem::CloseTab => "Close tab",
         }
     }
 
-    /// Whether it can be chosen: `Copy` only with a selection to copy (`can_copy`).
-    fn enabled(self, can_copy: bool) -> bool {
-        match self {
-            MenuItem::Copy => can_copy,
-            MenuItem::Paste => true,
-        }
-    }
-
-    /// Its chord, from the fixed shortcuts (never a hardcoded label).
+    /// Its chord, from the fixed shortcuts (never a hardcoded label). The tab menu's items
+    /// show none: the close chord closes the active tab, not the right-clicked one.
     fn chord_label(self) -> Option<String> {
+        if !matches!(self, MenuItem::Copy | MenuItem::Paste) {
+            return None;
+        }
         let mac = cfg!(target_os = "macos");
         fixed_shortcuts(mac)
             .into_iter()
@@ -62,40 +64,84 @@ impl MenuItem {
     }
 }
 
-/// The open menu: over which window and pane, where the right-click was, whether the pane
-/// had a selection to copy, which item the keyboard is on (`Copy` when it is enabled, else
-/// `Paste`).
+/// What a menu acts on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MenuTarget {
+    /// The terminal's menu, over this pane.
+    Pane(PaneId),
+    /// The tab menu, for this tab.
+    Tab(TabId),
+}
+
+/// The open menu: over which window, acting on what, where the right-click was, its items
+/// with whether each can be chosen, and which item the keyboard is on.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ContextMenu {
     pub window: window::Id,
-    pub pane: PaneId,
+    pub target: MenuTarget,
     /// The pointer when the menu opened, in the window's logical pixels.
     pub at: Point,
-    /// The pane had a selection when the menu opened: `Copy` is enabled.
-    pub can_copy: bool,
+    /// The items in order, each with whether it can be chosen.
+    pub items: Vec<(MenuItem, bool)>,
     pub selected: MenuItem,
 }
 
 impl ContextMenu {
-    pub fn new(window: window::Id, pane: PaneId, at: Point, can_copy: bool) -> Self {
+    /// The terminal's menu over `pane`: `Copy` (enabled with a selection, `can_copy`) and
+    /// `Paste`; the keyboard starts on `Copy` when it is enabled, else `Paste`.
+    pub fn for_pane(window: window::Id, pane: PaneId, at: Point, can_copy: bool) -> Self {
+        Self::build(
+            window,
+            MenuTarget::Pane(pane),
+            at,
+            vec![(MenuItem::Copy, can_copy), (MenuItem::Paste, true)],
+        )
+    }
+
+    /// The tab menu for `tab`: `Copy password` when the tab is a password SSH profile's
+    /// (`password`), then `Close tab`.
+    pub fn for_tab(window: window::Id, tab: TabId, at: Point, password: bool) -> Self {
+        let mut items = Vec::new();
+        if password {
+            items.push((MenuItem::CopyPassword, true));
+        }
+        items.push((MenuItem::CloseTab, true));
+        Self::build(window, MenuTarget::Tab(tab), at, items)
+    }
+
+    fn build(
+        window: window::Id,
+        target: MenuTarget,
+        at: Point,
+        items: Vec<(MenuItem, bool)>,
+    ) -> Self {
+        let selected = items
+            .iter()
+            .find(|(_, enabled)| *enabled)
+            .or(items.first())
+            .map(|(item, _)| *item)
+            .expect("a menu has at least one item");
         Self {
             window,
-            pane,
+            target,
             at,
-            can_copy,
-            selected: if can_copy {
-                MenuItem::Copy
-            } else {
-                MenuItem::Paste
-            },
+            items,
+            selected,
         }
+    }
+
+    /// Whether `item` is in the menu and can be chosen.
+    pub fn enabled(&self, item: MenuItem) -> bool {
+        self.items.iter().any(|(i, e)| *i == item && *e)
     }
 
     /// Move the keyboard's item by `step` over the enabled items, wrapping around.
     fn step(&mut self, step: isize) {
-        let enabled: Vec<MenuItem> = MenuItem::ALL
-            .into_iter()
-            .filter(|i| i.enabled(self.can_copy))
+        let enabled: Vec<MenuItem> = self
+            .items
+            .iter()
+            .filter(|(_, e)| *e)
+            .map(|(i, _)| *i)
             .collect();
         let Some(here) = enabled.iter().position(|i| *i == self.selected) else {
             return;
@@ -136,11 +182,8 @@ const ITEM_HEIGHT: f32 = 28.0;
 /// Space between the menu's edge and its items.
 const MENU_PADDING: f32 = 4.0;
 
-fn menu_size() -> Size {
-    Size::new(
-        MENU_WIDTH,
-        ITEM_HEIGHT * MenuItem::ALL.len() as f32 + 2.0 * MENU_PADDING,
-    )
+fn menu_size(items: usize) -> Size {
+    Size::new(MENU_WIDTH, ITEM_HEIGHT * items as f32 + 2.0 * MENU_PADDING)
 }
 
 /// Where a menu of `size` opened at `at` goes in a window of `window` (if known): its top-left
@@ -172,28 +215,38 @@ impl App {
         at: Point,
         can_copy: bool,
     ) -> Task<Message> {
-        let covered = self.palettes.contains_key(&wid)
-            || self.find_box.as_ref().is_some_and(|f| f.window == wid)
-            || self.prompts.front(wid).is_some()
-            || self.vault.dialog.as_ref().is_some_and(|d| d.window == wid);
-        if covered || !self.windows.contains_key(&wid) {
+        if self.menu_covered(wid) {
             return Task::none();
         }
-        self.context_menu = Some(ContextMenu::new(wid, pane, at, can_copy));
+        self.context_menu = Some(ContextMenu::for_pane(wid, pane, at, can_copy));
         self.focus_pane(wid, pane)
     }
 
-    /// Close the menu once its pane is no longer shown (closed, its tab closed or another
-    /// tab selected), so its Paste never has nowhere to go.
+    /// No menu opens over `wid` while the palette, the find-in-all-tabs box, a dialog or the
+    /// main password dialog covers it (their backdrops let a right-click through), or when
+    /// it is no terminal window.
+    pub(crate) fn menu_covered(&self, wid: window::Id) -> bool {
+        self.palettes.contains_key(&wid)
+            || self.find_box.as_ref().is_some_and(|f| f.window == wid)
+            || self.prompts.front(wid).is_some()
+            || self.vault.dialog.as_ref().is_some_and(|d| d.window == wid)
+            || !self.windows.contains_key(&wid)
+    }
+
+    /// Close the menu once its target is gone: the terminal's menu when its pane is no longer
+    /// shown (closed, its tab closed or another tab selected), so its Paste never has nowhere
+    /// to go; the tab menu when its tab left the window.
     pub(crate) fn sync_context_menu(&mut self) {
         let Some(menu) = &self.context_menu else {
             return;
         };
-        let shown = self
-            .windows
-            .get(&menu.window)
-            .and_then(|w| w.active_tab())
-            .is_some_and(|t| t.visible_panes().contains(&menu.pane));
+        let w = self.windows.get(&menu.window);
+        let shown = match menu.target {
+            MenuTarget::Pane(pane) => w
+                .and_then(|w| w.active_tab())
+                .is_some_and(|t| t.visible_panes().contains(&pane)),
+            MenuTarget::Tab(tab) => w.is_some_and(|w| w.tabs.iter().any(|t| t.id == tab)),
+        };
         if !shown {
             self.context_menu = None;
         }
@@ -229,15 +282,28 @@ impl App {
                 return Task::none();
             }
         };
-        let (pane, can_copy) = (menu.pane, menu.can_copy);
+        let (target, enabled) = (menu.target, menu.enabled(item));
         self.context_menu = None;
-        if !item.enabled(can_copy) {
+        if !enabled {
             return Task::none();
         }
-        match item {
-            MenuItem::Paste => iced::clipboard::read()
+        match (item, target) {
+            (MenuItem::Paste, MenuTarget::Pane(pane)) => iced::clipboard::read()
                 .map(move |text| Message::ContextMenu(wid, MenuMsg::Pasted(pane, text))),
-            MenuItem::Copy => self.menu_copy(wid, pane),
+            (MenuItem::Copy, MenuTarget::Pane(pane)) => self.menu_copy(wid, pane),
+            (MenuItem::CloseTab, MenuTarget::Tab(tab)) => {
+                let index = self
+                    .windows
+                    .get(&wid)
+                    .and_then(|w| w.tabs.iter().position(|t| t.id == tab));
+                match index {
+                    Some(index) => self.close_tab_asking(wid, index),
+                    None => Task::none(),
+                }
+            }
+            // The copy itself arrives with `tab_menu.rs`'s messages.
+            (MenuItem::CopyPassword, MenuTarget::Tab(_)) => Task::none(),
+            _ => Task::none(),
         }
     }
 
@@ -289,8 +355,7 @@ pub(crate) fn view<'a>(
 ) -> Element<'a, Message> {
     let msg = move |m| Message::ContextMenu(window, m);
     let mut items = column![];
-    for item in MenuItem::ALL {
-        let enabled = item.enabled(menu.can_copy);
+    for &(item, enabled) in &menu.items {
         items = items.push(item_view(t, window, item, enabled, item == menu.selected));
     }
     let card = container(items)
@@ -310,7 +375,7 @@ pub(crate) fn view<'a>(
             },
             ..container::Style::default()
         });
-    let origin = menu_origin(menu.at, menu_size(), size);
+    let origin = menu_origin(menu.at, menu_size(menu.items.len()), size);
     let layer = container(opaque(card))
         .width(Length::Fill)
         .height(Length::Fill)
@@ -543,8 +608,16 @@ mod tests {
 
     #[test]
     fn copy_needs_a_selection_and_paste_shows_the_paste_chord() {
-        assert!(!MenuItem::Copy.enabled(false) && MenuItem::Paste.enabled(false));
-        assert!(MenuItem::Copy.enabled(true) && MenuItem::Paste.enabled(true));
+        let (w, p) = (window::Id::unique(), PaneId::next());
+        let m = ContextMenu::for_pane(w, p, Point::ORIGIN, false);
+        assert!(!m.enabled(MenuItem::Copy) && m.enabled(MenuItem::Paste));
+        assert_eq!(m.selected, MenuItem::Paste);
+        let m = ContextMenu::for_pane(w, p, Point::ORIGIN, true);
+        assert!(m.enabled(MenuItem::Copy) && m.enabled(MenuItem::Paste));
+        assert_eq!(m.selected, MenuItem::Copy);
+        assert!(MenuItem::CloseTab.chord_label().is_none());
+        assert!(MenuItem::CopyPassword.chord_label().is_none());
+        assert_eq!(MenuItem::CopyPassword.title(), "Copy password");
         let mac = cfg!(target_os = "macos");
         let paste = if mac { "\u{2318}V" } else { "Ctrl+Shift+V" };
         assert_eq!(MenuItem::Paste.chord_label().as_deref(), Some(paste));
@@ -578,7 +651,7 @@ mod tests {
         ));
         assert_eq!(
             app.context_menu,
-            Some(ContextMenu::new(wid, pane, at, false))
+            Some(ContextMenu::for_pane(wid, pane, at, false))
         );
     }
 
@@ -676,7 +749,7 @@ mod tests {
         ));
         assert_eq!(
             app.context_menu,
-            Some(ContextMenu::new(wid, pane, at, can_copy))
+            Some(ContextMenu::for_pane(wid, pane, at, can_copy))
         );
     }
 
@@ -766,7 +839,10 @@ mod tests {
             can_copy: false,
         };
         let _ = app.update(Message::Terminal(wid, b, menu));
-        assert_eq!(app.context_menu, Some(ContextMenu::new(wid, b, at, false)));
+        assert_eq!(
+            app.context_menu,
+            Some(ContextMenu::for_pane(wid, b, at, false))
+        );
     }
 
     #[test]
@@ -804,7 +880,7 @@ mod tests {
         ));
         let size = Size::new(800.0, 600.0);
         let wid = window::Id::unique();
-        let menu = ContextMenu::new(wid, PaneId::next(), Point::new(100.0, 100.0), false);
+        let menu = ContextMenu::for_pane(wid, PaneId::next(), Point::new(100.0, 100.0), false);
         let mut element = view(t, wid, &menu, Some(size));
         let mut tree = Tree::new(&element);
         let node = element.as_widget_mut().layout(

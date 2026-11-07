@@ -1143,8 +1143,7 @@ impl App {
                 match msg {
                     TabBarMsg::Select(i) => self.with_window(wid, |w| w.select(i)),
                     TabBarMsg::Close(i) => self.close_tab_asking(wid, i),
-                    // The tab menu arrives with `tab_menu.rs`.
-                    TabBarMsg::Menu { .. } => Task::none(),
+                    TabBarMsg::Menu { index, at } => self.open_tab_menu(wid, index, at),
                     TabBarMsg::New => self.action(Some(wid), Action::NewTab),
                     TabBarMsg::Profiles => self.action(Some(wid), Action::EditProfiles),
                     TabBarMsg::Tunnels => self.action(Some(wid), Action::Tunnels),

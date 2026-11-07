@@ -111,6 +111,7 @@ mod settings_window;
 mod shortcuts;
 mod tab_drag;
 mod tab_look;
+mod tab_menu;
 mod tab_sidebar;
 mod tabs;
 mod theme;
