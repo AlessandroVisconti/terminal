@@ -112,7 +112,8 @@ pub(crate) fn text_width(s: &str) -> f32 {
         font: UI_FONT,
         align_x: iced::advanced::text::Alignment::Default,
         align_y: iced::alignment::Vertical::Top,
-        shaping: iced::advanced::text::Shaping::Basic,
+        // The row's `text()` leaves shaping at its default: measure the same way.
+        shaping: iced::advanced::text::Shaping::default(),
         wrapping: iced::advanced::text::Wrapping::None,
     });
     paragraph.min_width()
@@ -266,6 +267,19 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
         },
         false,
     );
+    // A title cut off at the sidebar's edge shows whole when the pointer rests on it: the tip
+    // sits on the label cell alone, so the close button keeps its own single bubble.
+    let label_cell = container(label).width(Length::Fill).clip(true);
+    let label_cell: Element<'a, Message> = match row_tip(
+        s.tips,
+        s.width,
+        tab.title(),
+        tab.page.is_some(),
+        tab.trouble(),
+    ) {
+        Some(title) => tip(t, label_cell, title, false),
+        None => label_cell.into(),
+    };
     let mut inner = row![stripe];
     // A page tab has no session to show: it carries its page's icon, as on the bar.
     inner = match tab.page {
@@ -276,7 +290,7 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
         inner = inner.push(dot(t.warning));
     }
     let inner = inner
-        .push(container(label).width(Length::Fill).clip(true))
+        .push(label_cell)
         .push(close)
         .spacing(PART_SPACING)
         .height(Length::Fill)
@@ -306,17 +320,7 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
                 ..button::Style::default()
             }
         });
-    // A title cut off at the sidebar's edge shows whole on hover.
-    match row_tip(
-        s.tips,
-        s.width,
-        tab.title(),
-        tab.page.is_some(),
-        tab.trouble(),
-    ) {
-        Some(label) => tip(t, row, label, false),
-        None => row.into(),
-    }
+    row.into()
 }
 
 /// The list of rows inside the scrollable: it handles the drag protocol and the right-click
@@ -709,6 +713,31 @@ mod tests {
         assert!(!clipped(140.0, 140.0));
         assert!(text_width("prod-eu-west-1-bastion-with-a-long-name") > text_width("zsh"));
         assert_eq!(text_width(""), 0.0);
+    }
+
+    /// The measurement shapes as the row draws (`text()` leaves shaping at its default): a
+    /// title in a joining script lays out to the same width both ways.
+    #[test]
+    fn the_measurement_shapes_as_the_row_draws() {
+        use iced::advanced::text::Paragraph as _;
+        let title = "\u{633}\u{644}\u{627}\u{645} prod";
+        let drawn = iced::advanced::graphics::text::Paragraph::with_text(iced::advanced::Text {
+            content: title,
+            bounds: Size::new(f32::INFINITY, f32::INFINITY),
+            size: iced::Pixels(super::LABEL_SIZE),
+            line_height: iced::advanced::text::LineHeight::default(),
+            font: crate::theme::UI_FONT,
+            align_x: iced::advanced::text::Alignment::Default,
+            align_y: iced::alignment::Vertical::Top,
+            shaping: iced::advanced::text::Shaping::default(),
+            wrapping: iced::advanced::text::Wrapping::None,
+        })
+        .min_width();
+        let measured = text_width(title);
+        assert!(
+            (drawn - measured).abs() < 0.5,
+            "drawn {drawn} vs measured {measured}"
+        );
     }
 
     #[test]
