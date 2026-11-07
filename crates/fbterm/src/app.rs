@@ -7,7 +7,8 @@ use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 
 use fbterm_config::{
-    ConfigError, Paths, ProfileId, ProfileKind, ProfileStore, SavedState, Settings, discover_shells,
+    ConfigError, Paths, ProfileId, ProfileKind, ProfileStore, SavedState, Settings, TabBar,
+    discover_shells,
 };
 use fbterm_secrets::{SecretBackend, SecretStore};
 use fbterm_session::ssh::tunnel::{TunnelKey, TunnelState};
@@ -35,7 +36,7 @@ use crate::restore;
 use crate::schemes_window::{SchemesMsg, SchemesState};
 use crate::sessions::{EventReceiver, session_stream, write_notice};
 use crate::settings_window::{SettingsMsg, SettingsState};
-use crate::tabs::{Page, Pane, TabState, WindowState};
+use crate::tabs::{Page, Pane, TabId, TabState, WindowState};
 use crate::theme;
 use crate::tunnels::{Tunnels, tunnel_stream};
 use crate::tunnels_panel::{TunnelsMsg, TunnelsPanels};
@@ -51,6 +52,11 @@ pub enum TabBarMsg {
     Menu {
         index: usize,
         at: iced::Point,
+    },
+    /// The sidebar's list scrolled: its offset and visible height (see `tab_sidebar.rs`).
+    Scrolled {
+        offset: f32,
+        height: f32,
     },
     New,
     Profiles,
@@ -264,6 +270,10 @@ pub struct App {
     /// Config problems found at startup (path:line: message), shown until dismissed.
     pub notices: Vec<String>,
     pub notices_dismissed: bool,
+    /// Each window's tab sidebar list: scroll offset and visible height, as last scrolled.
+    pub(crate) sidebar_scroll: HashMap<window::Id, (f32, f32)>,
+    /// The active tab each window's sidebar last scrolled into view.
+    pub(crate) sidebar_shown: HashMap<window::Id, TabId>,
     /// `profiles.toml` exists but could not be parsed; the in-memory profiles are a stand-in.
     /// While set, nothing may save the profile store: that would overwrite the user's file.
     pub profiles_error: Option<ConfigError>,
@@ -614,6 +624,11 @@ impl App {
                 Settings::default()
             }
         };
+        // `FBTERM_TAB_BAR=left` (debug aid): start with tabs on the left, writing nothing.
+        let mut settings = settings;
+        if debug_env("FBTERM_TAB_BAR").is_some_and(|v| v == "left") {
+            settings.tab_bar = Some(TabBar::Left);
+        }
         let (profiles, profiles_error) = load_profiles(&paths, &mut notices);
         let saved = SavedState::load_or_default(&paths.state());
         // With a profiles.toml that failed to load every saved tab would look orphaned: restore
@@ -665,6 +680,8 @@ impl App {
             profiles,
             notices,
             notices_dismissed: false,
+            sidebar_scroll: HashMap::new(),
+            sidebar_shown: HashMap::new(),
             profiles_error,
             paths,
             secrets,
@@ -1008,14 +1025,15 @@ impl App {
         self.sync_update_state();
         self.sync_recording();
         crate::key_log::set_recording(self.recording_window());
+        let reveal = self.reveal_active_tabs();
         let unfocus: Vec<Task<Message>> = [self.sync_panel_focus(), self.sync_tunnels_focus()]
             .into_iter()
             .flatten()
             .collect();
         if unfocus.is_empty() {
-            task
+            Task::batch([task, reveal])
         } else {
-            Task::batch(std::iter::once(task).chain(unfocus))
+            Task::batch([task, reveal].into_iter().chain(unfocus))
         }
     }
 
@@ -1155,6 +1173,10 @@ impl App {
                     TabBarMsg::Select(i) => self.with_window(wid, |w| w.select(i)),
                     TabBarMsg::Close(i) => self.close_tab_asking(wid, i),
                     TabBarMsg::Menu { index, at } => self.open_tab_menu(wid, index, at),
+                    TabBarMsg::Scrolled { offset, height } => {
+                        self.sidebar_scrolled(wid, offset, height);
+                        Task::none()
+                    }
                     TabBarMsg::New => self.action(Some(wid), Action::NewTab),
                     TabBarMsg::Profiles => self.action(Some(wid), Action::EditProfiles),
                     TabBarMsg::Tunnels => self.action(Some(wid), Action::Tunnels),
@@ -1178,6 +1200,8 @@ impl App {
             Message::WindowClosed(id) => {
                 self.close_context_menu(id);
                 self.os_scales.remove(&id);
+                self.sidebar_scroll.remove(&id);
+                self.sidebar_shown.remove(&id);
                 // Closed by the OS button or Quit: same teardown as closing the tab.
                 let pages: Vec<Page> = self
                     .windows

@@ -18,7 +18,6 @@ pub(crate) enum Axis {
     /// Side by side (the tab bar).
     X,
     /// One under the other (the sidebar).
-    #[allow(dead_code)] // constructed once the sidebar (`tab_sidebar.rs`) lays rows out
     Y,
 }
 

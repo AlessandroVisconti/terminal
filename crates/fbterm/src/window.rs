@@ -22,6 +22,7 @@ use crate::palette;
 use crate::shortcuts::{Mode, Shortcuts};
 use crate::tab_drag::{Axis, DragState, Strip, drag_event};
 use crate::tab_look::{Surroundings, look};
+use crate::tab_sidebar::SIDEBAR_WIDTH;
 use crate::tabs::{Page, Pane, Tab, TabId, TabState};
 use crate::theme::{Tokens, UI_FONT};
 use crate::tooltip::{DemoTip, tip, tooltip_text};
@@ -168,9 +169,18 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
     // the content's top and around the active tab, ending where the rule's right edge is.
     // The outline along the content's top and around the active tab always shows: with a panel
     // docked it ends where the panel's rule starts, else at the window's right edge.
+    // Tabs on the left: the sidebar takes its width (less in a narrow window) and a rule at
+    // the content's left edge; the dock lays out in what is left.
+    let hairline = crate::ui::hairline(app.physical_scale(id));
+    let sidebar = app.settings.tabs_left().then(|| {
+        let total = app.sizes.get(&id).map_or(SIDEBAR_WIDTH, |&(w, _)| w);
+        crate::tab_sidebar::sidebar_width(total, hairline)
+    });
+    let left = sidebar.map_or(0.0, |w| w + hairline);
     let outline_end = app.sizes.get(&id).map(|&(total, _)| match panel.as_ref() {
         Some(p) => {
-            total - docked_width(p.width, total) + crate::ui::hairline(app.physical_scale(id))
+            let avail = total - left;
+            left + avail - docked_width(p.width, avail) + hairline
         }
         None => total,
     });
@@ -196,6 +206,8 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
         update_dot: app.update_dot(),
         outline_end,
         outline_to_edge: panel.is_none(),
+        tabs_in_bar: sidebar.is_none(),
+        outline_start: sidebar.unwrap_or(0.0),
     };
     let mut body = column![tab_bar(t, bar, &win.tabs, win.active)];
     let notices = app.visible_notices();
@@ -282,7 +294,34 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
             DockContent::Files => Mode::Panel,
             DockContent::Tunnels => Mode::TunnelsPanel,
         });
-    body = body.push(dock(terminal_area, panel));
+    let docked_area = dock(terminal_area, panel);
+    body = body.push(match sidebar {
+        Some(width) => {
+            let side = crate::tab_sidebar::Sidebar {
+                window: id,
+                tokens: t,
+                around: Surroundings {
+                    terminal: to_color(focused_bg),
+                    bar: t.surface,
+                    opacity,
+                },
+                bar_bg,
+                bindings: &app.bindings,
+                carry,
+                modal,
+                scale: app.physical_scale(id),
+                scroll: app.sidebar_scroll.get(&id).map_or(0.0, |(o, _)| *o),
+                width,
+            };
+            row![
+                crate::tab_sidebar::view(side, &win.tabs, win.active),
+                docked_area
+            ]
+            .height(Length::Fill)
+            .into()
+        }
+        None => docked_area,
+    });
     // Under an overlay nothing reaches the terminal; only the palette and find-in-all-tabs
     // toggles still work, and not while a dialog waits for an answer.
     let covered = Mode::Blocked {
@@ -837,7 +876,7 @@ fn to_color(c: fbterm_config::Rgb) -> Color {
     Color::from_rgb8(c.r, c.g, c.b)
 }
 
-fn state_color(t: &Tokens, state: &TabState) -> Color {
+pub(crate) fn state_color(t: &Tokens, state: &TabState) -> Color {
     match state {
         TabState::Connecting => t.warning,
         TabState::Connected => t.success,
@@ -846,7 +885,7 @@ fn state_color(t: &Tokens, state: &TabState) -> Color {
     }
 }
 
-fn dot<'a>(color: Color) -> Element<'a, Message> {
+pub(crate) fn dot<'a>(color: Color) -> Element<'a, Message> {
     container(text(""))
         .width(7)
         .height(7)
@@ -899,6 +938,12 @@ struct TabBar<'b> {
     /// The outline reaches the window's right edge (no panel docked), so it passes under
     /// drawn controls on the right.
     outline_to_edge: bool,
+    /// The tabs sit on the bar (tabs on top); with tabs on the left the bar holds only its
+    /// buttons and paints plain.
+    tabs_in_bar: bool,
+    /// Where the outline along the content's top starts (window x): the sidebar's rule
+    /// with tabs on the left, else the window's left edge.
+    outline_start: f32,
 }
 
 fn tab_bar<'a>(
@@ -926,6 +971,8 @@ fn tab_bar<'a>(
     let height = chrome.bar_height();
     let msg = move |m| Message::TabBar(window, m);
     let mut bar = row![].spacing(2).align_y(Alignment::End);
+    // With tabs on the left the bar lists none: no buttons, no hole, nothing to drag.
+    let tabs: &[Tab] = if tabs_bar.tabs_in_bar { tabs } else { &[] };
     for (i, tab) in tabs.iter().enumerate() {
         bar = bar.push(tab_button(
             t,
@@ -1057,6 +1104,7 @@ fn tab_bar<'a>(
             .collect(),
         scale: tabs_bar.scale,
         outline_end: tabs_bar.outline_end,
+        outline_start: tabs_bar.outline_start,
     });
     // Drawn controls sit beside the tabs' row, on a plate of the bar's color: beside the
     // background, never under it (a translucent bar would show twice), and never in the row,
@@ -1113,7 +1161,7 @@ fn whole_px(v: f32, scale: f32) -> f32 {
 }
 
 /// `r` with its edges on whole physical pixels, where the renderer draws a snapped quad.
-fn snap_rect(r: Rectangle, scale: f32) -> Rectangle {
+pub(crate) fn snap_rect(r: Rectangle, scale: f32) -> Rectangle {
     let (x, y) = (whole_px(r.x, scale), whole_px(r.y, scale));
     Rectangle {
         x,
@@ -1377,6 +1425,8 @@ struct BarBackground<'a> {
     scale: f32,
     /// See [`TabBar::outline_end`].
     outline_end: Option<f32>,
+    /// See [`TabBar::outline_start`].
+    outline_start: f32,
 }
 
 /// The tab buttons' bounds: the first `n` children of the bar's row (container -> row).
@@ -1618,7 +1668,8 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
             let bottom = whole_px(bounds.y + bounds.height, scale);
             let width = outline_width(scale);
             let color = self.tokens.border;
-            for stroke in outline(0.0, whole_px(end, scale), bottom, hole, radius, width) {
+            let start = whole_px(self.outline_start, scale);
+            for stroke in outline(start, whole_px(end, scale), bottom, hole, radius, width) {
                 match stroke {
                     Stroke::Line(r) => renderer.fill_quad(quad(r, Border::default()), color),
                     Stroke::Arc { clip, ring, width } => {
@@ -2309,6 +2360,8 @@ mod tests {
                 // And the outline a docked file panel brings.
                 outline_end: Some(500.0),
                 outline_to_edge: false,
+                tabs_in_bar: true,
+                outline_start: 0.0,
             };
             let mut element = tab_bar(t, bar, tabs, 0);
             let renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
