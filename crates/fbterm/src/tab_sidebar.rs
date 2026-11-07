@@ -162,9 +162,40 @@ pub(crate) fn label_width(sidebar_width: f32, page: bool, trouble: bool) -> f32 
         .max(0.0)
 }
 
+/// How many measured titles [`text_width`] keeps; the cache starts over when full.
+pub(crate) const WIDTH_CACHE_CAP: usize = 512;
+
+thread_local! {
+    /// Measured title widths: every redraw measures every row, and titles rarely change.
+    static WIDTHS: std::cell::RefCell<std::collections::HashMap<String, f32>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// How many widths the cache holds (for tests).
+#[cfg(test)]
+pub(crate) fn width_cache_len() -> usize {
+    WIDTHS.with(|w| w.borrow().len())
+}
+
+/// How wide `s` is laid out as a row draws it: [`measure`], remembered per title.
+pub(crate) fn text_width(s: &str) -> f32 {
+    if let Some(w) = WIDTHS.with(|w| w.borrow().get(s).copied()) {
+        return w;
+    }
+    let width = measure(s);
+    WIDTHS.with(|w| {
+        let mut w = w.borrow_mut();
+        if w.len() >= WIDTH_CACHE_CAP {
+            w.clear();
+        }
+        w.insert(s.to_owned(), width);
+    });
+    width
+}
+
 /// How wide `s` is laid out as a row draws it (the UI font at [`LABEL_SIZE`], one line),
 /// measured through the renderer's font system, in logical pixels.
-pub(crate) fn text_width(s: &str) -> f32 {
+pub(crate) fn measure(s: &str) -> f32 {
     use iced::advanced::text::Paragraph as _;
     let paragraph = iced::advanced::graphics::text::Paragraph::with_text(iced::advanced::Text {
         content: s,
@@ -808,6 +839,10 @@ impl App {
     /// forgotten, so a list built afresh is read afresh.
     pub(crate) fn reveal_active_tabs(&mut self) -> Option<Task<Message>> {
         if !self.settings.tabs_left() {
+            // No column: no drag on its edge can end, and the windows that come back to the
+            // left are revealed afresh without unfolding what was folded.
+            self.sidebar_resizing.clear();
+            self.sidebar_quiet.extend(self.windows.keys().copied());
             self.sidebar_shown.clear();
             self.sidebar_scroll.clear();
             return None;
@@ -826,8 +861,10 @@ impl App {
         for (wid, id, active) in changed {
             self.sidebar_shown.insert(wid, id);
             // Selected by other means than keyboard travel (which never lands in a folded
-            // group): its group unfolds.
-            self.expand_active(wid);
+            // group): its group unfolds; not when the column only came back from the top.
+            if !self.sidebar_quiet.remove(&wid) {
+                self.expand_active(wid);
+            }
             let (offset, height) = match self.sidebar_scroll.get(&wid) {
                 Some(&v) => v,
                 None => (0.0, self.sizes.get(&wid).map_or(f32::MAX, |(_, h)| h - bar)),
@@ -874,8 +911,8 @@ mod tests {
 
     use super::{
         Item, LIST_PADDING, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, ROW_HEIGHT, SIDEBAR_WIDTH,
-        clamp_sidebar_width, clipped, gap_marker_y, item_tops, items, label_width, reveal, row_tip,
-        sidebar_width, text_width,
+        clamp_sidebar_width, clipped, gap_marker_y, item_tops, items, label_width, measure, reveal,
+        row_tip, sidebar_width, text_width,
     };
     use crate::app::{App, Message, TabBarMsg};
     use crate::restore_tests::{paths_with, profile};
@@ -928,6 +965,7 @@ mod tests {
     #[test]
     fn resizing_sets_the_chosen_width_clamped_per_window() {
         let (mut app, wid) = app_with_tabs(&["a"]);
+        app.settings.tab_bar = Some(fbterm_config::TabBar::Left);
         let other = window::Id::unique();
         let _ = app.update(Message::TabBar(wid, TabBarMsg::SidebarResize(300.0)));
         assert_eq!(app.sidebar_width_of(wid), 300.0);
@@ -1139,6 +1177,27 @@ mod tests {
             "after the last row"
         );
         assert_eq!(gap_marker_y(&[], 0, 50.0), 50.0, "no rows: the list's top");
+    }
+
+    #[test]
+    fn switching_the_tabs_to_the_top_mid_drag_turns_tooltips_back_on() {
+        let (mut app, wid) = app_with_tabs(&["a", "b"]);
+        let _ = app.update(Message::Shortcut(wid, Action::VerticalTabs));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::SidebarResize(300.0)));
+        assert!(app.sidebar_resizing.contains(&wid));
+        // The column goes away while the button is held: its drag never ends.
+        let _ = app.update(Message::Shortcut(wid, Action::VerticalTabs));
+        assert!(app.sidebar_resizing.is_empty());
+    }
+
+    #[test]
+    fn title_widths_are_cached_and_the_cache_stays_bounded() {
+        assert_eq!(text_width("prod-eu-west-1"), measure("prod-eu-west-1"));
+        for i in 0..(super::WIDTH_CACHE_CAP + 50) {
+            let _ = text_width(&format!("tab-{i}"));
+        }
+        assert!(super::width_cache_len() <= super::WIDTH_CACHE_CAP);
+        assert_eq!(text_width("prod-eu-west-1"), measure("prod-eu-west-1"));
     }
 
     #[test]

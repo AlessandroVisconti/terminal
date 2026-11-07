@@ -3,7 +3,7 @@
 
 use fbterm_config::keys::{Action, ActionGroup, Bindings, FixedShortcut, fixed_shortcuts, risk};
 use fbterm_config::settings::{FONT_SIZE_RANGE, OPACITY_RANGE};
-use fbterm_config::{SecretStorage, TabBar, ThemeMode, WindowDecorations};
+use fbterm_config::{SecretStorage, Settings, TabBar, ThemeMode, WindowDecorations};
 use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, slider, text, text_input, toggler,
 };
@@ -373,8 +373,7 @@ fn appearance<'a>(
     .spacing(2);
     let tabs = container(tabs).padding(2).style(move |_| well(t));
     rows.push(setting(t, "Tabs", None, false, tabs));
-    // Folding only means something with tabs on the left: the switch shows only then.
-    if v.tabs_left() {
+    if shows_group_tabs_row(v) {
         rows.push(setting(
             t,
             "Group tabs",
@@ -451,6 +450,12 @@ pub fn title_bar_shown(setting: WindowDecorations, fell_back: bool) -> WindowDec
 
 /// Whether the Settings tab offers the `Title bar` choice: only where windows follow
 /// Linux's conventions (the `window_decorations` setting is ignored elsewhere).
+/// Whether the Appearance card shows the `Group tabs` switch: folding only means something
+/// with tabs on the left.
+pub fn shows_group_tabs_row(v: &Settings) -> bool {
+    v.tabs_left()
+}
+
 pub fn shows_title_bar_row(look: Platform) -> bool {
     look == Platform::Linux
 }

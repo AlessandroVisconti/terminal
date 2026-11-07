@@ -128,13 +128,29 @@ pub(crate) fn sections(groups: &[Group], collapsed: &BTreeSet<String>) -> Vec<Se
         match out.last_mut() {
             Some(last) if last.group.same(g) => last.rows.push(i),
             _ => out.push(Section {
-                collapsed: collapsed.contains(&g.key()),
+                collapsed: is_folded(collapsed, g),
                 group: g.clone(),
                 rows: vec![i],
             }),
         }
     }
     out
+}
+
+/// Whether `group` is folded in `collapsed`: keys compare case-insensitively, as names that
+/// differ only by case are one group.
+pub(crate) fn is_folded(collapsed: &BTreeSet<String>, group: &Group) -> bool {
+    let key = group.key().to_lowercase();
+    collapsed.iter().any(|k| k.to_lowercase() == key)
+}
+
+/// Unfold `group` in `collapsed`, whatever case its key was saved in. Returns whether it was
+/// folded.
+pub(crate) fn unfold(collapsed: &mut BTreeSet<String>, group: &Group) -> bool {
+    let key = group.key().to_lowercase();
+    let before = collapsed.len();
+    collapsed.retain(|k| k.to_lowercase() != key);
+    collapsed.len() != before
 }
 
 /// The window indices of the rows that can be seen, in sidebar order.
@@ -233,7 +249,10 @@ impl crate::app::App {
             })
             .collect();
         for (t, g) in w.tabs.iter().zip(&groups) {
-            self.tab_group_seen.insert(t.id, g.clone());
+            // Only a new or changed group is stored: no clone per tab per message.
+            if self.tab_group_seen.get(&t.id) != Some(g) {
+                self.tab_group_seen.insert(t.id, g.clone());
+            }
         }
         let order = grouped_order_moved(&groups, &moved);
         if order.iter().enumerate().all(|(i, &o)| i == o) {
@@ -268,18 +287,18 @@ impl crate::app::App {
     /// The active tab of window `wid` became active by other means than keyboard travel: its
     /// group unfolds if it was folded. Returns whether it did.
     pub(crate) fn expand_active(&mut self, wid: iced::window::Id) -> bool {
-        let Some(key) = self
+        let Some(group) = self
             .windows
             .get(&wid)
             .and_then(|w| w.active_tab())
-            .map(|t| group_of(t, &self.profiles).key())
+            .map(|t| group_of(t, &self.profiles))
         else {
             return false;
         };
         let removed = self
             .collapsed
             .get_mut(&wid)
-            .is_some_and(|set| set.remove(&key));
+            .is_some_and(|set| unfold(set, &group));
         if removed {
             self.save_state();
         }
@@ -312,10 +331,9 @@ impl crate::app::App {
         let Some(section) = self.sections_of(wid).into_iter().nth(index) else {
             return iced::Task::none();
         };
-        let key = section.group.key();
         let set = self.collapsed.entry(wid).or_default();
-        if !set.remove(&key) {
-            set.insert(key);
+        if !unfold(set, &section.group) {
+            set.insert(section.group.key());
         }
         self.save_state();
         iced::Task::none()
@@ -516,7 +534,7 @@ pub(crate) mod tests {
     fn toggling_a_group_collapses_it_and_saves() {
         let (mut app, wid) = app_with_groups(&[("a", Some("prod")), ("b", None)]);
         fold(&mut app);
-        // The window.s first update counts as a new active tab (restore unfolds its group):
+        // The window's first update counts as a new active tab (restore unfolds its group):
         // settle that before the click.
         let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0)));
         let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(0)));
@@ -646,7 +664,7 @@ pub(crate) mod tests {
     fn selecting_a_hidden_tab_expands_its_group_but_collapsing_the_active_one_keeps_it() {
         let (mut app, wid) = mixed();
         fold(&mut app);
-        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0))); // regrouped; b... no: p
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0))); // regrouped to [p, a, d, b, c]
         // Order [p, a, d, b, c]; make b (staging) active, then collapse prod (section 1).
         let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(3)));
         let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(1)));
@@ -726,6 +744,48 @@ pub(crate) mod tests {
         assert_eq!(names(&app, wid), ["p", "a", "b", "c"]);
         assert_eq!(app.windows[&wid].active, 2, "b took d's place");
         assert!(!app.collapsed[&wid].contains("staging"));
+    }
+
+    #[test]
+    fn a_fold_matches_group_names_that_differ_only_by_case() {
+        let collapsed = BTreeSet::from(["Prod".to_string()]);
+        let s = sections(&[named("prod"), Group::Other], &collapsed);
+        assert!(s[0].collapsed, "Prod folded means prod folded");
+        // In the app: the tab whose spelling titled the header closes, the fold stays.
+        let (mut app, wid) =
+            app_with_groups(&[("c", None), ("a", Some("Prod")), ("b", Some("prod"))]);
+        fold(&mut app);
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0)));
+        assert_eq!(names(&app, wid), ["a", "b", "c"]);
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(2)));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(0)));
+        assert!(app.collapsed[&wid].contains("Prod"));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Close(0)));
+        assert_eq!(names(&app, wid), ["b", "c"]);
+        assert_eq!(app.visible_rows(wid), vec![1], "prod stays folded");
+        // Unfolding the header now titled `prod` removes the `Prod` key.
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(0)));
+        assert_eq!(app.visible_rows(wid), vec![0, 1]);
+        assert!(app.collapsed[&wid].is_empty());
+    }
+
+    #[test]
+    fn switching_the_tabs_to_the_top_and_back_keeps_the_folds() {
+        let (mut app, wid) = app_with_groups(&[("a", Some("prod")), ("b", None)]);
+        fold(&mut app);
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0)));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(0)));
+        assert!(
+            app.collapsed[&wid].contains("prod"),
+            "the active group, folded by hand"
+        );
+        let _ = app.update(Message::Shortcut(wid, Action::VerticalTabs));
+        assert!(!app.settings.tabs_left());
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(1)));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0)));
+        let _ = app.update(Message::Shortcut(wid, Action::VerticalTabs));
+        assert!(app.settings.tabs_left());
+        assert!(app.collapsed[&wid].contains("prod"));
     }
 
     #[test]
