@@ -53,7 +53,31 @@ pub(crate) fn saved(tabs: &[&Profile], active: usize) -> SavedWindow {
         active,
         size: (900.0, 500.0),
         sidebar_width: None,
+        collapsed_groups: vec![],
     }
+}
+
+#[test]
+fn a_collapsed_name_without_tabs_is_kept() {
+    use std::collections::BTreeSet;
+    let a = profile("a");
+    let paths = paths_with(std::slice::from_ref(&a));
+    SavedState {
+        windows: vec![SavedWindow {
+            collapsed_groups: vec!["staging".into()],
+            ..saved(&[&a], 0)
+        }],
+        ..Default::default()
+    }
+    .save(&paths.state())
+    .unwrap();
+    let (mut app, _) = App::build(paths.clone(), true);
+    let wid = *app.windows.keys().next().unwrap();
+    assert_eq!(app.collapsed[&wid], BTreeSet::from(["staging".to_string()]));
+    app.state_saving_enabled = true;
+    app.save_state();
+    let back = SavedState::load_or_default(&paths.state());
+    assert_eq!(back.windows[0].collapsed_groups, vec!["staging"]);
 }
 
 #[test]
@@ -65,6 +89,7 @@ fn relaunch_restores_sidebar_widths_per_window() {
         windows: vec![
             SavedWindow {
                 sidebar_width: Some(300.0),
+                collapsed_groups: vec![],
                 ..saved(&[&a], 0)
             },
             saved(&[&a], 0),
@@ -801,6 +826,7 @@ fn relaunch_restores_panes_and_starts_all_visible() {
             active: 1,
             size: (900.0, 500.0),
             sidebar_width: None,
+            collapsed_groups: vec![],
         }],
         ..Default::default()
     }
@@ -841,6 +867,7 @@ fn restored_arrangement_is_saved_back_unchanged() {
             active: 1,
             size: (900.0, 500.0),
             sidebar_width: None,
+            collapsed_groups: vec![],
         }],
         ..Default::default()
     };
@@ -865,6 +892,7 @@ fn app_with_split_tab(states: [TabState; 2]) -> (App, iced::window::Id, crate::t
             active: 0,
             size: (900.0, 500.0),
             sidebar_width: None,
+            collapsed_groups: vec![],
         }],
         ..Default::default()
     }
@@ -970,6 +998,7 @@ fn merged_layout_survives_save_and_reload() {
             active: 1,
             size: (900.0, 500.0),
             sidebar_width: None,
+            collapsed_groups: vec![],
         }],
         ..Default::default()
     }

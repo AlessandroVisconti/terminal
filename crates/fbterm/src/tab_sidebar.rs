@@ -1,13 +1,14 @@
 //! Tabs listed down the left side of the window (`tab_bar = "left"`): the sidebar beside
 //! the content, its width per window (dragged at its rule, see `sidebar_resize.rs`), the
-//! tooltip a row shows when its title is cut off, and switching sides.
+//! tooltip a row shows when its title is cut off, the group headers the rows fold under
+//! (`tab_groups.rs`), and switching sides.
 
 use fbterm_config::keys::{Action, Bindings};
 use fbterm_config::{SettingChange, TabBar};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget, tree};
 use iced::advanced::{Clipboard, Shell, overlay, renderer};
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{
     Alignment, Background, Border, Color, Element, Event, Length, Padding, Rectangle, Size, Task,
     Vector, mouse, window,
@@ -15,11 +16,12 @@ use iced::{
 
 use crate::app::{App, Message, TabBarMsg};
 use crate::tab_drag::{Axis, DragState, Strip, drag_event};
+use crate::tab_groups::{Group, Section};
 use crate::tab_look::{Surroundings, look};
 use crate::tabs::{Tab, TabId};
 use crate::theme::{Tokens, UI_FONT};
 use crate::tooltip::{tip, tooltip_text};
-use crate::ui::{ICON_X, icon};
+use crate::ui::{ICON_DOWN, ICON_RIGHT, ICON_X, icon};
 use crate::window::{MIN_TERMINAL_WIDTH, dot, page_icon, snap_rect, state_color};
 use crate::windows::Carry;
 
@@ -52,17 +54,77 @@ pub(crate) fn sidebar_width(chosen: f32, total: f32, hairline: f32) -> f32 {
     chosen.min(total - MIN_TERMINAL_WIDTH - hairline).max(0.0)
 }
 
-/// Where row `index` starts, from the top of the list's content.
-pub(crate) fn row_top(index: usize) -> f32 {
-    LIST_PADDING + index as f32 * (ROW_HEIGHT + ROW_SPACING)
+/// A group header's height, and the space above one (except the first item).
+pub(crate) const HEADER_HEIGHT: f32 = 26.0;
+pub(crate) const HEADER_GAP: f32 = 8.0;
+
+/// One element of the list: a group header, or a tab's row (by window index).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Item {
+    Header {
+        group: Group,
+        /// How many rows the header hides: 0 while its group is unfolded.
+        hidden: usize,
+        /// The active tab is among the hidden rows.
+        holds_active: bool,
+    },
+    Row(usize),
 }
 
-/// The scroll offset that shows row `index` when it is not fully in view (`offset` and
-/// `viewport` are the list's current offset and visible height): the row with the list's
-/// padding beside it on the side it was hidden, never above the top. `None` when it shows.
-pub(crate) fn reveal(index: usize, offset: f32, viewport: f32) -> Option<f32> {
-    let top = row_top(index);
-    let bottom = top + ROW_HEIGHT;
+impl Item {
+    fn height(&self) -> f32 {
+        match self {
+            Self::Header { .. } => HEADER_HEIGHT,
+            Self::Row(_) => ROW_HEIGHT,
+        }
+    }
+}
+
+/// The list's items for `sections` (the active tab at window index `active`): with
+/// `folding` off one row per tab and no headers; with it on, each section's header followed
+/// by its rows unless it is collapsed.
+pub(crate) fn items(sections: &[Section], active: usize, folding: bool) -> Vec<Item> {
+    if !folding {
+        return sections
+            .iter()
+            .flat_map(|s| s.rows.iter().map(|&r| Item::Row(r)))
+            .collect();
+    }
+    let mut out = Vec::new();
+    for s in sections {
+        out.push(Item::Header {
+            group: s.group.clone(),
+            hidden: if s.collapsed { s.rows.len() } else { 0 },
+            holds_active: s.collapsed && s.rows.contains(&active),
+        });
+        if !s.collapsed {
+            out.extend(s.rows.iter().map(|&r| Item::Row(r)));
+        }
+    }
+    out
+}
+
+/// Where each item starts, from the top of the list's content: [`LIST_PADDING`] first,
+/// items [`ROW_SPACING`] apart, [`HEADER_GAP`] more above a header that is not the first item.
+pub(crate) fn item_tops(items: &[Item]) -> Vec<f32> {
+    let mut y = LIST_PADDING;
+    let mut tops = Vec::with_capacity(items.len());
+    for (n, item) in items.iter().enumerate() {
+        if n > 0 && matches!(item, Item::Header { .. }) {
+            y += HEADER_GAP;
+        }
+        tops.push(y);
+        y += item.height() + ROW_SPACING;
+    }
+    tops
+}
+
+/// The scroll offset that shows the item at `top`, `height` tall, when it is not fully in
+/// view (`offset` and `viewport` are the list's current offset and visible height): the item
+/// with the list's padding beside it on the side it was hidden, never above the top. `None`
+/// when it shows.
+pub(crate) fn reveal(top: f32, height: f32, offset: f32, viewport: f32) -> Option<f32> {
+    let bottom = top + height;
     if top < offset {
         Some((top - LIST_PADDING).max(0.0))
     } else if bottom > offset + viewport {
@@ -163,27 +225,108 @@ pub(crate) struct Sidebar<'b> {
     pub width: f32,
     /// Rows may show their tooltip: nothing is carried, no resize is on, not modal.
     pub tips: bool,
+    /// What the list shows, in order (see [`items`]).
+    pub items: &'b [Item],
+    /// The group of the tile being carried, if one is: where it may become a tab.
+    pub tile_group: Option<&'b Group>,
 }
 
 /// The sidebar: the rows in a scrollable list, with a rule on the right.
 pub(crate) fn view<'a>(s: Sidebar<'_>, tabs: &'a [Tab], active: usize) -> Element<'a, Message> {
     let t = s.tokens;
     let window = s.window;
-    let rows: Vec<Element<'a, Message>> = tabs
-        .iter()
-        .enumerate()
-        .map(|(i, tab)| row_view(&s, tab, i, i == active))
-        .collect();
-    let list = column(rows)
+    // The column's children: headers (with a spacer above all but the first item) and rows.
+    // `is_row` tells the drag which children are rows; `ids` lists the rows' tabs in order.
+    let mut children: Vec<Element<'a, Message>> = Vec::new();
+    let mut is_row = Vec::new();
+    let mut ids = Vec::new();
+    let mut indices = Vec::new();
+    let mut hole = None;
+    let mut section = 0;
+    // Each header's group with the strip indices its rows span (`lo..hi`; empty when
+    // folded), for the drag's range.
+    let mut spans: Vec<(&Group, usize, usize)> = Vec::new();
+    for (n, item) in s.items.iter().enumerate() {
+        match item {
+            Item::Header {
+                group,
+                hidden,
+                holds_active,
+            } => {
+                if n > 0 {
+                    // The column's spacing lies on both sides of the spacer.
+                    children.push(Space::new().height(HEADER_GAP - ROW_SPACING).into());
+                    is_row.push(false);
+                }
+                children.push(header_view(&s, section, group, *hidden, *holds_active));
+                is_row.push(false);
+                section += 1;
+                spans.push((group, ids.len(), ids.len()));
+            }
+            Item::Row(i) => {
+                let Some(tab) = tabs.get(*i) else {
+                    continue;
+                };
+                if *i == active {
+                    hole = Some(ids.len());
+                }
+                ids.push(tab.id);
+                indices.push(*i);
+                if let Some(last) = spans.last_mut() {
+                    last.2 = ids.len();
+                }
+                children.push(row_view(&s, tab, *i, *i == active));
+                is_row.push(true);
+            }
+        }
+    }
+    // Where the carry may land: a carried tab among its own group's rows (refused elsewhere),
+    // a carried tile in its group's span, or at the gap where its group would sort (moved
+    // there from elsewhere). Without headers (folding off) anything goes.
+    let (range, clamp) = match s.carry {
+        Some(Carry::Tab(id)) => {
+            let at = ids.iter().position(|i| *i == id);
+            let span = at.and_then(|at| {
+                spans
+                    .iter()
+                    .find(|(_, lo, hi)| (*lo..*hi).contains(&at))
+                    .map(|(_, lo, hi)| (*lo, *hi))
+            });
+            (span, false)
+        }
+        Some(Carry::Tile(_)) => match s.tile_group {
+            Some(g) if !spans.is_empty() => {
+                let span = spans
+                    .iter()
+                    .find(|(sg, _, _)| sg.same(g))
+                    .map(|(_, lo, hi)| (*lo, *hi))
+                    .unwrap_or_else(|| {
+                        let lo = spans
+                            .iter()
+                            .find(|(sg, _, _)| *sg > g)
+                            .map_or(ids.len(), |(_, lo, _)| *lo);
+                        (lo, lo)
+                    });
+                (Some(span), true)
+            }
+            _ => (None, false),
+        },
+        None => (None, false),
+    };
+    let list = column(children)
         .spacing(ROW_SPACING)
         .padding(LIST_PADDING)
         .width(Length::Fill);
     let list = Element::new(Rows {
         window,
-        ids: tabs.iter().map(|t| t.id).collect(),
+        ids,
+        indices,
+        range,
+        clamp,
+        is_row,
         carry: s.carry,
         modal: s.modal,
-        hole: (active < tabs.len()).then_some(active),
+        hole,
         tokens: t,
         scale: s.scale,
         content: list.into(),
@@ -323,12 +466,98 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
     row.into()
 }
 
+/// A group's header: the chevron, the name and, while folded, how many rows it hides. A click
+/// anywhere on it folds or unfolds the group (the sidebar's section `section`).
+fn header_view<'a>(
+    s: &Sidebar<'_>,
+    section: usize,
+    group: &Group,
+    hidden: usize,
+    holds_active: bool,
+) -> Element<'a, Message> {
+    let t = s.tokens;
+    let chevron = icon(
+        if hidden > 0 { ICON_RIGHT } else { ICON_DOWN },
+        12.0,
+        t.text_muted,
+    );
+    let name_color = if matches!(group, Group::Featherbit) {
+        t.accent_edge
+    } else {
+        t.text_muted
+    };
+    let name = text(group.title().to_owned())
+        .font(UI_FONT)
+        .size(11)
+        .wrapping(text::Wrapping::None)
+        .color(name_color);
+    let mut inner = row![chevron, container(name).width(Length::Fill).clip(true)]
+        .spacing(6)
+        .height(Length::Fill)
+        .align_y(Alignment::Center);
+    if hidden > 0 {
+        // The count of hidden rows, in the accent when the active tab is among them.
+        let tone = if holds_active {
+            t.accent_edge
+        } else {
+            t.text_secondary
+        };
+        let badge = container(
+            text(hidden.to_string())
+                .font(UI_FONT)
+                .size(11)
+                .line_height(text::LineHeight::Absolute(16.0.into()))
+                .color(tone),
+        )
+        .padding(Padding::from([0.0, 6.0]))
+        .style(move |_| container::Style {
+            background: Some(t.raised.into()),
+            border: Border {
+                color: if holds_active {
+                    t.accent_edge
+                } else {
+                    t.border
+                },
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..container::Style::default()
+        });
+        inner = inner.push(badge);
+    }
+    button(inner)
+        .on_press(Message::TabBar(s.window, TabBarMsg::ToggleGroup(section)))
+        .width(Length::Fill)
+        .height(HEADER_HEIGHT)
+        .padding(Padding::from([0.0, 6.0]))
+        .style(move |_, status| {
+            let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+            button::Style {
+                background: hovered.then_some(Background::Color(t.hover)),
+                text_color: t.text_muted,
+                border: Border {
+                    radius: 5.0.into(),
+                    ..Border::default()
+                },
+                snap: true,
+                ..button::Style::default()
+            }
+        })
+        .into()
+}
+
 /// The list of rows inside the scrollable: it handles the drag protocol and the right-click
-/// over the rows (the column's children), and draws the gap where a carried tile would
-/// become a tab or a carried tab would move to.
+/// over the rows (the column's children that are rows), and draws the gap where a carried
+/// tile would become a tab or a carried tab would move to.
 struct Rows<'a> {
     window: window::Id,
     ids: Vec<TabId>,
+    /// Which of the column's children are rows (the others are headers and spacers).
+    is_row: Vec<bool>,
+    /// Each row's window index, and where the carry may land (see `view`).
+    indices: Vec<usize>,
+    range: Option<(usize, usize)>,
+    clamp: bool,
     carry: Option<Carry>,
     modal: bool,
     hole: Option<usize>,
@@ -346,6 +575,9 @@ impl Rows<'_> {
         Strip {
             window: self.window,
             ids: &self.ids,
+            indices: &self.indices,
+            range: self.range,
+            clamp: self.clamp,
             carry: self.carry,
             modal: self.modal,
             hole: self.hole,
@@ -355,9 +587,28 @@ impl Rows<'_> {
     }
 }
 
-/// The rows' bounds: the column's children.
-fn row_rects(layout: Layout<'_>) -> Vec<Rectangle> {
-    layout.children().map(|c| c.bounds()).collect()
+/// Where the drop marker for strip gap `gap` is drawn among `rows` (the list starts at
+/// `top`): 2 px above the row the gap precedes; under the previous row when more than the
+/// list's spacing lies between them (a group header), so a drop at a group's end shows inside
+/// that group; under the last row after the end.
+pub(crate) fn gap_marker_y(rows: &[Rectangle], gap: usize, top: f32) -> f32 {
+    let below = |r: &Rectangle| r.y + r.height;
+    match (gap.checked_sub(1).and_then(|p| rows.get(p)), rows.get(gap)) {
+        (Some(prev), Some(next)) if next.y - below(prev) > ROW_SPACING + 0.5 => below(prev),
+        (_, Some(next)) => next.y - 2.0,
+        (Some(prev), None) => below(prev),
+        (None, None) => top,
+    }
+}
+
+/// The rows' bounds: the column's children that are rows, in order.
+fn row_rects(layout: Layout<'_>, is_row: &[bool]) -> Vec<Rectangle> {
+    layout
+        .children()
+        .zip(is_row)
+        .filter(|(_, row)| **row)
+        .map(|(c, _)| c.bounds())
+        .collect()
 }
 
 impl Widget<Message, iced::Theme, iced::Renderer> for Rows<'_> {
@@ -416,7 +667,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Rows<'_> {
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<DragState>();
-        let rects = row_rects(layout);
+        let rects = row_rects(layout, &self.is_row);
         let strip = self.strip(layout, viewport);
         // The row pressed at the start of a drag is let go without a click: it sees the
         // release with no pointer over it.
@@ -478,11 +729,8 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Rows<'_> {
         let state = tree.state.downcast_ref::<DragState>();
         if let (Some(Carry::Tile(_) | Carry::Tab(_)), Some(gap)) = (self.carry, state.gap) {
             let bounds = layout.bounds();
-            let rows = row_rects(layout);
-            let y = match rows.get(gap) {
-                Some(next) => next.y - 2.0,
-                None => rows.last().map_or(bounds.y, |r| r.y + r.height),
-            };
+            let rows = row_rects(layout, &self.is_row);
+            let y = gap_marker_y(&rows, gap, bounds.y);
             let marker = snap_rect(
                 Rectangle {
                     x: bounds.x + LIST_PADDING,
@@ -566,22 +814,37 @@ impl App {
         }
         let bar = crate::chrome::Chrome::current().bar_height();
         let mut tasks = Vec::new();
-        for (wid, w) in &self.windows {
-            let Some(tab) = w.active_tab() else {
-                continue;
-            };
-            if self.sidebar_shown.get(wid) == Some(&tab.id) {
-                continue;
-            }
-            self.sidebar_shown.insert(*wid, tab.id);
-            let (offset, height) = match self.sidebar_scroll.get(wid) {
+        // The windows whose active tab changed since the sidebar last showed it.
+        let changed: Vec<(window::Id, TabId, usize)> = self
+            .windows
+            .iter()
+            .filter_map(|(wid, w)| {
+                let tab = w.active_tab()?;
+                (self.sidebar_shown.get(wid) != Some(&tab.id)).then_some((*wid, tab.id, w.active))
+            })
+            .collect();
+        for (wid, id, active) in changed {
+            self.sidebar_shown.insert(wid, id);
+            // Selected by other means than keyboard travel (which never lands in a folded
+            // group): its group unfolds.
+            self.expand_active(wid);
+            let (offset, height) = match self.sidebar_scroll.get(&wid) {
                 Some(&v) => v,
-                None => (0.0, self.sizes.get(wid).map_or(f32::MAX, |(_, h)| h - bar)),
+                None => (0.0, self.sizes.get(&wid).map_or(f32::MAX, |(_, h)| h - bar)),
             };
-            if let Some(y) = reveal(w.active, offset, height) {
-                self.sidebar_scroll.insert(*wid, (y, height));
+            // The row's place among headers and the other rows, after any unfolding above.
+            let items = items(&self.sections_of(wid), active, self.groups_on());
+            let Some(n) = items
+                .iter()
+                .position(|i| matches!(i, Item::Row(r) if *r == active))
+            else {
+                continue;
+            };
+            let top = item_tops(&items)[n];
+            if let Some(y) = reveal(top, ROW_HEIGHT, offset, height) {
+                self.sidebar_scroll.insert(wid, (y, height));
                 tasks.push(iced::widget::operation::scroll_to(
-                    scroll_id(*wid),
+                    scroll_id(wid),
                     iced::widget::operation::AbsoluteOffset { x: 0.0, y },
                 ));
             }
@@ -610,12 +873,14 @@ mod tests {
     use iced::{Pixels, Size, window};
 
     use super::{
-        LIST_PADDING, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, ROW_HEIGHT, SIDEBAR_WIDTH,
-        clamp_sidebar_width, clipped, label_width, reveal, row_tip, row_top, sidebar_width,
-        text_width,
+        Item, LIST_PADDING, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, ROW_HEIGHT, SIDEBAR_WIDTH,
+        clamp_sidebar_width, clipped, gap_marker_y, item_tops, items, label_width, reveal, row_tip,
+        sidebar_width, text_width,
     };
     use crate::app::{App, Message, TabBarMsg};
     use crate::restore_tests::{paths_with, profile};
+    use crate::tab_groups::tests::{app_with_groups, fold};
+    use crate::tab_groups::{Group, Section};
     use crate::tabs::{Pane, Tab, WindowState};
 
     fn app_with_tabs(names: &[&str]) -> (App, window::Id) {
@@ -762,16 +1027,169 @@ mod tests {
 
     #[test]
     fn rows_are_revealed_only_when_hidden() {
-        assert_eq!(row_top(0), LIST_PADDING);
-        assert_eq!(row_top(3), LIST_PADDING + 3.0 * (ROW_HEIGHT + 2.0));
-        assert_eq!(reveal(0, 0.0, 300.0), None);
-        assert_eq!(reveal(2, 0.0, 300.0), None);
+        let flat = vec![Section {
+            group: Group::Other,
+            rows: (0..12).collect(),
+            collapsed: false,
+        }];
+        let tops = item_tops(&items(&flat, 0, false));
+        assert_eq!(tops[0], LIST_PADDING);
+        assert_eq!(tops[3], LIST_PADDING + 3.0 * (ROW_HEIGHT + 2.0));
+        assert_eq!(reveal(tops[0], ROW_HEIGHT, 0.0, 300.0), None);
+        assert_eq!(reveal(tops[2], ROW_HEIGHT, 0.0, 300.0), None);
         assert_eq!(
-            reveal(10, 0.0, 300.0),
-            Some(row_top(10) + ROW_HEIGHT + LIST_PADDING - 300.0)
+            reveal(tops[10], ROW_HEIGHT, 0.0, 300.0),
+            Some(tops[10] + ROW_HEIGHT + LIST_PADDING - 300.0)
         );
-        assert_eq!(reveal(0, 100.0, 300.0), Some(0.0));
-        assert_eq!(reveal(5, 400.0, 300.0), Some(row_top(5) - LIST_PADDING));
+        assert_eq!(reveal(tops[0], ROW_HEIGHT, 100.0, 300.0), Some(0.0));
+        assert_eq!(
+            reveal(tops[5], ROW_HEIGHT, 400.0, 300.0),
+            Some(tops[5] - LIST_PADDING)
+        );
+    }
+
+    #[test]
+    fn items_without_folding_are_rows_only_and_tops_match_the_flat_list() {
+        let sections = vec![Section {
+            group: Group::Other,
+            rows: vec![0, 1, 2],
+            collapsed: false,
+        }];
+        let items = items(&sections, 1, false);
+        assert!(items.iter().all(|i| matches!(i, Item::Row(_))));
+        assert_eq!(item_tops(&items), vec![6.0, 6.0 + 34.0, 6.0 + 68.0]);
+    }
+
+    #[test]
+    fn items_with_folding_carry_headers_counts_and_the_active_marker() {
+        let sections = vec![
+            Section {
+                group: Group::Featherbit,
+                rows: vec![0],
+                collapsed: false,
+            },
+            Section {
+                group: Group::Named("prod".into()),
+                rows: vec![1, 2],
+                collapsed: true,
+            },
+            Section {
+                group: Group::Other,
+                rows: vec![3],
+                collapsed: false,
+            },
+        ];
+        let items = items(&sections, 2, true);
+        // Header(featherbit, 0, false), Row(0), Header(prod, 2, true), Header(other, 0, false), Row(3)
+        assert_eq!(items.len(), 5);
+        assert!(matches!(
+            &items[0],
+            Item::Header {
+                hidden: 0,
+                holds_active: false,
+                ..
+            }
+        ));
+        assert!(matches!(&items[1], Item::Row(0)));
+        assert!(matches!(
+            &items[2],
+            Item::Header {
+                hidden: 2,
+                holds_active: true,
+                ..
+            }
+        ));
+        assert!(matches!(&items[4], Item::Row(3)));
+        let tops = item_tops(&items);
+        assert_eq!(tops[0], 6.0);
+        assert_eq!(tops[1], 6.0 + 26.0 + 2.0);
+        assert_eq!(
+            tops[2],
+            tops[1] + 32.0 + 2.0 + 8.0,
+            "a gap above a later header"
+        );
+        assert_eq!(tops[3], tops[2] + 26.0 + 2.0 + 8.0);
+    }
+
+    /// The drop marker sits 2 px above the row a gap precedes, unless a header lies between
+    /// that row and the one before: then it sits under the previous row, inside its group.
+    #[test]
+    fn the_gap_marker_stays_in_the_group_at_its_end() {
+        let row = |y: f32| iced::Rectangle::new(iced::Point::new(0.0, y), Size::new(100.0, 32.0));
+        // Two rows of one group, a header (26 + gaps) and a row of the next group.
+        let rows = [
+            row(6.0),
+            row(40.0),
+            row(40.0 + 32.0 + 2.0 + 8.0 + 26.0 + 2.0),
+        ];
+        assert_eq!(gap_marker_y(&rows, 0, 0.0), 4.0, "before the first row");
+        assert_eq!(
+            gap_marker_y(&rows, 1, 0.0),
+            38.0,
+            "between two rows of a group"
+        );
+        assert_eq!(
+            gap_marker_y(&rows, 2, 0.0),
+            72.0,
+            "at the group's end: under the last row, not under the next header"
+        );
+        assert_eq!(
+            gap_marker_y(&rows, 3, 0.0),
+            rows[2].y + 32.0,
+            "after the last row"
+        );
+        assert_eq!(gap_marker_y(&[], 0, 50.0), 50.0, "no rows: the list's top");
+    }
+
+    #[test]
+    fn reveal_uses_the_items_top() {
+        assert_eq!(
+            reveal(100.0, 32.0, 0.0, 50.0),
+            Some(100.0 + 32.0 + 6.0 - 50.0)
+        );
+        assert_eq!(reveal(100.0, 32.0, 90.0, 300.0), None);
+    }
+
+    #[test]
+    fn a_folded_sidebar_lays_out() {
+        let (mut app, wid) = app_with_groups(&[
+            ("a", Some("prod")),
+            ("b", Some("staging")),
+            ("c", None),
+            ("d", Some("prod")),
+        ]);
+        fold(&mut app);
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0)));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(1)));
+        assert!(app.collapsed[&wid].contains("staging"));
+        lay_out(&app, wid);
+    }
+
+    #[test]
+    fn the_active_row_is_revealed_under_headers() {
+        let specs: Vec<(String, Option<&str>)> = (0..18)
+            .map(|i| (format!("t{i}"), Some(["prod", "staging", "qa"][i % 3])))
+            .collect();
+        let refs: Vec<(&str, Option<&str>)> = specs.iter().map(|(n, g)| (n.as_str(), *g)).collect();
+        let (mut app, wid) = app_with_groups(&refs);
+        fold(&mut app);
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(0)));
+        let scrolled = TabBarMsg::Scrolled {
+            offset: 0.0,
+            height: 200.0,
+        };
+        let _ = app.update(Message::TabBar(wid, scrolled));
+        let _ = app.update(Message::SelectTab(17));
+        let active = app.windows[&wid].active;
+        let items = items(&app.sections_of(wid), active, true);
+        let top = item_tops(&items)[items
+            .iter()
+            .position(|i| matches!(i, Item::Row(r) if *r == active))
+            .unwrap()];
+        assert_eq!(
+            app.sidebar_scroll.get(&wid),
+            Some(&(top + ROW_HEIGHT + LIST_PADDING - 200.0, 200.0))
+        );
     }
 
     #[test]

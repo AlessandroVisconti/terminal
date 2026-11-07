@@ -298,9 +298,19 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
             DockContent::Tunnels => Mode::TunnelsPanel,
         });
     let docked_area = dock(terminal_area, panel);
+    // What the sidebar lists: rows, under group headers while folding is on.
+    let items = crate::tab_sidebar::items(&app.sections_of(id), win.active, app.groups_on());
     body = body.push(match sidebar {
         Some(width) => {
+            let tile_group = match carry {
+                Some(Carry::Tile(pane)) => win.locate(pane).map(|(t, p)| {
+                    crate::tab_groups::group_of_profile(win.tabs[t].panes[p].profile, &app.profiles)
+                }),
+                _ => None,
+            };
             let side = crate::tab_sidebar::Sidebar {
+                items: &items,
+                tile_group: tile_group.as_ref(),
                 window: id,
                 tokens: t,
                 around: Surroundings {
@@ -1555,9 +1565,14 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<DragState>();
+        // The bar lists every tab: rows and window indices are the same.
+        let indices: Vec<usize> = (0..self.ids.len()).collect();
         let strip = Strip {
             window: self.window,
             ids: &self.ids,
+            indices: &indices,
+            range: None,
+            clamp: false,
             carry: self.carry,
             modal: self.modal,
             hole: self.hole,

@@ -399,6 +399,14 @@ fn the_tabs_row_changes_the_side_at_once() {
     assert_eq!(s.take_pending(), [SettingChange::TabBar(TabBar::Left)]);
 }
 
+#[test]
+fn the_group_tabs_switch_changes_the_setting_at_once() {
+    let mut s = state();
+    s.update(SettingsMsg::TabGroups(true));
+    assert!(s.values.tab_groups);
+    assert_eq!(s.take_pending(), [SettingChange::TabGroups(true)]);
+}
+
 fn labels(s: &SettingsState) -> Vec<String> {
     s.rate_choices().into_iter().map(|c| c.label).collect()
 }

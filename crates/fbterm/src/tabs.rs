@@ -470,17 +470,6 @@ impl WindowState {
         true
     }
 
-    /// Select tab `n` as numbered in the tab bar (1-based); `9` is the last tab, whatever
-    /// the count, so the end of a long row is always one chord away.
-    pub fn select_number(&mut self, n: u8) -> bool {
-        let index = match n {
-            0 => return false,
-            9 => self.tabs.len().checked_sub(1),
-            n => Some(usize::from(n) - 1),
-        };
-        index.is_some_and(|i| self.select(i))
-    }
-
     /// Next tab, wrapping.
     pub fn next(&mut self) -> bool {
         match self.tabs.len() {
@@ -905,33 +894,14 @@ mod tests {
     }
 
     #[test]
-    fn next_prev_wrap_and_numbers_select() {
+    fn next_prev_wrap() {
         let mut w = window(&["a", "b", "c"], 0);
         assert!(w.prev());
         assert_eq!(w.active, 2);
         assert!(w.next());
         assert_eq!(w.active, 0);
-        assert!(w.select_number(2));
-        assert_eq!(w.active, 1);
-        assert!(w.select_number(9));
-        assert_eq!(w.active, 2, "nine is the last tab");
-        assert!(!w.select_number(0));
-        assert_eq!(w.active, 2);
         let mut one = window(&["a"], 0);
         assert!(!one.next());
-    }
-
-    #[test]
-    fn nine_selects_the_last_tab_past_the_ninth() {
-        let names = [
-            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13",
-        ];
-        let mut many = window(&names, 0);
-        assert!(many.select_number(9));
-        assert_eq!(many.active, 12);
-        assert!(many.select_number(8));
-        assert_eq!(many.active, 7);
-        assert!(!WindowState::new().select_number(9), "no tabs at all");
     }
 
     #[test]

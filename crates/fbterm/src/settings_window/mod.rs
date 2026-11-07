@@ -58,6 +58,8 @@ pub enum SettingsMsg {
     TitleBar(WindowDecorations),
     /// The Appearance card's `Tabs` row: where open sessions are listed.
     TabBar(TabBar),
+    /// The `Group tabs` switch under it: fold the sidebar into profile groups.
+    TabGroups(bool),
     ScrollbackText(String),
     ScrollbackSubmit,
     /// Confirm lowering the scrollback below what an open tab holds: save and trim.
@@ -470,6 +472,7 @@ impl SettingsState {
             SettingsMsg::Blur(v) => self.change(SettingChange::BackgroundBlur(v), false),
             SettingsMsg::TitleBar(v) => self.change(SettingChange::WindowDecorations(v), false),
             SettingsMsg::TabBar(v) => self.change(SettingChange::TabBar(v), false),
+            SettingsMsg::TabGroups(v) => self.change(SettingChange::TabGroups(v), false),
             SettingsMsg::Kitty(v) => self.change(SettingChange::KittyKeyboard(v), false),
             SettingsMsg::MaxFps(v) => self.change(SettingChange::MaxFps(v), false),
             SettingsMsg::CheckUpdates(v) => self.change(SettingChange::CheckUpdates(v), false),
