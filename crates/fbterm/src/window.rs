@@ -401,7 +401,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
 
 fn page_min_width(page: Page) -> f32 {
     match page {
-        Page::Settings => 520.0,
+        Page::Settings | Page::Welcome => 520.0,
         // Sidebar 260 plus the footer's buttons and an "Unsaved changes" note.
         _ => 770.0,
     }
@@ -455,6 +455,7 @@ fn page_view(app: &App, id: window::Id, page: Page) -> Element<'_, Message> {
             ),
             None => text("").into(),
         },
+        Page::Welcome => crate::welcome::view::view(t, &app.settings),
     }
 }
 
@@ -2087,6 +2088,7 @@ fn key_mode(page: Option<Page>, recording: bool, panel: Option<Mode>, find: bool
         (_, Some(panel)) => panel,
         (Some(Page::Profiles), _) => Mode::Editor,
         (Some(Page::Settings), _) => Mode::Settings,
+        (Some(Page::Welcome), _) => Mode::Welcome,
         (None, _) if find => Mode::Find,
         (None, _) => Mode::Normal,
     }
@@ -2097,9 +2099,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_welcome_tab_has_its_own_keys() {
+        assert!(matches!(
+            key_mode(Some(Page::Welcome), false, None, false),
+            Mode::Welcome
+        ));
+    }
+
+    #[test]
     fn a_focused_panel_keeps_its_keys_beside_a_page_tab() {
         let panel = Some(Mode::TunnelsPanel);
-        for page in [Page::Settings, Page::Profiles] {
+        for page in [Page::Settings, Page::Profiles, Page::Welcome] {
             assert!(matches!(
                 key_mode(Some(page), false, panel, false),
                 Mode::TunnelsPanel

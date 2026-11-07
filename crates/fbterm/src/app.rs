@@ -155,6 +155,8 @@ pub enum Message {
     ContextMenu(window::Id, crate::context_menu::MenuMsg),
     /// The tab menu's own: the password copy and its clipboard clear.
     TabMenu(crate::tab_menu::TabMenuMsg),
+    /// The Welcome tab's.
+    Welcome(crate::welcome::WelcomeMsg),
     /// The find bar of a window's active tab.
     Find(window::Id, FindMsg),
     /// A pane's find-bar search finished.
@@ -444,11 +446,9 @@ pub struct App {
     pub(crate) gallery_loading: bool,
     /// How the theme gallery fetches its catalog and opens credit links (fakes in tests).
     pub(crate) gallery_io: crate::schemes_window::gallery::GalleryIo,
-    /// Whether the first-launch update question may be asked at all: off in unit tests, which
-    /// would otherwise all find it queued in front of their own dialogs.
-    pub(crate) ask_updates: bool,
-    /// The update question was shown this run.
-    pub(crate) update_asked: bool,
+    /// Whether the Welcome tab may open at this launch: off in unit tests, and off once it
+    /// opened (or was found not due) this run. See `crate::welcome`.
+    pub(crate) ask_welcome: bool,
     /// `FBTERM_DEMO_UPDATE=<version>` (debug aid): the update check reports this version
     /// without any network access.
     pub(crate) demo_update: Option<String>,
@@ -769,8 +769,7 @@ impl App {
             gallery_generation: 0,
             gallery_loading: false,
             gallery_io: crate::schemes_window::gallery::GalleryIo::default(),
-            ask_updates: !cfg!(test),
-            update_asked: false,
+            ask_welcome: !cfg!(test),
             demo_update: debug_env("FBTERM_DEMO_UPDATE").map(|v| v.to_string_lossy().into_owned()),
         };
         app.update_output_rate();
@@ -788,6 +787,8 @@ impl App {
             Some(o) => app.open_perf_tabs(o),
             None => app.restore_windows(&plan),
         };
+        // The first-launch questions, once, before any debug aid.
+        task = task.chain(app.open_welcome_if_due());
         task = task.chain(app.open_debug_tabs());
         task = task.chain(app.open_debug_splits());
         task = task.chain(app.open_debug_palette());
@@ -795,6 +796,7 @@ impl App {
         task = task.chain(app.open_debug_settings());
         task = task.chain(app.open_debug_schemes());
         task = task.chain(app.open_debug_tunnels());
+        task = task.chain(app.open_debug_welcome());
         task = task.chain(app.open_debug_archive());
         task = task.chain(app.open_debug_prompt());
         task = task.chain(app.open_debug_find());
@@ -1021,7 +1023,6 @@ impl App {
         self.sync_file_panels();
         self.sync_context_menu();
         self.sync_quit_key();
-        self.ask_update_question();
         self.sync_update_state();
         self.sync_recording();
         crate::key_log::set_recording(self.recording_window());
@@ -1209,7 +1210,8 @@ impl App {
                     .map(|w| w.tabs.iter().filter_map(|t| t.page).collect())
                     .unwrap_or_default();
                 for page in pages {
-                    self.page_closed(page);
+                    // The window is going: nothing of what the page leaves behind needs a task.
+                    let _ = self.page_closed(page);
                 }
                 if self.schemes_window() == Some(id) {
                     self.schemes_win = None;
@@ -1310,6 +1312,7 @@ impl App {
             Message::Palette(wid, msg) => self.palette(wid, msg),
             Message::ContextMenu(wid, msg) => self.context_menu_msg(wid, msg),
             Message::TabMenu(msg) => self.tab_menu_msg(msg),
+            Message::Welcome(msg) => self.welcome_msg(msg),
             Message::Find(wid, msg) => self.find(wid, msg),
             Message::Found { pane, seq, outcome } => self.found(pane, seq, outcome),
             Message::FindRefresh(pane) => self.find_refresh(pane),

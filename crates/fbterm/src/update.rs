@@ -12,15 +12,11 @@
 
 use std::time::Duration;
 
-use iced::Task;
 use iced::futures::Stream;
-use iced::window;
 use semver::Version;
 use serde::Deserialize;
 
-use crate::app::{App, Message};
-use crate::prompts::Dialog;
-use fbterm_config::{SettingChange, Settings};
+use crate::app::App;
 
 /// The latest published (not draft, not prerelease) release of fbterm.
 pub const LATEST_URL: &str =
@@ -33,13 +29,6 @@ pub const FALLBACK_URL: &str = "https://github.com/featherbitplatform/terminal/r
 pub const INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Largest release JSON read (GitHub's are a few kilobytes plus the release notes).
 const MAX_BYTES: u64 = 1024 * 1024;
-
-/// The first-launch question's title.
-pub const QUESTION_TITLE: &str = "Check for updates?";
-/// The first-launch question's text.
-pub const QUESTION_BODY: &str = "fbterm can check GitHub once a day for a newer version and \
-    show a dot on the settings button when one is out. Nothing is downloaded or installed. You \
-    can change this later in Settings.";
 
 /// A newer release than this build: its version and where to download it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,69 +209,15 @@ impl App {
             state.update.clone_from(&self.update_available);
         }
     }
-
-    /// Whether the first-launch question should be shown now: never answered, not asked yet
-    /// this run, a run that keeps state, startup settled (no pane still connecting, since a
-    /// connecting pane may still ask for a host key or password), and no other question up
-    /// or queued in any window. Re-evaluated after every update, so a session changing state
-    /// or a prompt closing brings it on without any timer.
-    fn update_question_due(&self) -> bool {
-        self.ask_updates
-            && !self.update_asked
-            && self.state_saving_enabled
-            && self.settings.check_updates.is_none()
-            && self.prompts.is_empty()
-            && self.vault.dialog.is_none()
-            && !self.windows.is_empty()
-            && !self.windows.values().any(|w| {
-                w.tabs
-                    .iter()
-                    .flat_map(|t| &t.panes)
-                    .any(|p| p.state == crate::tabs::TabState::Connecting)
-            })
-    }
-
-    /// Show the first-launch question over a terminal window if it is due (called after every
-    /// update, so it waits for other questions to be answered). A `settings.toml` that does
-    /// not load could not take the answer: then it is not asked this run (and the file is read
-    /// only this once).
-    pub(crate) fn ask_update_question(&mut self) {
-        if !self.update_question_due() {
-            return;
-        }
-        let Some(w) = self
-            .last_terminal
-            .filter(|w| self.windows.contains_key(w))
-            .or_else(|| self.windows.keys().next().copied())
-        else {
-            return;
-        };
-        self.update_asked = true;
-        let path = self.paths.settings();
-        if path.exists() && Settings::load(&path).is_err() {
-            return;
-        }
-        self.prompts.push(w, None, Dialog::CheckUpdates);
-    }
-
-    /// The first-launch question's answer (Escape counts as `Not now`): written to
-    /// `settings.toml` and applied, which starts the first check for a yes.
-    pub(crate) fn answer_update_question(&mut self, w: window::Id, yes: bool) -> Task<Message> {
-        if !matches!(self.prompts.front(w), Some(Dialog::CheckUpdates)) {
-            return Task::none();
-        }
-        self.prompts.pop(w);
-        let task = self.set_setting(SettingChange::CheckUpdates(yes));
-        Task::batch([task, self.focus_prompt(w)])
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prompts::PromptMsg;
+    use crate::app::Message;
     use crate::restore_tests::{paths_with, profile, saved};
     use fbterm_config::{Paths, SavedState};
+    use iced::window;
 
     const RELEASE: &str = r#"{
         "tag_name": "v0.5.0",
@@ -392,34 +327,6 @@ mod tests {
     }
 
     #[test]
-    fn the_question_waits_for_startup_connections() {
-        use crate::tabs::TabState;
-        let (mut app, _, wid) = app_with(None);
-        let set = |app: &mut App, state: TabState| {
-            let pane = &mut app.windows.get_mut(&wid).unwrap().tabs[0].panes[0];
-            pane.state = state;
-        };
-        set(&mut app, TabState::Connecting);
-        nudge(&mut app);
-        assert!(
-            app.prompts.front(wid).is_none(),
-            "a pane is still connecting"
-        );
-        // It asks for a password: still not.
-        let tab = app.windows[&wid].tabs[0].id;
-        app.prompts
-            .push(wid, None, Dialog::CloseTab { tab, panes: 2 });
-        set(&mut app, TabState::Connected);
-        nudge(&mut app);
-        assert!(matches!(
-            app.prompts.front(wid),
-            Some(Dialog::CloseTab { .. })
-        ));
-        let _ = app.update(Message::Prompt(PromptMsg::Cancel(wid)));
-        assert!(asking(&app, wid), "asked once startup settled");
-    }
-
-    #[test]
     fn bad_json_is_an_error() {
         assert!(parse_release(b"not json").is_err());
         assert!(parse_release(br#"{"name": "no tag"}"#).is_err());
@@ -473,18 +380,9 @@ mod tests {
         if let Some(s) = settings {
             std::fs::write(paths.settings(), s).unwrap();
         }
-        let (mut app, _) = App::build(paths.clone(), true);
-        app.ask_updates = true;
+        let (app, _) = App::build(paths.clone(), true);
         let wid = *app.windows.keys().next().unwrap();
         (app, paths, wid)
-    }
-
-    fn nudge(app: &mut App) {
-        let _ = app.update(Message::DismissNotices);
-    }
-
-    fn asking(app: &App, wid: window::Id) -> bool {
-        matches!(app.prompts.front(wid), Some(Dialog::CheckUpdates))
     }
 
     #[test]
@@ -532,87 +430,6 @@ mod tests {
         let (mut app, _, _) = app_with(Some("check_updates = true\n"));
         app.update_checked(Err("HTTP 403".into()));
         assert!(!app.update_dot());
-    }
-
-    #[test]
-    fn never_asked_shows_the_question_once() {
-        let (mut app, _, wid) = app_with(None);
-        nudge(&mut app);
-        assert!(asking(&app, wid));
-        nudge(&mut app);
-        assert!(app.prompts.pop(wid).is_some());
-        assert!(app.prompts.front(wid).is_none(), "pushed only once");
-        nudge(&mut app);
-        assert!(app.prompts.front(wid).is_none(), "not again in this run");
-    }
-
-    #[test]
-    fn each_answer_is_saved_and_never_asked_again() {
-        for (yes, want) in [(true, Some(true)), (false, Some(false))] {
-            let (mut app, paths, wid) = app_with(None);
-            nudge(&mut app);
-            assert!(asking(&app, wid));
-            let _ = app.update(Message::Prompt(PromptMsg::AnswerUpdates(wid, yes)));
-            assert!(app.prompts.front(wid).is_none());
-            assert_eq!(app.settings.check_updates, want);
-            assert_eq!(app.update_check_scheduled(), yes, "a yes checks at once");
-            assert_eq!(
-                Settings::load(&paths.settings()).unwrap().check_updates,
-                want
-            );
-            // Next launch: not asked.
-            let (mut again, _) = App::build(paths, true);
-            again.ask_updates = true;
-            nudge(&mut again);
-            let wid = *again.windows.keys().next().unwrap();
-            assert!(again.prompts.front(wid).is_none());
-        }
-    }
-
-    #[test]
-    fn escape_is_not_now() {
-        let (mut app, paths, wid) = app_with(Some("font_size = 14.0\n"));
-        nudge(&mut app);
-        assert!(asking(&app, wid));
-        let _ = app.update(Message::Prompt(PromptMsg::Cancel(wid)));
-        assert!(app.prompts.front(wid).is_none());
-        assert_eq!(app.settings.check_updates, Some(false));
-        let text = std::fs::read_to_string(paths.settings()).unwrap();
-        assert!(
-            text.contains("font_size = 14.0"),
-            "the rest of the file stays"
-        );
-        assert!(text.contains("check_updates = false"));
-    }
-
-    #[test]
-    fn runs_that_keep_no_state_never_ask() {
-        let (mut app, _, wid) = app_with(None);
-        app.state_saving_enabled = false;
-        nudge(&mut app);
-        assert!(app.prompts.front(wid).is_none());
-    }
-
-    #[test]
-    fn the_question_waits_for_another_prompt() {
-        let (mut app, _, wid) = app_with(None);
-        let tab = app.windows[&wid].tabs[0].id;
-        app.prompts
-            .push(wid, None, Dialog::CloseTab { tab, panes: 2 });
-        nudge(&mut app);
-        assert!(matches!(
-            app.prompts.front(wid),
-            Some(Dialog::CloseTab { .. })
-        ));
-        let _ = app.update(Message::Prompt(PromptMsg::Cancel(wid)));
-        assert!(asking(&app, wid), "asked once the other one is answered");
-    }
-
-    #[test]
-    fn an_unreadable_settings_file_is_not_asked_about() {
-        let (mut app, _, wid) = app_with(Some("font_size = \n"));
-        nudge(&mut app);
-        assert!(app.prompts.front(wid).is_none());
     }
 
     #[test]

@@ -125,6 +125,7 @@ mod ui;
 mod update;
 mod visibility;
 mod watch;
+mod welcome;
 mod window;
 mod windows;
 

@@ -146,7 +146,7 @@ fn read_only_banner<'a>(
 }
 
 /// A titled card of setting rows, separated by hairlines.
-fn section<'a>(
+pub(crate) fn section<'a>(
     t: &'static Tokens,
     title: &'a str,
     rows: Vec<Element<'a, Message>>,
@@ -1162,7 +1162,7 @@ fn switch<'a>(
 }
 
 /// One button of a segmented control; `on_press`: `None` while it cannot change.
-fn segment<'a>(
+pub(crate) fn segment<'a>(
     t: &'static Tokens,
     caption: &'a str,
     selected: bool,
@@ -1195,7 +1195,7 @@ fn segment<'a>(
         .into()
 }
 
-fn well(t: &Tokens) -> container::Style {
+pub(crate) fn well(t: &Tokens) -> container::Style {
     container::Style {
         background: Some(t.app.into()),
         border: Border {
