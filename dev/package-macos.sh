@@ -33,6 +33,8 @@ lipo -create \
   "target/aarch64-apple-darwin/release/fbterm" \
   "target/x86_64-apple-darwin/release/fbterm" \
   -output "$app/Contents/MacOS/fbterm"
+# An app built against an SDK older than macOS 26 keeps the old window look there (corners too).
+bash dev/macos-sdk.sh "$app/Contents/MacOS/fbterm"
 sed -e "s/__BUILD__/${build}/g" -e "s/__VERSION__/${version}/g" crates/fbterm/macos/Info.plist > "$app/Contents/Info.plist"
 cp crates/fbterm/macos/fbterm.icns "$app/Contents/Resources/fbterm.icns"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
