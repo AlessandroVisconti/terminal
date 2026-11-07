@@ -147,8 +147,15 @@ reorder it, and right-clicks the `prod` tab to copy its password and paste it in
 - **Items.** `Copy password`, present only when the tab's focused pane belongs to a saved SSH
   profile whose `auth` is `Password`; `Close tab`, always. `Close tab` does what the tab's
   close button does (`TabBarMsg::Close`, asking first when several live panes would close).
-  The menu is 196 px wide, 28 px per item, no chord labels (`Close tab` already shows its
-  chord in its tooltip, and the chord closes the active tab, not the right-clicked one).
+  The menu is 196 px wide, 28 px per item. An item shows its chord (from `App::bindings`,
+  never hardcoded) only when the key would do the same to the right-clicked tab, so only on
+  the active tab, since the chords act on it (owner's decision, 2026-11-07, superseding the
+  earlier "no chord labels"): the `Copy password` chord beside that item, the close chord
+  beside `Close tab` when the tab has one pane (with more, it closes the focused pane). The
+  close action is titled `Close tab or pane` (name `close_tab` unchanged), and `Copy
+  password` is also an action: name `copy_password`, default chord Cmd+Shift+K on macOS and
+  Ctrl+Shift+K elsewhere, copying the active tab's password as the menu item would, nothing
+  for any other tab.
 - **Copy password.** The profile's password is read from the saved secrets on the blocking
   pool (`SecretStore::get`, never on the UI thread), handed through a `Delivered` message as
   a `Zeroizing<String>`, written to the clipboard and dropped. No notice on success, as the

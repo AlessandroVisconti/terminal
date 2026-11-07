@@ -25,6 +25,8 @@ Right-click a tab, on the bar or in the column, for a small menu:
 - **Copy password** puts the saved password of the tab's SSH profile on the clipboard. It appears only for an SSH profile that logs in with a password, and copies only what is saved: nothing is asked for, and nothing is read from the running session. See [Copying a password](saved-secrets#copying-a-password) for what happens when no password is saved, when the vault is locked, and how the clipboard is cleared afterwards.
 - **Close tab** does what the tab's close button does, asking first when the tab has several live panes.
 
+Each item shows its shortcut when the key would do the same thing: the menu of the active tab shows `Cmd+Shift+K` (`Ctrl+Shift+K`) beside **Copy password**, and `Cmd+W` (`Ctrl+Shift+W`) beside **Close tab** when the tab has one pane (with several, the key closes only the focused pane). The menu of another tab shows no shortcuts, because the keys act on the active tab.
+
 A right-click never selects the tab. Only your own right-click opens the menu: nothing a program in a terminal sends can.
 
 ## The Welcome tab

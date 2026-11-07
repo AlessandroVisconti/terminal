@@ -246,7 +246,7 @@ fn actions() -> Vec<PaletteItem> {
     [
         (Action::NewTab, "New tab"),
         (Action::NewWindow, "New window"),
-        (Action::CloseTab, "Close pane"),
+        (Action::CloseTab, "Close tab or pane"),
         (Action::SplitRight, "Split right"),
         (Action::SplitDown, "Split down"),
         (Action::MaximizePane, "Maximize pane"),
@@ -257,6 +257,7 @@ fn actions() -> Vec<PaletteItem> {
         (Action::FindInTab, "Find in this tab"),
         (Action::FindAll, "Find in all tabs"),
         (Action::ExportTab, "Export tab to file…"),
+        (Action::CopyPassword, "Copy password"),
         (Action::EditProfiles, "Profiles"),
         (Action::DuplicateProfile, "Duplicate profile"),
         (Action::ExportProfiles, "Export profiles\u{2026}"),
@@ -766,7 +767,7 @@ mod tests {
             [
                 "New tab",
                 "New window",
-                "Close pane",
+                "Close tab or pane",
                 "Split right",
                 "Split down",
                 "Maximize pane",
@@ -777,6 +778,7 @@ mod tests {
                 "Find in this tab",
                 "Find in all tabs",
                 "Export tab to file\u{2026}",
+                "Copy password",
                 "Profiles",
                 "Duplicate profile",
                 "Export profiles\u{2026}",
@@ -934,7 +936,7 @@ mod tests {
         };
         assert_eq!(detail("bastion").as_deref(), Some("root@b.example.com"));
         assert_eq!(detail("web").as_deref(), Some("root@10.0.0.5 via bastion"));
-        assert_eq!(list.iter().filter(|i| i.is_action()).count(), 25);
+        assert_eq!(list.iter().filter(|i| i.is_action()).count(), 26);
     }
 
     #[test]
