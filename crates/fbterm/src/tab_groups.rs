@@ -259,6 +259,23 @@ impl crate::app::App {
         removed
     }
 
+    /// `NextTab`, `PrevTab` and the number shortcuts in the focused window (or `wid`): one
+    /// [`Step`] over the rows that can be seen, so a folded group is skipped and never
+    /// unfolded. With folding off every tab is a row, as before.
+    pub(crate) fn travel_tabs(
+        &mut self,
+        wid: Option<iced::window::Id>,
+        step: Step,
+    ) -> iced::Task<crate::app::Message> {
+        let Some(wid) = wid.or_else(|| self.focused_window()) else {
+            return iced::Task::none();
+        };
+        let rows = self.visible_rows(wid);
+        self.with_window(wid, |w| {
+            travel(&rows, w.active, step).is_some_and(|i| w.select(i))
+        })
+    }
+
     /// A header click: fold or unfold the sidebar's section at `index`, and remember it.
     pub(crate) fn toggle_group(
         &mut self,
@@ -436,6 +453,7 @@ mod tests {
     use crate::app::{App, Message, TabBarMsg};
     use crate::restore_tests::paths_with;
     use crate::tabs::WindowState;
+    use fbterm_config::keys::Action;
 
     /// An app with one window holding one tab per `(name, group)`, in that order, the first
     /// active; folding and the left side off until a test turns them on.
@@ -591,6 +609,73 @@ mod tests {
         let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(1)));
         assert!(app.collapsed[&wid].contains("prod"));
         assert_eq!(app.windows[&wid].active, 1);
+    }
+
+    /// `mixed()` folded and grouped (`[p, a, d, b, c]`), `staging` collapsed, active `a`.
+    fn folded() -> (App, window::Id) {
+        let (mut app, wid) = mixed();
+        fold(&mut app);
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(1)));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(2)));
+        assert_eq!(names(&app, wid), ["p", "a", "d", "b", "c"]);
+        assert!(app.collapsed[&wid].contains("staging"));
+        assert_eq!(app.windows[&wid].active, 1);
+        app.focused = Some(wid);
+        (app, wid)
+    }
+
+    fn act(app: &mut App, wid: window::Id, action: Action) {
+        let _ = app.update(Message::Shortcut(wid, action));
+    }
+
+    #[test]
+    fn next_and_prev_skip_collapsed_groups_and_never_expand_them() {
+        let (mut app, wid) = folded();
+        act(&mut app, wid, Action::NextTab);
+        assert_eq!(app.windows[&wid].active, 2, "d");
+        act(&mut app, wid, Action::NextTab);
+        assert_eq!(app.windows[&wid].active, 4, "c: b is hidden");
+        act(&mut app, wid, Action::NextTab);
+        assert_eq!(app.windows[&wid].active, 0, "p: wrapped");
+        act(&mut app, wid, Action::PrevTab);
+        assert_eq!(app.windows[&wid].active, 4, "c");
+        assert!(app.collapsed[&wid].contains("staging"));
+    }
+
+    #[test]
+    fn number_shortcuts_count_visible_rows() {
+        let (mut app, wid) = folded();
+        act(&mut app, wid, Action::SelectTab(3));
+        assert_eq!(app.windows[&wid].active, 2, "d is the third visible row");
+        act(&mut app, wid, Action::SelectTab(9));
+        assert_eq!(app.windows[&wid].active, 4, "c is the last visible row");
+        act(&mut app, wid, Action::SelectTab(5));
+        assert_eq!(app.windows[&wid].active, 4, "no fifth visible row");
+        act(&mut app, wid, Action::SelectTab(4));
+        assert_eq!(app.windows[&wid].active, 4, "c again");
+    }
+
+    #[test]
+    fn with_every_group_collapsed_travel_does_nothing() {
+        let (mut app, wid) = folded();
+        for section in [0, 1, 3] {
+            let _ = app.update(Message::TabBar(wid, TabBarMsg::ToggleGroup(section)));
+        }
+        assert_eq!(app.visible_rows(wid), Vec::<usize>::new());
+        for action in [Action::NextTab, Action::PrevTab, Action::SelectTab(1)] {
+            act(&mut app, wid, action);
+            assert_eq!(app.windows[&wid].active, 1, "a stays");
+        }
+    }
+
+    #[test]
+    fn closing_the_active_tab_into_a_collapsed_group_expands_it() {
+        let (mut app, wid) = folded();
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Select(2))); // d
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Close(2)));
+        assert_eq!(names(&app, wid), ["p", "a", "b", "c"]);
+        assert_eq!(app.windows[&wid].active, 2, "b took d's place");
+        assert!(!app.collapsed[&wid].contains("staging"));
     }
 
     #[test]
