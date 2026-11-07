@@ -3,7 +3,7 @@
 
 use fbterm_config::keys::{Action, ActionGroup, Bindings, FixedShortcut, fixed_shortcuts, risk};
 use fbterm_config::settings::{FONT_SIZE_RANGE, OPACITY_RANGE};
-use fbterm_config::{SecretStorage, ThemeMode, WindowDecorations};
+use fbterm_config::{SecretStorage, TabBar, ThemeMode, WindowDecorations};
 use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, slider, text, text_input, toggler,
 };
@@ -146,7 +146,7 @@ fn read_only_banner<'a>(
 }
 
 /// A titled card of setting rows, separated by hairlines.
-fn section<'a>(
+pub(crate) fn section<'a>(
     t: &'static Tokens,
     title: &'a str,
     rows: Vec<Element<'a, Message>>,
@@ -355,6 +355,24 @@ fn appearance<'a>(
             v.background_opacity,
         ),
     ];
+    // Where open sessions are listed; an unanswered setting shows `Top`.
+    let tabs = row![
+        segment(
+            t,
+            "Top",
+            !v.tabs_left(),
+            editable.then(|| msg(SettingsMsg::TabBar(TabBar::Top))),
+        ),
+        segment(
+            t,
+            "Left",
+            v.tabs_left(),
+            editable.then(|| msg(SettingsMsg::TabBar(TabBar::Left))),
+        ),
+    ]
+    .spacing(2);
+    let tabs = container(tabs).padding(2).style(move |_| well(t));
+    rows.push(setting(t, "Tabs", None, false, tabs));
     if shows_title_bar_row(chrome::setup().look) {
         let shown = title_bar_shown(v.window_decorations, chrome_fell_back);
         let title_bar = row![
@@ -1144,7 +1162,7 @@ fn switch<'a>(
 }
 
 /// One button of a segmented control; `on_press`: `None` while it cannot change.
-fn segment<'a>(
+pub(crate) fn segment<'a>(
     t: &'static Tokens,
     caption: &'a str,
     selected: bool,
@@ -1177,7 +1195,7 @@ fn segment<'a>(
         .into()
 }
 
-fn well(t: &Tokens) -> container::Style {
+pub(crate) fn well(t: &Tokens) -> container::Style {
     container::Style {
         background: Some(t.app.into()),
         border: Border {

@@ -7,7 +7,8 @@ use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 
 use fbterm_config::{
-    ConfigError, Paths, ProfileId, ProfileKind, ProfileStore, SavedState, Settings, discover_shells,
+    ConfigError, Paths, ProfileId, ProfileKind, ProfileStore, SavedState, Settings, TabBar,
+    discover_shells,
 };
 use fbterm_secrets::{SecretBackend, SecretStore};
 use fbterm_session::ssh::tunnel::{TunnelKey, TunnelState};
@@ -43,10 +44,20 @@ use crate::visibility;
 use crate::watch::{self, Changed, ConfigDir};
 
 /// What a tab bar asks of its own window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TabBarMsg {
     Select(usize),
     Close(usize),
+    /// A right-click on the tab at `index`: its menu, at `at` (window logical pixels).
+    Menu {
+        index: usize,
+        at: iced::Point,
+    },
+    /// The sidebar's list scrolled: its offset and visible height (see `tab_sidebar.rs`).
+    Scrolled {
+        offset: f32,
+        height: f32,
+    },
     New,
     Profiles,
     /// The tunnels indicator: shows or hides the window's tunnels panel.
@@ -142,6 +153,10 @@ pub enum Message {
     Palette(window::Id, PaletteMsg),
     /// The terminal's right-click menu in a window (see [`crate::context_menu`]).
     ContextMenu(window::Id, crate::context_menu::MenuMsg),
+    /// The tab menu's own: the password copy and its clipboard clear.
+    TabMenu(crate::tab_menu::TabMenuMsg),
+    /// The Welcome tab's.
+    Welcome(crate::welcome::WelcomeMsg),
     /// The find bar of a window's active tab.
     Find(window::Id, FindMsg),
     /// A pane's find-bar search finished.
@@ -257,6 +272,13 @@ pub struct App {
     /// Config problems found at startup (path:line: message), shown until dismissed.
     pub notices: Vec<String>,
     pub notices_dismissed: bool,
+    /// Each window's tab sidebar list: scroll offset and visible height, as last scrolled.
+    pub(crate) sidebar_scroll: HashMap<window::Id, (f32, f32)>,
+    /// The active tab each window's sidebar last scrolled into view.
+    pub(crate) sidebar_shown: HashMap<window::Id, TabId>,
+    /// How many passwords the tab menu copied this run: a copy's clipboard clear runs only
+    /// while it is still the latest (see `tab_menu.rs`).
+    pub(crate) clip_generation: u64,
     /// `profiles.toml` exists but could not be parsed; the in-memory profiles are a stand-in.
     /// While set, nothing may save the profile store: that would overwrite the user's file.
     pub profiles_error: Option<ConfigError>,
@@ -430,11 +452,9 @@ pub struct App {
     pub(crate) gallery_loading: bool,
     /// How the theme gallery fetches its catalog and opens credit links (fakes in tests).
     pub(crate) gallery_io: crate::schemes_window::gallery::GalleryIo,
-    /// Whether the first-launch update question may be asked at all: off in unit tests, which
-    /// would otherwise all find it queued in front of their own dialogs.
-    pub(crate) ask_updates: bool,
-    /// The update question was shown this run.
-    pub(crate) update_asked: bool,
+    /// Whether the Welcome tab may open at this launch: off in unit tests, and off once it
+    /// opened (or was found not due) this run. See `crate::welcome`.
+    pub(crate) ask_welcome: bool,
     /// `FBTERM_DEMO_UPDATE=<version>` (debug aid): the update check reports this version
     /// without any network access.
     pub(crate) demo_update: Option<String>,
@@ -610,6 +630,11 @@ impl App {
                 Settings::default()
             }
         };
+        // `FBTERM_TAB_BAR=left` (debug aid): start with tabs on the left, writing nothing.
+        let mut settings = settings;
+        if debug_env("FBTERM_TAB_BAR").is_some_and(|v| v == "left") {
+            settings.tab_bar = Some(TabBar::Left);
+        }
         let (profiles, profiles_error) = load_profiles(&paths, &mut notices);
         let saved = SavedState::load_or_default(&paths.state());
         // With a profiles.toml that failed to load every saved tab would look orphaned: restore
@@ -661,6 +686,9 @@ impl App {
             profiles,
             notices,
             notices_dismissed: false,
+            sidebar_scroll: HashMap::new(),
+            sidebar_shown: HashMap::new(),
+            clip_generation: 0,
             profiles_error,
             paths,
             secrets,
@@ -749,8 +777,7 @@ impl App {
             gallery_generation: 0,
             gallery_loading: false,
             gallery_io: crate::schemes_window::gallery::GalleryIo::default(),
-            ask_updates: !cfg!(test),
-            update_asked: false,
+            ask_welcome: !cfg!(test),
             demo_update: debug_env("FBTERM_DEMO_UPDATE").map(|v| v.to_string_lossy().into_owned()),
         };
         app.update_output_rate();
@@ -768,6 +795,8 @@ impl App {
             Some(o) => app.open_perf_tabs(o),
             None => app.restore_windows(&plan),
         };
+        // The first-launch questions, once, before any debug aid.
+        task = task.chain(app.open_welcome_if_due());
         task = task.chain(app.open_debug_tabs());
         task = task.chain(app.open_debug_splits());
         task = task.chain(app.open_debug_palette());
@@ -775,6 +804,7 @@ impl App {
         task = task.chain(app.open_debug_settings());
         task = task.chain(app.open_debug_schemes());
         task = task.chain(app.open_debug_tunnels());
+        task = task.chain(app.open_debug_welcome());
         task = task.chain(app.open_debug_archive());
         task = task.chain(app.open_debug_prompt());
         task = task.chain(app.open_debug_find());
@@ -796,6 +826,15 @@ impl App {
             .find(|(_, program)| shell.as_ref() == Some(*program))
             .or_else(|| locals().next())
             .map(|(id, _)| id)
+    }
+
+    /// Show `line` in every window's banner (once, while it is not already there), also
+    /// when the banner was dismissed.
+    pub(crate) fn show_notice(&mut self, line: String) {
+        if !self.notices.contains(&line) {
+            self.notices.push(line);
+        }
+        self.notices_dismissed = false;
     }
 
     /// Notices to show: config problems, and the move to the vault when Auto made it.
@@ -993,18 +1032,21 @@ impl App {
         self.sync_context_menu();
         self.sync_palette_items();
         self.sync_quit_key();
-        self.ask_update_question();
         self.sync_update_state();
         self.sync_recording();
         crate::key_log::set_recording(self.recording_window());
-        let unfocus: Vec<Task<Message>> = [self.sync_panel_focus(), self.sync_tunnels_focus()]
-            .into_iter()
-            .flatten()
-            .collect();
-        if unfocus.is_empty() {
+        let more: Vec<Task<Message>> = [
+            self.reveal_active_tabs(),
+            self.sync_panel_focus(),
+            self.sync_tunnels_focus(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if more.is_empty() {
             task
         } else {
-            Task::batch(std::iter::once(task).chain(unfocus))
+            Task::batch(std::iter::once(task).chain(more))
         }
     }
 
@@ -1082,10 +1124,12 @@ impl App {
                     }
                     _ => Task::none(),
                 };
-                // And read its scale (changes arrive as `Rescaled` events).
+                // Read its scale (changes arrive as `Rescaled` events) and round its corners
+                // as the system does.
                 Task::batch([
                     decorations,
                     window::scale_factor(id).map(move |s| Message::WindowScale(id, s)),
+                    chrome::system_corners(id),
                 ])
             }
             Message::WindowVisible(id, visible) => {
@@ -1141,6 +1185,11 @@ impl App {
                 match msg {
                     TabBarMsg::Select(i) => self.with_window(wid, |w| w.select(i)),
                     TabBarMsg::Close(i) => self.close_tab_asking(wid, i),
+                    TabBarMsg::Menu { index, at } => self.open_tab_menu(wid, index, at),
+                    TabBarMsg::Scrolled { offset, height } => {
+                        self.sidebar_scrolled(wid, offset, height);
+                        Task::none()
+                    }
                     TabBarMsg::New => self.action(Some(wid), Action::NewTab),
                     TabBarMsg::Profiles => self.action(Some(wid), Action::EditProfiles),
                     TabBarMsg::Tunnels => self.action(Some(wid), Action::Tunnels),
@@ -1164,6 +1213,8 @@ impl App {
             Message::WindowClosed(id) => {
                 self.close_context_menu(id);
                 self.os_scales.remove(&id);
+                self.sidebar_scroll.remove(&id);
+                self.sidebar_shown.remove(&id);
                 // Closed by the OS button or Quit: same teardown as closing the tab.
                 let pages: Vec<Page> = self
                     .windows
@@ -1171,7 +1222,8 @@ impl App {
                     .map(|w| w.tabs.iter().filter_map(|t| t.page).collect())
                     .unwrap_or_default();
                 for page in pages {
-                    self.page_closed(page);
+                    // The window is going: nothing of what the page leaves behind needs a task.
+                    let _ = self.page_closed(page);
                 }
                 if self.schemes_window() == Some(id) {
                     self.schemes_win = None;
@@ -1271,6 +1323,8 @@ impl App {
             }
             Message::Palette(wid, msg) => self.palette(wid, msg),
             Message::ContextMenu(wid, msg) => self.context_menu_msg(wid, msg),
+            Message::TabMenu(msg) => self.tab_menu_msg(msg),
+            Message::Welcome(msg) => self.welcome_msg(msg),
             Message::Find(wid, msg) => self.find(wid, msg),
             Message::Found { pane, seq, outcome } => self.found(pane, seq, outcome),
             Message::FindRefresh(pane) => self.find_refresh(pane),

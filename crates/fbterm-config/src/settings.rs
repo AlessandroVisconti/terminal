@@ -60,6 +60,27 @@ impl WindowDecorations {
     }
 }
 
+/// Where a window lists its open sessions (`tab_bar`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TabBar {
+    /// A row of tabs along the top of the window.
+    #[default]
+    Top,
+    /// A column down the left side of the window, scrolling when it overflows.
+    Left,
+}
+
+impl TabBar {
+    /// The value as written in `settings.toml`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Left => "left",
+        }
+    }
+}
+
 /// The most redraws per second caused by program output (`max_fps`). Typing, scrolling and
 /// resizing always redraw at once; this only caps how often streaming output is drawn.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -158,6 +179,10 @@ pub struct Settings {
     pub background_blur: bool,
     /// Who draws the window title bar on Linux; ignored elsewhere.
     pub window_decorations: WindowDecorations,
+    /// Where open sessions are listed. `None`: never answered (absent from the file), which
+    /// counts as [`TabBar::Top`]; the Welcome tab asks once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tab_bar: Option<TabBar>,
     /// Most redraws per second caused by program output.
     pub max_fps: MaxFps,
     /// Automatic reconnect attempts for a tunnel whose connection dropped (0 = off).
@@ -185,6 +210,7 @@ impl Default for Settings {
             background_opacity: 1.0,
             background_blur: false,
             window_decorations: WindowDecorations::Fbterm,
+            tab_bar: None,
             max_fps: MaxFps::default(),
             tunnel_max_retries: 10,
             check_updates: None,
@@ -408,6 +434,11 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 # Window title bar on Linux: "fbterm" draws it in the tab bar, "system" uses the desktop's.
 #window_decorations = "fbterm"
 
+# Where open sessions are listed: "top" (a row of tabs along the top of the window) or
+# "left" (a column down the left side, scrolling when it overflows). Left out, the Welcome
+# tab asks once.
+#tab_bar = "top"
+
 # Most redraws per second caused by program output: a whole number from 30 to 240, or
 # "display" to follow the refresh rate of the screen (60 when it cannot be detected).
 # Caps redraws caused by program output; typing always redraws immediately. Higher values
@@ -437,6 +468,11 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 "##;
 
 impl Settings {
+    /// Tabs are listed down the left side (`tab_bar = "left"`); unanswered counts as top.
+    pub fn tabs_left(&self) -> bool {
+        self.tab_bar == Some(TabBar::Left)
+    }
+
     /// Whether the update check runs: only when the user said yes.
     pub fn checks_updates(&self) -> bool {
         self.check_updates == Some(true)

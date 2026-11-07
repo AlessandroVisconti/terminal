@@ -79,6 +79,7 @@ impl App {
             Action::ExportProfiles => self.open_archive(crate::archive_window::ArchiveMode::Export),
             Action::ImportProfiles => self.open_archive(crate::archive_window::ArchiveMode::Import),
             Action::FilePanel => self.on_window(wid, App::toggle_file_panel),
+            Action::VerticalTabs => self.toggle_vertical_tabs(),
             Action::OpenSettingsFile => {
                 crate::config_files::open_settings_file(&self.paths);
                 Task::none()
@@ -389,7 +390,8 @@ fn needs_terminal(action: Action) -> bool {
         | Action::FocusLeft
         | Action::FocusRight
         | Action::FocusUp
-        | Action::FocusDown => false,
+        | Action::FocusDown
+        | Action::VerticalTabs => false,
     }
 }
 

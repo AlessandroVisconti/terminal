@@ -138,36 +138,6 @@ pub fn view<'a>(
         .spacing(14)
         .into(),
         Dialog::Clash(clash) => clash_view(t, window, clash),
-        Dialog::CheckUpdates => column![
-            header(
-                t,
-                ui::ICON_SETTINGS,
-                t.accent_edge,
-                crate::update::QUESTION_TITLE
-            ),
-            text(crate::update::QUESTION_BODY)
-                .font(UI_FONT)
-                .size(13)
-                .color(t.text_secondary),
-            buttons(vec![
-                ui::text_button(
-                    t,
-                    "Not now",
-                    Some(msg(PromptMsg::AnswerUpdates(window, false))),
-                    ui::secondary
-                )
-                .into(),
-                ui::text_button(
-                    t,
-                    "Check automatically",
-                    Some(msg(PromptMsg::AnswerUpdates(window, true))),
-                    ui::primary,
-                )
-                .into(),
-            ]),
-        ]
-        .spacing(14)
-        .into(),
         Dialog::KeyFile {
             profile, choosing, ..
         } => column![

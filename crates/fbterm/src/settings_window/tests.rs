@@ -390,6 +390,15 @@ fn the_title_bar_row_is_linux_only_and_writes_the_setting() {
     );
 }
 
+#[test]
+fn the_tabs_row_changes_the_side_at_once() {
+    use fbterm_config::TabBar;
+    let mut s = state();
+    s.update(SettingsMsg::TabBar(TabBar::Left));
+    assert_eq!(s.values.tab_bar, Some(TabBar::Left));
+    assert_eq!(s.take_pending(), [SettingChange::TabBar(TabBar::Left)]);
+}
+
 fn labels(s: &SettingsState) -> Vec<String> {
     s.rate_choices().into_iter().map(|c| c.label).collect()
 }

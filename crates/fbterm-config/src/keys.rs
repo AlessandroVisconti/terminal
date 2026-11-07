@@ -43,6 +43,9 @@ pub enum Action {
     /// Show or hide the file panel of the active tab: Cmd+Shift+E on macOS, Ctrl+Shift+E
     /// elsewhere.
     FilePanel,
+    /// List the tabs down the left side of the window, or along the top again: Cmd+Shift+B on
+    /// macOS, Ctrl+Shift+B elsewhere.
+    VerticalTabs,
     /// Create `settings.toml` if missing and open it with the system's default app (no chord
     /// by default).
     OpenSettingsFile,
@@ -121,7 +124,7 @@ impl ActionGroup {
 
 impl Action {
     /// Every action, in the order the Settings tab lists them.
-    pub const ALL: [Action; 45] = [
+    pub const ALL: [Action; 46] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -158,6 +161,7 @@ impl Action {
         Action::EditSchemes,
         Action::Tunnels,
         Action::FilePanel,
+        Action::VerticalTabs,
         Action::Find,
         Action::FindAll,
         Action::FindNext,
@@ -196,6 +200,7 @@ impl Action {
             Self::ExportProfiles => "export_profiles",
             Self::ImportProfiles => "import_profiles",
             Self::FilePanel => "file_panel",
+            Self::VerticalTabs => "vertical_tabs",
             Self::OpenSettingsFile => "open_settings_file",
             Self::RevealConfigFolder => "reveal_config_folder",
             Self::ExportTab => "export_tab",
@@ -244,6 +249,7 @@ impl Action {
             Self::ExportProfiles => "Export profiles\u{2026}".into(),
             Self::ImportProfiles => "Import profiles\u{2026}".into(),
             Self::FilePanel => "File panel".into(),
+            Self::VerticalTabs => "Vertical tabs".into(),
             Self::OpenSettingsFile => "Open settings file".into(),
             Self::RevealConfigFolder => "Reveal config folder".into(),
             Self::ExportTab => "Export tab to file".into(),
@@ -297,7 +303,8 @@ impl Action {
             | Self::Tunnels
             | Self::ExportProfiles
             | Self::ImportProfiles
-            | Self::FilePanel => ActionGroup::Windows,
+            | Self::FilePanel
+            | Self::VerticalTabs => ActionGroup::Windows,
             Self::Find | Self::FindAll | Self::FindNext | Self::FindPrevious | Self::FindInTab => {
                 ActionGroup::Search
             }
@@ -799,6 +806,7 @@ pub fn default_chord(mac: bool, action: Action) -> Option<Chord> {
         Action::PrevTab => ('[', true),
         Action::Palette => ('p', true),
         Action::FilePanel => ('e', true),
+        Action::VerticalTabs => ('b', true),
         Action::SelectTab(n @ 1..=9) => (char::from(b'0' + n), false),
         Action::EditProfiles => (',', true),
         Action::Settings if !mac => return Some(ctrl_chord(',', false, false)),
@@ -1611,6 +1619,23 @@ mod tests {
         let d = |mac| default_chord(mac, a).map(|c| c.to_config(mac));
         assert_eq!(d(true).as_deref(), Some("shift+cmd+e"));
         assert_eq!(d(false).as_deref(), Some("ctrl+shift+e"));
+        for mac in [true, false] {
+            let chord = default_chord(mac, a).unwrap();
+            assert_eq!(reserved(mac, chord), None);
+        }
+    }
+
+    #[test]
+    fn vertical_tabs_action_has_a_name_a_group_and_a_free_chord() {
+        let a = Action::VerticalTabs;
+        assert!(Action::ALL.contains(&a));
+        assert_eq!(a.name(), "vertical_tabs");
+        assert_eq!(Action::from_name("vertical_tabs"), Some(a));
+        assert_eq!(a.title(), "Vertical tabs");
+        assert_eq!(a.group(), ActionGroup::Windows);
+        let d = |mac| default_chord(mac, a).map(|c| c.to_config(mac));
+        assert_eq!(d(true).as_deref(), Some("shift+cmd+b"));
+        assert_eq!(d(false).as_deref(), Some("ctrl+shift+b"));
         for mac in [true, false] {
             let chord = default_chord(mac, a).unwrap();
             assert_eq!(reserved(mac, chord), None);

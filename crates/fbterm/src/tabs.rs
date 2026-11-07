@@ -98,6 +98,8 @@ impl Pane {
 pub enum Page {
     Profiles,
     Settings,
+    /// The first-launch questions (`crate::welcome`).
+    Welcome,
 }
 
 impl Page {
@@ -105,6 +107,7 @@ impl Page {
         match self {
             Self::Profiles => "Profiles",
             Self::Settings => "Settings",
+            Self::Welcome => "Welcome",
         }
     }
 }
