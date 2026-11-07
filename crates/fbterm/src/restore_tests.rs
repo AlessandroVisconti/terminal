@@ -52,7 +52,37 @@ pub(crate) fn saved(tabs: &[&Profile], active: usize) -> SavedWindow {
         tabs: tabs.iter().map(|p| SavedTab::Profile(p.id)).collect(),
         active,
         size: (900.0, 500.0),
+        sidebar_width: None,
     }
+}
+
+#[test]
+fn relaunch_restores_sidebar_widths_per_window() {
+    use crate::tab_sidebar::SIDEBAR_WIDTH;
+    let a = profile("a");
+    let paths = paths_with(std::slice::from_ref(&a));
+    SavedState {
+        windows: vec![
+            SavedWindow {
+                sidebar_width: Some(300.0),
+                ..saved(&[&a], 0)
+            },
+            saved(&[&a], 0),
+        ],
+        ..Default::default()
+    }
+    .save(&paths.state())
+    .unwrap();
+    let (app, _) = App::build(paths, true);
+    let ids: Vec<_> = app.windows.keys().copied().collect();
+    assert_eq!(ids.len(), 2);
+    assert_eq!(app.sidebar_width_of(ids[0]), 300.0);
+    assert_eq!(app.sidebar_width_of(ids[1]), SIDEBAR_WIDTH);
+    assert_eq!(
+        app.sidebar_widths.len(),
+        1,
+        "the default is not kept in the map"
+    );
 }
 
 fn states(app: &App) -> Vec<Vec<bool>> {
@@ -770,6 +800,7 @@ fn relaunch_restores_panes_and_starts_all_visible() {
             tabs: vec![SavedTab::Profile(b.id), two.clone(), two],
             active: 1,
             size: (900.0, 500.0),
+            sidebar_width: None,
         }],
         ..Default::default()
     }
@@ -809,6 +840,7 @@ fn restored_arrangement_is_saved_back_unchanged() {
             ],
             active: 1,
             size: (900.0, 500.0),
+            sidebar_width: None,
         }],
         ..Default::default()
     };
@@ -832,6 +864,7 @@ fn app_with_split_tab(states: [TabState; 2]) -> (App, iced::window::Id, crate::t
             ],
             active: 0,
             size: (900.0, 500.0),
+            sidebar_width: None,
         }],
         ..Default::default()
     }
@@ -936,6 +969,7 @@ fn merged_layout_survives_save_and_reload() {
             ],
             active: 1,
             size: (900.0, 500.0),
+            sidebar_width: None,
         }],
         ..Default::default()
     }

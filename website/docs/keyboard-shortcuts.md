@@ -41,7 +41,8 @@ These shortcuts cannot be changed; Settings lists them under **Fixed** at the en
 | Close tab or pane (the focused pane; the last pane closes the tab) | `Cmd+W` | `Ctrl+Shift+W` |
 | Next tab | `Cmd+Shift+]` | `Ctrl+Shift+]` |
 | Previous tab | `Cmd+Shift+[` | `Ctrl+Shift+[` |
-| Select tab 1 to 9 | `Cmd+1` to `Cmd+9` | `Ctrl+Shift+1` to `Ctrl+Shift+9` |
+| Select tab 1 to 8 | `Cmd+1` to `Cmd+8` | `Ctrl+Shift+1` to `Ctrl+Shift+8` |
+| Last tab | `Cmd+9` | `Ctrl+Shift+9` |
 | New window | `Cmd+N` | `Ctrl+Shift+N` |
 | Quit (saves the layout first) | `Cmd+Q` | `Ctrl+Shift+Q` |
 | Show or hide the [file panel](file-panel) | `Cmd+Shift+E` | `Ctrl+Shift+E` |
@@ -202,7 +203,8 @@ A shortcut is its modifiers and a key joined by `+`. Modifiers are `ctrl`, `alt`
 | `focus_left`, `focus_right`, `focus_up`, `focus_down` | Move focus to the neighbouring pane |
 | `zoom_in`, `zoom_out`, `zoom_reset` | Text size of the focused pane |
 | `find_in_tab`, `merge_tab`, `move_tile`, `tile_to_tab` | Find in this tab (all panes of the tab), merge this tab into another, move the focused tile, move it to a tab of its own (no default shortcut) |
-| `select_tab_1` to `select_tab_9` | Select tab 1 to 9 |
+| `select_tab_1` to `select_tab_8` | Select tab 1 to 8 |
+| `select_tab_9` | Last tab |
 | `new_window`, `edit_profiles`, `settings`, `edit_schemes`, `tunnels`, `file_panel`, `vertical_tabs` | New window, the profile editor, Settings, the Color schemes window, the tunnels panel (no default shortcut), the file panel (`Cmd+Shift+E`, `Ctrl+Shift+E`), tabs on the left or on top (`Cmd+Shift+B`, `Ctrl+Shift+B`) |
 | `find`, `find_all`, `find_next`, `find_previous` | Find in pane, find in all tabs, older and newer match in the find bar |
 | `palette`, `open_settings_file`, `reveal_config_folder`, `quit` | The palette, the palette actions of the same names, quit |

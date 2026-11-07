@@ -1,5 +1,6 @@
 //! Tabs listed down the left side of the window (`tab_bar = "left"`): the sidebar beside
-//! the content, and switching sides.
+//! the content, its width per window (dragged at its rule, see `sidebar_resize.rs`), the
+//! tooltip a row shows when its title is cut off, and switching sides.
 
 use fbterm_config::keys::{Action, Bindings};
 use fbterm_config::{SettingChange, TabBar};
@@ -22,8 +23,21 @@ use crate::ui::{ICON_X, icon};
 use crate::window::{MIN_TERMINAL_WIDTH, dot, page_icon, snap_rect, state_color};
 use crate::windows::Carry;
 
-/// The sidebar's width, when the window has room for it beside the terminal.
+/// The sidebar's width when the user never changed it, in logical pixels.
 pub(crate) const SIDEBAR_WIDTH: f32 = 220.0;
+/// The narrowest and widest the user can make the sidebar.
+pub(crate) const MIN_SIDEBAR_WIDTH: f32 = 140.0;
+pub(crate) const MAX_SIDEBAR_WIDTH: f32 = 480.0;
+
+/// `width` within [`MIN_SIDEBAR_WIDTH`]..=[`MAX_SIDEBAR_WIDTH`]; [`SIDEBAR_WIDTH`] when it is
+/// not a number.
+pub(crate) fn clamp_sidebar_width(width: f32) -> f32 {
+    if width.is_finite() {
+        width.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
+    } else {
+        SIDEBAR_WIDTH
+    }
+}
 /// A row's height.
 pub(crate) const ROW_HEIGHT: f32 = 32.0;
 /// Space between rows.
@@ -31,13 +45,11 @@ pub(crate) const ROW_SPACING: f32 = 2.0;
 /// Space around the list.
 pub(crate) const LIST_PADDING: f32 = 6.0;
 
-/// How wide the sidebar is in a window `total` wide whose rule is `hairline` wide: its full
-/// width while the terminal keeps [`MIN_TERMINAL_WIDTH`], less in a narrower window, down to
-/// nothing.
-pub(crate) fn sidebar_width(total: f32, hairline: f32) -> f32 {
-    SIDEBAR_WIDTH
-        .min(total - MIN_TERMINAL_WIDTH - hairline)
-        .max(0.0)
+/// How wide the sidebar is drawn in a window `total` wide whose rule is `hairline` wide, when
+/// the user chose `chosen`: that width while the terminal keeps [`MIN_TERMINAL_WIDTH`], less
+/// in a narrower window, down to nothing.
+pub(crate) fn sidebar_width(chosen: f32, total: f32, hairline: f32) -> f32 {
+    chosen.min(total - MIN_TERMINAL_WIDTH - hairline).max(0.0)
 }
 
 /// Where row `index` starts, from the top of the list's content.
@@ -58,6 +70,72 @@ pub(crate) fn reveal(index: usize, offset: f32, viewport: f32) -> Option<f32> {
     } else {
         None
     }
+}
+
+/// The size a row's label is drawn at.
+const LABEL_SIZE: f32 = 12.5;
+/// A row's side padding.
+const ROW_PADDING: f32 = 8.0;
+/// Space between a row's parts.
+const PART_SPACING: f32 = 8.0;
+
+/// The room a row's label gets in a sidebar `sidebar_width` wide, from the parts `row_view`
+/// lays out beside it: the list's and the row's paddings, the stripe (3), the state dot (7) or
+/// a page tab's icon (14), the trouble dot (7) when `trouble`, the close button (12 plus 3 of
+/// padding each side) and the spacing between them. Never below 0.
+pub(crate) fn label_width(sidebar_width: f32, page: bool, trouble: bool) -> f32 {
+    let lead = if page { 14.0 } else { 7.0 };
+    let trouble = if trouble { 7.0 + PART_SPACING } else { 0.0 };
+    let close = 12.0 + 2.0 * 3.0;
+    (sidebar_width
+        - 2.0 * LIST_PADDING
+        - 2.0 * ROW_PADDING
+        - 3.0
+        - PART_SPACING
+        - lead
+        - PART_SPACING
+        - trouble
+        - close
+        - PART_SPACING)
+        .max(0.0)
+}
+
+/// How wide `s` is laid out as a row draws it (the UI font at [`LABEL_SIZE`], one line),
+/// measured through the renderer's font system, in logical pixels.
+pub(crate) fn text_width(s: &str) -> f32 {
+    use iced::advanced::text::Paragraph as _;
+    let paragraph = iced::advanced::graphics::text::Paragraph::with_text(iced::advanced::Text {
+        content: s,
+        bounds: Size::new(f32::INFINITY, f32::INFINITY),
+        size: iced::Pixels(LABEL_SIZE),
+        line_height: iced::advanced::text::LineHeight::default(),
+        font: UI_FONT,
+        align_x: iced::advanced::text::Alignment::Default,
+        align_y: iced::alignment::Vertical::Top,
+        // The row's `text()` leaves shaping at its default: measure the same way.
+        shaping: iced::advanced::text::Shaping::default(),
+        wrapping: iced::advanced::text::Wrapping::None,
+    });
+    paragraph.min_width()
+}
+
+/// Whether a label `text_width` wide is cut off in `label_width` of room.
+pub(crate) fn clipped(text_width: f32, label_width: f32) -> bool {
+    text_width > label_width
+}
+
+/// The tooltip a row shows: its whole `title`, only when the title is cut off in a sidebar
+/// `sidebar_width` wide and tooltips are on (`tips`: nothing is carried, no resize is on and
+/// the window is not modal).
+pub(crate) fn row_tip(
+    tips: bool,
+    sidebar_width: f32,
+    title: &str,
+    page: bool,
+    trouble: bool,
+) -> Option<String> {
+    (tips && clipped(text_width(title), label_width(sidebar_width, page, trouble)))
+        .then(|| title.to_owned())
 }
 
 /// The list's scrollable id in window `window`.
@@ -83,6 +161,8 @@ pub(crate) struct Sidebar<'b> {
     pub scale: f32,
     /// The sidebar's width (see [`sidebar_width`]).
     pub width: f32,
+    /// Rows may show their tooltip: nothing is carried, no resize is on, not modal.
+    pub tips: bool,
 }
 
 /// The sidebar: the rows in a scrollable list, with a rule on the right.
@@ -159,7 +239,7 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
         });
     let label = text(tab.title())
         .font(UI_FONT)
-        .size(12.5)
+        .size(LABEL_SIZE)
         .wrapping(text::Wrapping::None)
         .color(idle.label);
     let close = button(icon(ICON_X, 12.0, idle.icon))
@@ -187,6 +267,19 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
         },
         false,
     );
+    // A title cut off at the sidebar's edge shows whole when the pointer rests on it: the tip
+    // sits on the label cell alone, so the close button keeps its own single bubble.
+    let label_cell = container(label).width(Length::Fill).clip(true);
+    let label_cell: Element<'a, Message> = match row_tip(
+        s.tips,
+        s.width,
+        tab.title(),
+        tab.page.is_some(),
+        tab.trouble(),
+    ) {
+        Some(title) => tip(t, label_cell, title, false),
+        None => label_cell.into(),
+    };
     let mut inner = row![stripe];
     // A page tab has no session to show: it carries its page's icon, as on the bar.
     inner = match tab.page {
@@ -197,16 +290,16 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
         inner = inner.push(dot(t.warning));
     }
     let inner = inner
-        .push(container(label).width(Length::Fill).clip(true))
+        .push(label_cell)
         .push(close)
-        .spacing(8)
+        .spacing(PART_SPACING)
         .height(Length::Fill)
         .align_y(Alignment::Center);
-    button(inner)
+    let row = button(inner)
         .on_press(Message::TabBar(window, TabBarMsg::Select(index)))
         .width(Length::Fill)
         .height(ROW_HEIGHT)
-        .padding(Padding::from([0.0, 8.0]))
+        .padding(Padding::from([0.0, ROW_PADDING]))
         .style(move |_, status| {
             let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
             let background = if active {
@@ -226,8 +319,8 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
                 snap: true,
                 ..button::Style::default()
             }
-        })
-        .into()
+        });
+    row.into()
 }
 
 /// The list of rows inside the scrollable: it handles the drag protocol and the right-click
@@ -432,6 +525,28 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Rows<'_> {
 }
 
 impl App {
+    /// The sidebar width the user chose for window `id`: [`SIDEBAR_WIDTH`] until changed.
+    pub(crate) fn sidebar_width_of(&self, id: window::Id) -> f32 {
+        self.sidebar_widths
+            .get(&id)
+            .copied()
+            .unwrap_or(SIDEBAR_WIDTH)
+    }
+
+    /// The sidebar's rule is being dragged in window `wid`: the chosen width becomes `width`,
+    /// clamped, and the window's rows show no tooltips until the drag ends.
+    pub(crate) fn sidebar_resize(&mut self, wid: window::Id, width: f32) {
+        self.sidebar_widths.insert(wid, clamp_sidebar_width(width));
+        self.sidebar_resizing.insert(wid);
+    }
+
+    /// The drag ended: remember the width.
+    pub(crate) fn sidebar_resize_end(&mut self, wid: window::Id) -> Task<Message> {
+        self.sidebar_resizing.remove(&wid);
+        self.save_state();
+        Task::none()
+    }
+
     /// The list scrolled (or was laid out): remember its offset and visible height, for the
     /// drag's coordinates and for scrolling a selected tab into view.
     pub(crate) fn sidebar_scrolled(&mut self, wid: window::Id, offset: f32, height: f32) {
@@ -494,7 +609,11 @@ mod tests {
     use iced::advanced::widget::Tree;
     use iced::{Pixels, Size, window};
 
-    use super::{LIST_PADDING, ROW_HEIGHT, reveal, row_top, sidebar_width};
+    use super::{
+        LIST_PADDING, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, ROW_HEIGHT, SIDEBAR_WIDTH,
+        clamp_sidebar_width, clipped, label_width, reveal, row_tip, row_top, sidebar_width,
+        text_width,
+    };
     use crate::app::{App, Message, TabBarMsg};
     use crate::restore_tests::{paths_with, profile};
     use crate::tabs::{Pane, Tab, WindowState};
@@ -533,9 +652,112 @@ mod tests {
 
     #[test]
     fn the_sidebar_yields_in_a_narrow_window() {
-        assert_eq!(sidebar_width(1000.0, 1.0), 220.0);
-        assert_eq!(sidebar_width(360.0, 1.0), 159.0);
-        assert_eq!(sidebar_width(150.0, 1.0), 0.0);
+        assert_eq!(sidebar_width(220.0, 1000.0, 1.0), 220.0);
+        assert_eq!(sidebar_width(220.0, 360.0, 1.0), 159.0);
+        assert_eq!(sidebar_width(220.0, 150.0, 1.0), 0.0);
+        // A chosen width larger than the room: the yield applies to the chosen width.
+        assert_eq!(sidebar_width(480.0, 1000.0, 1.0), 480.0);
+        assert_eq!(sidebar_width(480.0, 500.0, 1.0), 299.0);
+    }
+
+    #[test]
+    fn resizing_sets_the_chosen_width_clamped_per_window() {
+        let (mut app, wid) = app_with_tabs(&["a"]);
+        let other = window::Id::unique();
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::SidebarResize(300.0)));
+        assert_eq!(app.sidebar_width_of(wid), 300.0);
+        assert_eq!(
+            app.sidebar_width_of(other),
+            SIDEBAR_WIDTH,
+            "another window keeps its own"
+        );
+        assert!(app.sidebar_resizing.contains(&wid));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::SidebarResize(5000.0)));
+        assert_eq!(app.sidebar_width_of(wid), MAX_SIDEBAR_WIDTH);
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::SidebarResize(1.0)));
+        assert_eq!(app.sidebar_width_of(wid), MIN_SIDEBAR_WIDTH);
+    }
+
+    #[test]
+    fn resize_end_saves() {
+        let (mut app, wid) = app_with_tabs(&["a"]);
+        app.state_saving_enabled = true;
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::SidebarResize(300.0)));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::SidebarResizeEnd));
+        assert!(!app.sidebar_resizing.contains(&wid));
+        let saved = fbterm_config::SavedState::load_or_default(&app.paths.state());
+        assert_eq!(saved.windows.len(), 1);
+        assert_eq!(saved.windows[0].sidebar_width, Some(300.0));
+    }
+
+    #[test]
+    fn the_label_gets_what_the_rows_parts_leave() {
+        let plain = 220.0 - 12.0 - 16.0 - 3.0 - 8.0 - 7.0 - 8.0 - 18.0 - 8.0;
+        assert_eq!(label_width(220.0, false, false), plain);
+        assert_eq!(
+            label_width(220.0, true, false),
+            plain - 7.0,
+            "a page icon is wider"
+        );
+        assert_eq!(
+            label_width(220.0, false, true),
+            plain - 15.0,
+            "a trouble dot and its gap"
+        );
+        assert_eq!(label_width(10.0, false, false), 0.0);
+    }
+
+    #[test]
+    fn a_row_is_clipped_when_its_text_is_wider_than_its_label() {
+        assert!(clipped(150.0, 140.0));
+        assert!(!clipped(140.0, 140.0));
+        assert!(text_width("prod-eu-west-1-bastion-with-a-long-name") > text_width("zsh"));
+        assert_eq!(text_width(""), 0.0);
+    }
+
+    /// The measurement shapes as the row draws (`text()` leaves shaping at its default): a
+    /// title in a joining script lays out to the same width both ways.
+    #[test]
+    fn the_measurement_shapes_as_the_row_draws() {
+        use iced::advanced::text::Paragraph as _;
+        let title = "\u{633}\u{644}\u{627}\u{645} prod";
+        let drawn = iced::advanced::graphics::text::Paragraph::with_text(iced::advanced::Text {
+            content: title,
+            bounds: Size::new(f32::INFINITY, f32::INFINITY),
+            size: iced::Pixels(super::LABEL_SIZE),
+            line_height: iced::advanced::text::LineHeight::default(),
+            font: crate::theme::UI_FONT,
+            align_x: iced::advanced::text::Alignment::Default,
+            align_y: iced::alignment::Vertical::Top,
+            shaping: iced::advanced::text::Shaping::default(),
+            wrapping: iced::advanced::text::Wrapping::None,
+        })
+        .min_width();
+        let measured = text_width(title);
+        assert!(
+            (drawn - measured).abs() < 0.5,
+            "drawn {drawn} vs measured {measured}"
+        );
+    }
+
+    #[test]
+    fn only_a_clipped_row_gets_a_tooltip_and_none_while_tips_are_off() {
+        let long = "prod-eu-west-1-bastion-with-a-very-long-name";
+        assert_eq!(
+            row_tip(true, 140.0, long, false, false),
+            Some(long.to_owned())
+        );
+        assert_eq!(row_tip(true, 220.0, "zsh", false, false), None);
+        assert_eq!(row_tip(false, 140.0, long, false, false), None);
+    }
+
+    #[test]
+    fn the_chosen_width_is_clamped_and_defaults() {
+        assert_eq!(clamp_sidebar_width(10.0), MIN_SIDEBAR_WIDTH);
+        assert_eq!(clamp_sidebar_width(5000.0), MAX_SIDEBAR_WIDTH);
+        assert_eq!(clamp_sidebar_width(300.0), 300.0);
+        assert_eq!(clamp_sidebar_width(f32::NAN), SIDEBAR_WIDTH);
+        assert_eq!(clamp_sidebar_width(f32::INFINITY), SIDEBAR_WIDTH);
     }
 
     #[test]

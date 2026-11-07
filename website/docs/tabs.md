@@ -18,6 +18,8 @@ With many sessions open, a row of tabs runs out of room. Choose **Tabs: Left** i
 
 Everything a tab does works in the column: select, close, reorder by dragging up and down, drop onto a tab's terminal to merge, drop a pane's handle between rows to make it a tab. The column scrolls when the tabs overflow, and the tab you select (by click or shortcut) scrolls into view. The bar keeps its buttons. In a window too narrow for the column and a 200 pixel terminal, the column gives way so the terminal keeps its width.
 
+Drag the column's right edge to make it narrower or wider, from 140 to 480 pixels; each window remembers its own width, and a double-click on the edge puts the default back. A tab whose name is cut off at the edge shows it whole when you hover it. With more than nine tabs, `Cmd+9` (`Ctrl+Shift+9`) selects the last one, wherever it is.
+
 ## The tab menu
 
 Right-click a tab, on the bar or in the column, for a small menu:

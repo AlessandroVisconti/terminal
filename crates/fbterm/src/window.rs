@@ -176,7 +176,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
     let hairline = crate::ui::hairline(app.physical_scale(id));
     let sidebar = app.settings.tabs_left().then(|| {
         let total = app.sizes.get(&id).map_or(SIDEBAR_WIDTH, |&(w, _)| w);
-        crate::tab_sidebar::sidebar_width(total, hairline)
+        crate::tab_sidebar::sidebar_width(app.sidebar_width_of(id), total, hairline)
     });
     let left = sidebar.map_or(0.0, |w| w + hairline);
     let outline_end = app.sizes.get(&id).map(|&(total, _)| match panel.as_ref() {
@@ -314,13 +314,14 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
                 modal,
                 scale: app.physical_scale(id),
                 width,
+                tips: carry.is_none() && !modal && !app.sidebar_resizing.contains(&id),
             };
-            row![
+            let beside = row![
                 crate::tab_sidebar::view(side, &win.tabs, win.active),
                 docked_area
             ]
-            .height(Length::Fill)
-            .into()
+            .height(Length::Fill);
+            crate::sidebar_resize::resizable(id, beside.into(), width, hairline, modal, t)
         }
         None => docked_area,
     });
