@@ -7,6 +7,7 @@ const sidebars: SidebarsConfig = {
     'install-linux',
     'install-windows',
     'profiles',
+    'tabs',
     'tiling',
     'color-schemes',
     'tunnels',

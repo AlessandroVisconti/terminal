@@ -1,6 +1,6 @@
 # Vertical tabs and the tab menu: design
 
-Status: draft for the owner's review, 2026-11-07. Two additions to the tab bar, asked for
+Status: implemented on the feature branch for the owner's review (PR to `develop`), 2026-11-07. Two additions to the tab bar, asked for
 together: tabs listed down the left side of the window, and a right-click menu on a tab that
 copies an SSH profile's saved password; plus a Welcome tab, shown once, that asks which tab
 layout to use and takes over the update-check question from its popup (the Settings and
@@ -33,7 +33,8 @@ reorder it, and right-clicks the `prod` tab to copy its password and paste it in
    today) and `"left"`: the tabs are listed in a sidebar at the left edge of each terminal
    window, under the bar, one row per tab, in tab order, scrolling when they overflow. The bar
    stays (it is the title bar on macOS and carries the drawn window controls elsewhere), with
-   its buttons on the right and nothing where the tabs were.
+   its buttons where they are today, after the (now empty) row of tabs, so they sit above the
+   sidebar.
 2. **Asked once, in a Welcome tab.** A `settings.toml` without `tab_bar` means the question
    was never answered: tabs show on top, and at launch a Welcome page tab opens (like the
    Settings tab) with a drawn preview of each layout to choose from, and the update-check
@@ -93,7 +94,8 @@ reorder it, and right-clicks the `prod` tab to copy its password and paste it in
   window's left edge and runs to the docked panel's rule or the window's right edge; there is
   no active-tab outline, no corners and no flares, because no tab sits on the bar.
 - **The bar** keeps its height, background, drag-to-move area, drawn controls and the buttons
-  on the right (new tab, Profiles, tunnels, files, Settings). The `BarBackground` paints the
+  (new tab, Profiles, tunnels, files, Settings), which keep their place after the empty tab
+  row and so sit above the sidebar. The `BarBackground` paints the
   bar plain, with no active tab to paint around.
 - **A row** is the full width of the sidebar, 32 px high, with 8 px side padding: the accent
   stripe (3 by 14 px), the state dot, the trouble dot when the tab is in trouble, the title
@@ -223,7 +225,8 @@ reorder it, and right-clicks the `prod` tab to copy its password and paste it in
 - The side is a global setting `tab_bar = "top" | "left"`, absent until answered (counts as
   `"top"`), not per window, changed in Settings (Appearance, `Tabs` row), by the
   `Vertical tabs` action (Cmd+Shift+B / Ctrl+Shift+B) and by the palette.
-- The bar stays with its buttons, empty where the tabs were; the sidebar holds only tabs.
+- The bar stays with its buttons in their usual place (above the sidebar, where the tab row
+  started), empty where the tabs were; the sidebar holds only tabs.
 - The sidebar is 220 px wide, not resizable, full height under the bar, with a right rule; in
   a window too narrow for it plus a 200 px terminal it yields width rather than the terminal
   (no change to the minimum window size).
