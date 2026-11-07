@@ -2,6 +2,21 @@
 
 All notable changes to featherbit terminal (`fbterm`). The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each version links to its GitHub release, where the downloads are.
 
+## [0.7.1] - 2026-11-07
+
+### Added
+
+- A `Copy password` shortcut, `Cmd+Shift+K` (`Ctrl+Shift+K` on Linux and Windows), copying the saved password of the active tab's SSH profile as the tab menu does; also in the palette and in Settings ([#67](https://github.com/featherbitplatform/terminal/pull/67)).
+- The tab menu shows an item's shortcut when the key would do the same: on the active tab, beside `Copy password`, and beside `Close tab` when the tab has one pane ([#67](https://github.com/featherbitplatform/terminal/pull/67)).
+
+### Changed
+
+- The `Close pane` action is now `Close tab or pane`, since it closes the tab when the focused pane is its last ([#67](https://github.com/featherbitplatform/terminal/pull/67)).
+
+### Fixed
+
+- The right-click menu's item titles sit on the vertical middle of their row instead of along its top ([#66](https://github.com/featherbitplatform/terminal/pull/66)).
+
 ## [0.7.0] - 2026-11-07
 
 With contributions from [AlessandroVisconti](https://github.com/AlessandroVisconti): the Settings and Profiles page tabs, profile icons and the tab controls ([#57](https://github.com/featherbitplatform/terminal/pull/57), [#58](https://github.com/featherbitplatform/terminal/pull/58), [#61](https://github.com/featherbitplatform/terminal/pull/61)).
@@ -137,6 +152,7 @@ The first release: the daily driver milestone, macOS only.
 - Compact scrollback history: a live `scrollback_lines` setting with a Settings confirmation, and memory given back when tabs close ([#2](https://github.com/featherbitplatform/terminal/pull/2)).
 - Unsigned macOS `.dmg` packaging and the release workflow ([#1](https://github.com/featherbitplatform/terminal/pull/1)).
 
+[0.7.1]: https://github.com/featherbitplatform/terminal/releases/tag/v0.7.1
 [0.7.0]: https://github.com/featherbitplatform/terminal/releases/tag/v0.7.0
 [0.6.4]: https://github.com/featherbitplatform/terminal/releases/tag/v0.6.4
 [0.6.3]: https://github.com/featherbitplatform/terminal/releases/tag/v0.6.3
