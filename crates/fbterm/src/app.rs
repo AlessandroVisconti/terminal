@@ -1,6 +1,6 @@
 //! Application state and the update loop: windows of tabs, each tab one session.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
@@ -58,6 +58,11 @@ pub enum TabBarMsg {
         offset: f32,
         height: f32,
     },
+    /// The sidebar's rule is being dragged: its new chosen width (window logical pixels,
+    /// unclamped).
+    SidebarResize(f32),
+    /// The drag ended (or a double-click reset the width): remember it.
+    SidebarResizeEnd,
     New,
     Profiles,
     /// The tunnels indicator: shows or hides the window's tunnels panel.
@@ -278,6 +283,8 @@ pub struct App {
     pub(crate) sidebar_shown: HashMap<window::Id, TabId>,
     /// Each window's chosen sidebar width (see `tab_sidebar.rs`); absent: the default.
     pub(crate) sidebar_widths: HashMap<window::Id, f32>,
+    /// Windows whose sidebar rule is being dragged (no row tooltips meanwhile).
+    pub(crate) sidebar_resizing: HashSet<window::Id>,
     /// How many passwords the tab menu copied this run: a copy's clipboard clear runs only
     /// while it is still the latest (see `tab_menu.rs`).
     pub(crate) clip_generation: u64,
@@ -691,6 +698,7 @@ impl App {
             sidebar_scroll: HashMap::new(),
             sidebar_shown: HashMap::new(),
             sidebar_widths: HashMap::new(),
+            sidebar_resizing: HashSet::new(),
             clip_generation: 0,
             profiles_error,
             paths,
@@ -1193,6 +1201,11 @@ impl App {
                         self.sidebar_scrolled(wid, offset, height);
                         Task::none()
                     }
+                    TabBarMsg::SidebarResize(width) => {
+                        self.sidebar_resize(wid, width);
+                        Task::none()
+                    }
+                    TabBarMsg::SidebarResizeEnd => self.sidebar_resize_end(wid),
                     TabBarMsg::New => self.action(Some(wid), Action::NewTab),
                     TabBarMsg::Profiles => self.action(Some(wid), Action::EditProfiles),
                     TabBarMsg::Tunnels => self.action(Some(wid), Action::Tunnels),
@@ -1219,6 +1232,7 @@ impl App {
                 self.sidebar_scroll.remove(&id);
                 self.sidebar_shown.remove(&id);
                 self.sidebar_widths.remove(&id);
+                self.sidebar_resizing.remove(&id);
                 // Closed by the OS button or Quit: same teardown as closing the tab.
                 let pages: Vec<Page> = self
                     .windows

@@ -451,6 +451,20 @@ impl App {
             .unwrap_or(SIDEBAR_WIDTH)
     }
 
+    /// The sidebar's rule is being dragged in window `wid`: the chosen width becomes `width`,
+    /// clamped, and the window's rows show no tooltips until the drag ends.
+    pub(crate) fn sidebar_resize(&mut self, wid: window::Id, width: f32) {
+        self.sidebar_widths.insert(wid, clamp_sidebar_width(width));
+        self.sidebar_resizing.insert(wid);
+    }
+
+    /// The drag ended: remember the width.
+    pub(crate) fn sidebar_resize_end(&mut self, wid: window::Id) -> Task<Message> {
+        self.sidebar_resizing.remove(&wid);
+        self.save_state();
+        Task::none()
+    }
+
     /// The list scrolled (or was laid out): remember its offset and visible height, for the
     /// drag's coordinates and for scrolling a selected tab into view.
     pub(crate) fn sidebar_scrolled(&mut self, wid: window::Id, offset: f32, height: f32) {
@@ -561,6 +575,36 @@ mod tests {
         // A chosen width larger than the room: the yield applies to the chosen width.
         assert_eq!(sidebar_width(480.0, 1000.0, 1.0), 480.0);
         assert_eq!(sidebar_width(480.0, 500.0, 1.0), 299.0);
+    }
+
+    #[test]
+    fn resizing_sets_the_chosen_width_clamped_per_window() {
+        let (mut app, wid) = app_with_tabs(&["a"]);
+        let other = window::Id::unique();
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::SidebarResize(300.0)));
+        assert_eq!(app.sidebar_width_of(wid), 300.0);
+        assert_eq!(
+            app.sidebar_width_of(other),
+            SIDEBAR_WIDTH,
+            "another window keeps its own"
+        );
+        assert!(app.sidebar_resizing.contains(&wid));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::SidebarResize(5000.0)));
+        assert_eq!(app.sidebar_width_of(wid), MAX_SIDEBAR_WIDTH);
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::SidebarResize(1.0)));
+        assert_eq!(app.sidebar_width_of(wid), MIN_SIDEBAR_WIDTH);
+    }
+
+    #[test]
+    fn resize_end_saves() {
+        let (mut app, wid) = app_with_tabs(&["a"]);
+        app.state_saving_enabled = true;
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::SidebarResize(300.0)));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::SidebarResizeEnd));
+        assert!(!app.sidebar_resizing.contains(&wid));
+        let saved = fbterm_config::SavedState::load_or_default(&app.paths.state());
+        assert_eq!(saved.windows.len(), 1);
+        assert_eq!(saved.windows[0].sidebar_width, Some(300.0));
     }
 
     #[test]
