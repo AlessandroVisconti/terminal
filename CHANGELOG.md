@@ -2,6 +2,12 @@
 
 All notable changes to featherbit terminal (`fbterm`). The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each version links to its GitHub release, where the downloads are.
 
+## [0.8.2] - 2026-11-08
+
+### Fixed
+
+- macOS 26 and later: windows now have the same rounded corners as the windows around them. The macOS app is built with Xcode 26, which the system needs before it gives an app its current window design; releases since 0.7.0 were built with an older Xcode and kept the smaller corners ([#77](https://github.com/featherbitplatform/terminal/pull/77)).
+
 ## [0.8.1] - 2026-11-07
 
 ### Fixed
@@ -175,6 +181,7 @@ The first release: the daily driver milestone, macOS only.
 - Compact scrollback history: a live `scrollback_lines` setting with a Settings confirmation, and memory given back when tabs close ([#2](https://github.com/featherbitplatform/terminal/pull/2)).
 - Unsigned macOS `.dmg` packaging and the release workflow ([#1](https://github.com/featherbitplatform/terminal/pull/1)).
 
+[0.8.2]: https://github.com/featherbitplatform/terminal/releases/tag/v0.8.2
 [0.8.1]: https://github.com/featherbitplatform/terminal/releases/tag/v0.8.1
 [0.8.0]: https://github.com/featherbitplatform/terminal/releases/tag/v0.8.0
 [0.7.1]: https://github.com/featherbitplatform/terminal/releases/tag/v0.7.1
