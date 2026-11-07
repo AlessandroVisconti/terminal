@@ -438,7 +438,7 @@ mod tests {
         let away = Point::new(10.0, at.y + 10.0);
         let below_last = Point::new(10.0, 102.0 + 25.0); // row 3's lower half: gap 4
         let carried = |ids: &[TabId]| Some(Carry::Tab(ids[1]));
-        let (ids, messages) = drive_mapped_with(
+        let (_, messages) = drive_mapped_with(
             carried,
             Some((0, 2)),
             false,

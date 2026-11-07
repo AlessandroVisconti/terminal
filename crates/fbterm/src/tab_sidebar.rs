@@ -1,6 +1,7 @@
 //! Tabs listed down the left side of the window (`tab_bar = "left"`): the sidebar beside
 //! the content, its width per window (dragged at its rule, see `sidebar_resize.rs`), the
-//! tooltip a row shows when its title is cut off, and switching sides.
+//! tooltip a row shows when its title is cut off, the group headers the rows fold under
+//! (`tab_groups.rs`), and switching sides.
 
 use fbterm_config::keys::{Action, Bindings};
 use fbterm_config::{SettingChange, TabBar};
