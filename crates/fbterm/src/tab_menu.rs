@@ -9,7 +9,8 @@ use iced::{Point, Task, window};
 use zeroize::Zeroizing;
 
 use crate::app::{App, Delivered, Message};
-use crate::context_menu::ContextMenu;
+use crate::context_menu::{ContextMenu, MenuItem};
+use crate::keys::Action;
 use crate::tabs::TabId;
 
 /// How long a copied password stays on the clipboard before fbterm clears it, if it is
@@ -171,6 +172,11 @@ impl App {
     /// A right-click on the tab at `index` of window `wid`: its menu at `at`, with
     /// `Copy password` when the tab's focused pane is a password SSH profile's. Not while
     /// something covers the window (see [`App::menu_covered`]). The tab is not selected.
+    ///
+    /// An item shows its chord only when the key would do the same to this tab, so only on
+    /// the active tab (the chords act on it): the copy chord copies the same password, and
+    /// the close chord closes the tab only when the tab has one pane (with more it closes
+    /// the focused pane).
     pub(crate) fn open_tab_menu(
         &mut self,
         wid: window::Id,
@@ -183,10 +189,31 @@ impl App {
         let Some(tab) = self.windows.get(&wid).and_then(|w| w.tabs.get(index)) else {
             return Task::none();
         };
-        let tab = tab.id;
+        let (tab, panes) = (tab.id, tab.panes.len());
+        let active = self.windows[&wid].active == index;
         let password = self.tab_password_profile(wid, tab).is_some();
-        self.context_menu = Some(ContextMenu::for_tab(wid, tab, at, password));
+        let mut chords = Vec::new();
+        if active {
+            let shown = [
+                (MenuItem::CopyPassword, Action::CopyPassword, password),
+                (MenuItem::CloseTab, Action::CloseTab, panes == 1),
+            ];
+            for (item, action, same) in shown {
+                if let Some(label) = self.bindings.label(action).filter(|_| same) {
+                    chords.push((item, label));
+                }
+            }
+        }
+        self.context_menu = Some(ContextMenu::for_tab(wid, tab, at, password, chords));
         Task::none()
+    }
+
+    /// The `Copy password` shortcut: the active tab's, as the tab menu's item would.
+    pub(crate) fn copy_active_tab_password(&mut self, wid: window::Id) -> Task<Message> {
+        match self.windows.get(&wid).and_then(|w| w.active_tab()) {
+            Some(tab) => self.copy_password(wid, tab.id),
+            None => Task::none(),
+        }
     }
 
     /// The profile whose password `Copy password` would copy for `tab`: the tab's focused
@@ -218,6 +245,8 @@ mod tests {
     use super::{TabMenuMsg, clear_now, should_clear};
     use crate::app::{App, Message, TabBarMsg};
     use crate::context_menu::{MenuItem, MenuMsg};
+    use crate::keys::Action;
+    use crate::layout::Side;
     use crate::restore_tests::{paths_with, profile};
     use crate::saved_secrets::Purpose;
     use crate::tabs::{Page, Pane, Tab, WindowState};
@@ -295,6 +324,80 @@ mod tests {
             app.context_menu.is_some(),
             "an unknown index changes nothing"
         );
+    }
+
+    /// Two panes side by side in one tab, as a split would make them.
+    fn two_panes(first: Pane, second: Pane) -> Tab {
+        let (a, b) = (first.id, second.id);
+        let mut tab = Tab::single(first);
+        tab.layout.split(a, Side::Right, b);
+        tab.panes.push(second);
+        tab
+    }
+
+    #[test]
+    fn the_menu_shows_a_chord_only_where_the_key_does_what_the_item_does() {
+        let (ssh, local) = (ssh_password_profile("prod"), profile("sh"));
+        let (mut app, wid) = app_with_tabs(&[ssh.clone(), local.clone()], &[ssh.clone(), local]);
+        let close = app.bindings.label(Action::CloseTab).unwrap();
+        let password = app.bindings.label(Action::CopyPassword).unwrap();
+        // The active tab with one pane: the chords do exactly what the items do.
+        let _ = app.open_tab_menu(wid, 0, Point::ORIGIN);
+        let m = app.context_menu.clone().unwrap();
+        assert_eq!(
+            m.chord_label(MenuItem::CloseTab).as_deref(),
+            Some(close.as_str())
+        );
+        assert_eq!(
+            m.chord_label(MenuItem::CopyPassword).as_deref(),
+            Some(password.as_str())
+        );
+        // A background tab: the chords act on the active tab, so no hint.
+        let _ = app.open_tab_menu(wid, 1, Point::ORIGIN);
+        let m = app.context_menu.clone().unwrap();
+        assert!(m.chord_label(MenuItem::CloseTab).is_none());
+        app.windows.get_mut(&wid).unwrap().active = 1;
+        let _ = app.open_tab_menu(wid, 0, Point::ORIGIN);
+        let m = app.context_menu.clone().unwrap();
+        assert!(m.chord_label(MenuItem::CloseTab).is_none());
+        assert!(m.chord_label(MenuItem::CopyPassword).is_none());
+        // The active tab split in two: the close chord closes a pane, not the tab; the
+        // password one still copies the focused pane's.
+        let w = app.windows.get_mut(&wid).unwrap();
+        w.tabs[0] = two_panes(Pane::for_profile(&ssh), Pane::for_profile(&ssh));
+        w.active = 0;
+        let _ = app.open_tab_menu(wid, 0, Point::ORIGIN);
+        let m = app.context_menu.clone().unwrap();
+        assert!(m.chord_label(MenuItem::CloseTab).is_none());
+        assert_eq!(
+            m.chord_label(MenuItem::CopyPassword).as_deref(),
+            Some(password.as_str())
+        );
+        // An unbound action shows nothing.
+        app.bindings = fbterm_config::keys::Bindings::current(
+            &[(Action::CloseTab, None)].into_iter().collect(),
+        );
+        app.windows.get_mut(&wid).unwrap().active = 1;
+        let _ = app.open_tab_menu(wid, 1, Point::ORIGIN);
+        let m = app.context_menu.clone().unwrap();
+        assert!(m.chord_label(MenuItem::CloseTab).is_none());
+    }
+
+    #[test]
+    fn the_copy_password_shortcut_copies_the_active_tabs_password() {
+        let (ssh, local) = (ssh_password_profile("prod"), profile("sh"));
+        let (mut app, wid) = app_with_tabs(&[ssh.clone(), local.clone()], &[local, ssh.clone()]);
+        app.blocking_inline = true;
+        app.secrets
+            .set(&ssh.id, SecretKind::Password, "s3cret")
+            .unwrap();
+        // The active tab is the local profile's: nothing to copy, nothing said.
+        let _ = app.update(Message::Shortcut(wid, Action::CopyPassword));
+        assert_eq!(app.clip_generation, 0);
+        assert!(app.visible_notices().is_empty());
+        app.windows.get_mut(&wid).unwrap().active = 1;
+        let _ = app.update(Message::Shortcut(wid, Action::CopyPassword));
+        assert_eq!(app.clip_generation, 1);
     }
 
     #[test]

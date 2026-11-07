@@ -38,7 +38,7 @@ These shortcuts cannot be changed; Settings lists them under **Fixed** at the en
 | Action | macOS | Linux and Windows |
 | --- | --- | --- |
 | New tab | `Cmd+T` | `Ctrl+Shift+T` |
-| Close pane (the last pane closes the tab) | `Cmd+W` | `Ctrl+Shift+W` |
+| Close tab or pane (the focused pane; the last pane closes the tab) | `Cmd+W` | `Ctrl+Shift+W` |
 | Next tab | `Cmd+Shift+]` | `Ctrl+Shift+]` |
 | Previous tab | `Cmd+Shift+[` | `Ctrl+Shift+[` |
 | Select tab 1 to 9 | `Cmd+1` to `Cmd+9` | `Ctrl+Shift+1` to `Ctrl+Shift+9` |
@@ -46,6 +46,7 @@ These shortcuts cannot be changed; Settings lists them under **Fixed** at the en
 | Quit (saves the layout first) | `Cmd+Q` | `Ctrl+Shift+Q` |
 | Show or hide the [file panel](file-panel) | `Cmd+Shift+E` | `Ctrl+Shift+E` |
 | Tabs down the left side, or back along the top ([vertical tabs](tabs#tabs-on-the-left)) | `Cmd+Shift+B` | `Ctrl+Shift+B` |
+| Copy the saved password of the active tab's SSH profile ([copying a password](saved-secrets#copying-a-password)) | `Cmd+Shift+K` | `Ctrl+Shift+K` |
 
 ## Panes
 
@@ -55,7 +56,7 @@ A tab can be split into panes, each with its own session. Splitting opens the fo
 | --- | --- | --- |
 | Split right | `Cmd+D` | `Ctrl+Shift+D` |
 | Split down | `Cmd+Shift+D` | `Ctrl+Shift+Alt+D` |
-| Close pane | `Cmd+W` | `Ctrl+Shift+W` |
+| Close tab or pane | `Cmd+W` | `Ctrl+Shift+W` |
 | Focus the pane to the left, right, above, below | `Cmd+Option+Left`, `Right`, `Up`, `Down` | `Ctrl+Alt+Left`, `Right`, `Up`, `Down` |
 | Zoom in | `Cmd+=` | `Ctrl+Shift+=` |
 | Zoom out | `Cmd+-` | `Ctrl+Shift+-` |
@@ -118,7 +119,7 @@ These actions are listed after your profiles, each with its shortcut when it has
 | --- | --- |
 | New tab | Choose a profile to open in a new tab. With no local profile to start, picking it from the palette opens the Profiles tab instead. |
 | New window | Open a new window. |
-| Close pane | Close the focused pane; the last pane closes the tab. |
+| Close tab or pane | Close the focused pane; the last pane closes the tab. |
 | Split right | Open the focused pane's profile in a new pane to its right. |
 | Split down | Open the focused pane's profile in a new pane below it. |
 | Maximize pane | Let the focused pane fill the tab, or restore the others. |
@@ -139,6 +140,7 @@ These actions are listed after your profiles, each with its shortcut when it has
 | Open settings file | Open [`settings.toml`](files#settingstoml) in your default app. If the file does not exist yet, it is first created with every setting written out as a comment, showing its default. |
 | Reveal config folder | Show the config folder in your file manager, with `settings.toml` selected on macOS when it exists. The folder is created if it is missing. |
 | Export tab to file… | Save the active tab's text to a file; see [Exporting a tab](#exporting-a-tab). |
+| Copy password | Put the saved password of the active tab's SSH profile on the clipboard, as the [tab menu](tabs#the-tab-menu) does; nothing happens for a key, agent or local profile. |
 | Export profiles… | Open the [export window](export-import#exporting). It has no shortcut by default. |
 | Import profiles… | Open the [import window](export-import#importing). It has no shortcut by default. |
 | Quit | Save the layout and quit. |
@@ -191,8 +193,9 @@ A shortcut is its modifiers and a key joined by `+`. Modifiers are `ctrl`, `alt`
 
 | Name | Action |
 | --- | --- |
-| `new_tab`, `close_tab`, `next_tab`, `previous_tab` | New tab, close pane (the tab when it is the last), next and previous tab |
+| `new_tab`, `close_tab`, `next_tab`, `previous_tab` | New tab, close tab or pane (the focused pane; the tab when it is the last), next and previous tab |
 | `export_tab` | Export tab to file (no default shortcut) |
+| `copy_password` | Copy the saved password of the active tab's SSH profile (`Cmd+Shift+K`, `Ctrl+Shift+K`) |
 | `export_profiles`, `import_profiles` | Export and import profiles (no default shortcuts) |
 | `duplicate_profile` | Duplicate profile (no default shortcut) |
 | `split_right`, `split_down`, `maximize_pane` | Split the focused pane, maximize it |

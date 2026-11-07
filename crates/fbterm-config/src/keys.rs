@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Action {
     NewTab,
+    /// Close the focused pane of the active tab; the last pane closes the tab (so in a
+    /// single-pane tab, the common case, it closes the tab).
     CloseTab,
     NextTab,
     PrevTab,
@@ -53,6 +55,9 @@ pub enum Action {
     RevealConfigFolder,
     /// Save the active tab's text to a file (no chord by default).
     ExportTab,
+    /// Copy the saved password of the active tab's password SSH profile to the clipboard,
+    /// as the tab menu's `Copy password` does: Cmd+Shift+K on macOS, Ctrl+Shift+K elsewhere.
+    CopyPassword,
     /// The active tab's find bar: Cmd+F on macOS, Ctrl+Shift+F elsewhere.
     Find,
     /// The search over every tab: Cmd+Shift+F on macOS, Ctrl+Alt+F elsewhere.
@@ -124,7 +129,7 @@ impl ActionGroup {
 
 impl Action {
     /// Every action, in the order the Settings tab lists them.
-    pub const ALL: [Action; 46] = [
+    pub const ALL: [Action; 47] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -139,6 +144,7 @@ impl Action {
         Action::SelectTab(8),
         Action::SelectTab(9),
         Action::ExportTab,
+        Action::CopyPassword,
         Action::MergeTab,
         Action::SplitRight,
         Action::SplitDown,
@@ -204,6 +210,7 @@ impl Action {
             Self::OpenSettingsFile => "open_settings_file",
             Self::RevealConfigFolder => "reveal_config_folder",
             Self::ExportTab => "export_tab",
+            Self::CopyPassword => "copy_password",
             Self::Find => "find",
             Self::FindAll => "find_all",
             Self::FindNext => "find_next",
@@ -234,7 +241,7 @@ impl Action {
     pub fn title(self) -> String {
         match self {
             Self::NewTab => "New tab".into(),
-            Self::CloseTab => "Close pane".into(),
+            Self::CloseTab => "Close tab or pane".into(),
             Self::NextTab => "Next tab".into(),
             Self::PrevTab => "Previous tab".into(),
             Self::SelectTab(n) => format!("Tab {n}"),
@@ -253,6 +260,7 @@ impl Action {
             Self::OpenSettingsFile => "Open settings file".into(),
             Self::RevealConfigFolder => "Reveal config folder".into(),
             Self::ExportTab => "Export tab to file".into(),
+            Self::CopyPassword => "Copy password".into(),
             Self::Find => "Find in pane".into(),
             Self::FindAll => "Find in all tabs".into(),
             Self::FindNext => "Older match".into(),
@@ -282,6 +290,7 @@ impl Action {
             | Self::PrevTab
             | Self::SelectTab(_)
             | Self::ExportTab
+            | Self::CopyPassword
             | Self::MergeTab => ActionGroup::Tabs,
             Self::SplitRight
             | Self::SplitDown
@@ -807,6 +816,7 @@ pub fn default_chord(mac: bool, action: Action) -> Option<Chord> {
         Action::Palette => ('p', true),
         Action::FilePanel => ('e', true),
         Action::VerticalTabs => ('b', true),
+        Action::CopyPassword => ('k', true),
         Action::SelectTab(n @ 1..=9) => (char::from(b'0' + n), false),
         Action::EditProfiles => (',', true),
         Action::Settings if !mac => return Some(ctrl_chord(',', false, false)),
@@ -1590,11 +1600,30 @@ mod tests {
             assert_eq!(action.title(), title);
         }
         assert_eq!(Action::CloseTab.name(), "close_tab");
-        assert_eq!(Action::CloseTab.title(), "Close pane");
+        assert_eq!(Action::CloseTab.title(), "Close tab or pane");
         assert_eq!(Action::SplitRight.group(), ActionGroup::Panes);
         assert_eq!(Action::MaximizePane.group(), ActionGroup::Panes);
         assert_eq!(ActionGroup::ALL[1], ActionGroup::Panes, "after Tabs");
         assert_eq!(ActionGroup::Panes.title(), "Panes");
+    }
+
+    /// `Copy password` is a bindable action of the Tabs group: Shift+Cmd+K on macOS,
+    /// Ctrl+Shift+K elsewhere (K is no key programs in the terminal rely on).
+    #[test]
+    fn copy_password_is_an_action_with_a_default_chord() {
+        let a = Action::CopyPassword;
+        assert!(Action::ALL.contains(&a));
+        assert_eq!(a.name(), "copy_password");
+        assert_eq!(Action::from_name("copy_password"), Some(a));
+        assert_eq!(a.title(), "Copy password");
+        assert_eq!(a.group(), ActionGroup::Tabs);
+        assert_eq!(default_chord(true, a), Some(c("shift+cmd+k")));
+        assert_eq!(default_chord(false, a), Some(c("ctrl+shift+k")));
+        assert_eq!(Bindings::defaults(true).label(a).as_deref(), Some("⇧⌘K"));
+        assert_eq!(
+            Bindings::defaults(false).label(a).as_deref(),
+            Some("Ctrl+Shift+K")
+        );
     }
 
     #[test]
