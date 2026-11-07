@@ -1,5 +1,6 @@
 //! Tabs listed down the left side of the window (`tab_bar = "left"`): the sidebar beside
-//! the content, and switching sides.
+//! the content, its width per window (dragged at its rule, see `sidebar_resize.rs`), the
+//! tooltip a row shows when its title is cut off, and switching sides.
 
 use fbterm_config::keys::{Action, Bindings};
 use fbterm_config::{SettingChange, TabBar};
@@ -71,6 +72,71 @@ pub(crate) fn reveal(index: usize, offset: f32, viewport: f32) -> Option<f32> {
     }
 }
 
+/// The size a row's label is drawn at.
+const LABEL_SIZE: f32 = 12.5;
+/// A row's side padding.
+const ROW_PADDING: f32 = 8.0;
+/// Space between a row's parts.
+const PART_SPACING: f32 = 8.0;
+
+/// The room a row's label gets in a sidebar `sidebar_width` wide, from the parts `row_view`
+/// lays out beside it: the list's and the row's paddings, the stripe (3), the state dot (7) or
+/// a page tab's icon (14), the trouble dot (7) when `trouble`, the close button (12 plus 3 of
+/// padding each side) and the spacing between them. Never below 0.
+pub(crate) fn label_width(sidebar_width: f32, page: bool, trouble: bool) -> f32 {
+    let lead = if page { 14.0 } else { 7.0 };
+    let trouble = if trouble { 7.0 + PART_SPACING } else { 0.0 };
+    let close = 12.0 + 2.0 * 3.0;
+    (sidebar_width
+        - 2.0 * LIST_PADDING
+        - 2.0 * ROW_PADDING
+        - 3.0
+        - PART_SPACING
+        - lead
+        - PART_SPACING
+        - trouble
+        - close
+        - PART_SPACING)
+        .max(0.0)
+}
+
+/// How wide `s` is laid out as a row draws it (the UI font at [`LABEL_SIZE`], one line),
+/// measured through the renderer's font system, in logical pixels.
+pub(crate) fn text_width(s: &str) -> f32 {
+    use iced::advanced::text::Paragraph as _;
+    let paragraph = iced::advanced::graphics::text::Paragraph::with_text(iced::advanced::Text {
+        content: s,
+        bounds: Size::new(f32::INFINITY, f32::INFINITY),
+        size: iced::Pixels(LABEL_SIZE),
+        line_height: iced::advanced::text::LineHeight::default(),
+        font: UI_FONT,
+        align_x: iced::advanced::text::Alignment::Default,
+        align_y: iced::alignment::Vertical::Top,
+        shaping: iced::advanced::text::Shaping::Basic,
+        wrapping: iced::advanced::text::Wrapping::None,
+    });
+    paragraph.min_width()
+}
+
+/// Whether a label `text_width` wide is cut off in `label_width` of room.
+pub(crate) fn clipped(text_width: f32, label_width: f32) -> bool {
+    text_width > label_width
+}
+
+/// The tooltip a row shows: its whole `title`, only when the title is cut off in a sidebar
+/// `sidebar_width` wide and tooltips are on (`tips`: nothing is carried, no resize is on and
+/// the window is not modal).
+pub(crate) fn row_tip(
+    tips: bool,
+    sidebar_width: f32,
+    title: &str,
+    page: bool,
+    trouble: bool,
+) -> Option<String> {
+    (tips && clipped(text_width(title), label_width(sidebar_width, page, trouble)))
+        .then(|| title.to_owned())
+}
+
 /// The list's scrollable id in window `window`.
 pub(crate) fn scroll_id(window: window::Id) -> iced::widget::Id {
     iced::widget::Id::from(format!("tabs-{window:?}"))
@@ -94,6 +160,8 @@ pub(crate) struct Sidebar<'b> {
     pub scale: f32,
     /// The sidebar's width (see [`sidebar_width`]).
     pub width: f32,
+    /// Rows may show their tooltip: nothing is carried, no resize is on, not modal.
+    pub tips: bool,
 }
 
 /// The sidebar: the rows in a scrollable list, with a rule on the right.
@@ -170,7 +238,7 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
         });
     let label = text(tab.title())
         .font(UI_FONT)
-        .size(12.5)
+        .size(LABEL_SIZE)
         .wrapping(text::Wrapping::None)
         .color(idle.label);
     let close = button(icon(ICON_X, 12.0, idle.icon))
@@ -210,14 +278,14 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
     let inner = inner
         .push(container(label).width(Length::Fill).clip(true))
         .push(close)
-        .spacing(8)
+        .spacing(PART_SPACING)
         .height(Length::Fill)
         .align_y(Alignment::Center);
-    button(inner)
+    let row = button(inner)
         .on_press(Message::TabBar(window, TabBarMsg::Select(index)))
         .width(Length::Fill)
         .height(ROW_HEIGHT)
-        .padding(Padding::from([0.0, 8.0]))
+        .padding(Padding::from([0.0, ROW_PADDING]))
         .style(move |_, status| {
             let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
             let background = if active {
@@ -237,8 +305,18 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
                 snap: true,
                 ..button::Style::default()
             }
-        })
-        .into()
+        });
+    // A title cut off at the sidebar's edge shows whole on hover.
+    match row_tip(
+        s.tips,
+        s.width,
+        tab.title(),
+        tab.page.is_some(),
+        tab.trouble(),
+    ) {
+        Some(label) => tip(t, row, label, false),
+        None => row.into(),
+    }
 }
 
 /// The list of rows inside the scrollable: it handles the drag protocol and the right-click
@@ -529,7 +607,8 @@ mod tests {
 
     use super::{
         LIST_PADDING, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, ROW_HEIGHT, SIDEBAR_WIDTH,
-        clamp_sidebar_width, reveal, row_top, sidebar_width,
+        clamp_sidebar_width, clipped, label_width, reveal, row_tip, row_top, sidebar_width,
+        text_width,
     };
     use crate::app::{App, Message, TabBarMsg};
     use crate::restore_tests::{paths_with, profile};
@@ -605,6 +684,42 @@ mod tests {
         let saved = fbterm_config::SavedState::load_or_default(&app.paths.state());
         assert_eq!(saved.windows.len(), 1);
         assert_eq!(saved.windows[0].sidebar_width, Some(300.0));
+    }
+
+    #[test]
+    fn the_label_gets_what_the_rows_parts_leave() {
+        let plain = 220.0 - 12.0 - 16.0 - 3.0 - 8.0 - 7.0 - 8.0 - 18.0 - 8.0;
+        assert_eq!(label_width(220.0, false, false), plain);
+        assert_eq!(
+            label_width(220.0, true, false),
+            plain - 7.0,
+            "a page icon is wider"
+        );
+        assert_eq!(
+            label_width(220.0, false, true),
+            plain - 15.0,
+            "a trouble dot and its gap"
+        );
+        assert_eq!(label_width(10.0, false, false), 0.0);
+    }
+
+    #[test]
+    fn a_row_is_clipped_when_its_text_is_wider_than_its_label() {
+        assert!(clipped(150.0, 140.0));
+        assert!(!clipped(140.0, 140.0));
+        assert!(text_width("prod-eu-west-1-bastion-with-a-long-name") > text_width("zsh"));
+        assert_eq!(text_width(""), 0.0);
+    }
+
+    #[test]
+    fn only_a_clipped_row_gets_a_tooltip_and_none_while_tips_are_off() {
+        let long = "prod-eu-west-1-bastion-with-a-very-long-name";
+        assert_eq!(
+            row_tip(true, 140.0, long, false, false),
+            Some(long.to_owned())
+        );
+        assert_eq!(row_tip(true, 220.0, "zsh", false, false), None);
+        assert_eq!(row_tip(false, 140.0, long, false, false), None);
     }
 
     #[test]

@@ -314,6 +314,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
                 modal,
                 scale: app.physical_scale(id),
                 width,
+                tips: carry.is_none() && !modal && !app.sidebar_resizing.contains(&id),
             };
             let beside = row![
                 crate::tab_sidebar::view(side, &win.tabs, win.active),
