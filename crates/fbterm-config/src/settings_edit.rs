@@ -7,7 +7,7 @@ use toml_edit::{DocumentMut, Item, Value};
 
 use crate::keys::{Action, Overrides};
 use crate::settings::{
-    DEFAULT_MAX_FPS, MaxFps, SecretStorage, Settings, ThemeMode, WindowDecorations,
+    DEFAULT_MAX_FPS, MaxFps, SecretStorage, Settings, TabBar, ThemeMode, WindowDecorations,
 };
 use crate::store::{ConfigError, atomic_write, line_of};
 
@@ -23,6 +23,7 @@ pub enum SettingChange {
     BackgroundOpacity(f32),
     BackgroundBlur(bool),
     WindowDecorations(WindowDecorations),
+    TabBar(TabBar),
     MaxFps(MaxFps),
     TunnelMaxRetries(u32),
     CheckUpdates(bool),
@@ -47,6 +48,7 @@ impl SettingChange {
             Self::BackgroundOpacity(_) => "background_opacity",
             Self::BackgroundBlur(_) => "background_blur",
             Self::WindowDecorations(_) => "window_decorations",
+            Self::TabBar(_) => "tab_bar",
             Self::MaxFps(_) => "max_fps",
             Self::TunnelMaxRetries(_) => "tunnel_max_retries",
             Self::CheckUpdates(_) => "check_updates",
@@ -67,6 +69,7 @@ impl SettingChange {
             Self::BackgroundOpacity(v) => settings.background_opacity = *v,
             Self::BackgroundBlur(v) => settings.background_blur = *v,
             Self::WindowDecorations(v) => settings.window_decorations = *v,
+            Self::TabBar(v) => settings.tab_bar = Some(*v),
             Self::MaxFps(v) => settings.max_fps.clone_from(v),
             Self::TunnelMaxRetries(v) => settings.tunnel_max_retries = *v,
             Self::CheckUpdates(v) => settings.check_updates = Some(*v),
@@ -95,6 +98,7 @@ impl SettingChange {
             Self::TunnelMaxRetries(v) => Value::from(i64::from(*v)),
             Self::SecretStorage(v) => Value::from(v.as_str()),
             Self::WindowDecorations(v) => Value::from(v.as_str()),
+            Self::TabBar(v) => Value::from(v.as_str()),
             // Written per action by `edit_keys`.
             Self::Keys(_) => Value::from(""),
         }
@@ -367,6 +371,7 @@ mod tests {
             SettingChange::BackgroundOpacity(0.85),
             SettingChange::BackgroundBlur(true),
             SettingChange::WindowDecorations(WindowDecorations::System),
+            SettingChange::TabBar(TabBar::Left),
             SettingChange::MaxFps(MaxFps::Fixed(120)),
             SettingChange::MaxFps(MaxFps::Display),
             SettingChange::TunnelMaxRetries(3),
@@ -693,6 +698,42 @@ mod tests {
         }
         assert_eq!(Settings::default().secret_storage, SecretStorage::Auto);
         assert!(toml::from_str::<Settings>("secret_storage = \"cloud\"\n").is_err());
+    }
+
+    #[test]
+    fn tab_bar_is_absent_until_answered_and_parses_both_sides() {
+        assert_eq!(Settings::default().tab_bar, None);
+        assert!(!Settings::default().tabs_left());
+        let s: Settings = toml::from_str("tab_bar = \"left\"\n").unwrap();
+        assert_eq!(s.tab_bar, Some(TabBar::Left));
+        assert!(s.tabs_left());
+        let s: Settings = toml::from_str("tab_bar = \"top\"\n").unwrap();
+        assert_eq!(s.tab_bar, Some(TabBar::Top));
+        assert!(!s.tabs_left());
+        assert!(toml::from_str::<Settings>("tab_bar = \"right\"\n").is_err());
+        assert!(SETTINGS_TEMPLATE.contains(
+            "# Where open sessions are listed: \"top\" (a row of tabs along the top of the \
+             window) or\n# \"left\" (a column down the left side, scrolling when it overflows). \
+             Left out, the Welcome\n# tab asks once.\n#tab_bar = \"top\"\n"
+        ));
+        assert_eq!(TabBar::default(), TabBar::Top);
+        assert_eq!(TabBar::Left.as_str(), "left");
+    }
+
+    #[test]
+    fn tab_bar_change_writes_under_its_template_line() {
+        for (v, name) in [(TabBar::Left, "left"), (TabBar::Top, "top")] {
+            let change = SettingChange::TabBar(v);
+            assert_eq!(change.key(), "tab_bar");
+            let after = edit_text(SETTINGS_TEMPLATE, &change).unwrap();
+            assert!(
+                after.contains(&format!("#tab_bar = \"top\"\ntab_bar = \"{name}\"\n")),
+                "{after}"
+            );
+            let mut s = Settings::default();
+            change.apply(&mut s);
+            assert_eq!(s.tab_bar, Some(v));
+        }
     }
 
     #[test]
