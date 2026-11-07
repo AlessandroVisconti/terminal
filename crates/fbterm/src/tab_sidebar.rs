@@ -226,6 +226,8 @@ pub(crate) struct Sidebar<'b> {
     pub tips: bool,
     /// What the list shows, in order (see [`items`]).
     pub items: &'b [Item],
+    /// The group of the tile being carried, if one is: where it may become a tab.
+    pub tile_group: Option<&'b Group>,
 }
 
 /// The sidebar: the rows in a scrollable list, with a rule on the right.
@@ -237,8 +239,12 @@ pub(crate) fn view<'a>(s: Sidebar<'_>, tabs: &'a [Tab], active: usize) -> Elemen
     let mut children: Vec<Element<'a, Message>> = Vec::new();
     let mut is_row = Vec::new();
     let mut ids = Vec::new();
+    let mut indices = Vec::new();
     let mut hole = None;
     let mut section = 0;
+    // Each header's group with the strip indices its rows span (`lo..hi`; empty when
+    // folded), for the drag's range.
+    let mut spans: Vec<(&Group, usize, usize)> = Vec::new();
     for (n, item) in s.items.iter().enumerate() {
         match item {
             Item::Header {
@@ -254,6 +260,7 @@ pub(crate) fn view<'a>(s: Sidebar<'_>, tabs: &'a [Tab], active: usize) -> Elemen
                 children.push(header_view(&s, section, group, *hidden, *holds_active));
                 is_row.push(false);
                 section += 1;
+                spans.push((group, ids.len(), ids.len()));
             }
             Item::Row(i) => {
                 let Some(tab) = tabs.get(*i) else {
@@ -263,11 +270,48 @@ pub(crate) fn view<'a>(s: Sidebar<'_>, tabs: &'a [Tab], active: usize) -> Elemen
                     hole = Some(ids.len());
                 }
                 ids.push(tab.id);
+                indices.push(*i);
+                if let Some(last) = spans.last_mut() {
+                    last.2 = ids.len();
+                }
                 children.push(row_view(&s, tab, *i, *i == active));
                 is_row.push(true);
             }
         }
     }
+    // Where the carry may land: a carried tab among its own group's rows (refused elsewhere),
+    // a carried tile in its group's span, or at the gap where its group would sort (moved
+    // there from elsewhere). Without headers (folding off) anything goes.
+    let (range, clamp) = match s.carry {
+        Some(Carry::Tab(id)) => {
+            let at = ids.iter().position(|i| *i == id);
+            let span = at.and_then(|at| {
+                spans
+                    .iter()
+                    .find(|(_, lo, hi)| (*lo..*hi).contains(&at))
+                    .map(|(_, lo, hi)| (*lo, *hi))
+            });
+            (span, false)
+        }
+        Some(Carry::Tile(_)) => match s.tile_group {
+            Some(g) if !spans.is_empty() => {
+                let span = spans
+                    .iter()
+                    .find(|(sg, _, _)| sg.same(g))
+                    .map(|(_, lo, hi)| (*lo, *hi))
+                    .unwrap_or_else(|| {
+                        let lo = spans
+                            .iter()
+                            .find(|(sg, _, _)| *sg > g)
+                            .map_or(ids.len(), |(_, lo, _)| *lo);
+                        (lo, lo)
+                    });
+                (Some(span), true)
+            }
+            _ => (None, false),
+        },
+        None => (None, false),
+    };
     let list = column(children)
         .spacing(ROW_SPACING)
         .padding(LIST_PADDING)
@@ -275,6 +319,9 @@ pub(crate) fn view<'a>(s: Sidebar<'_>, tabs: &'a [Tab], active: usize) -> Elemen
     let list = Element::new(Rows {
         window,
         ids,
+        indices,
+        range,
+        clamp,
         is_row,
         carry: s.carry,
         modal: s.modal,
@@ -506,6 +553,10 @@ struct Rows<'a> {
     ids: Vec<TabId>,
     /// Which of the column's children are rows (the others are headers and spacers).
     is_row: Vec<bool>,
+    /// Each row's window index, and where the carry may land (see `view`).
+    indices: Vec<usize>,
+    range: Option<(usize, usize)>,
+    clamp: bool,
     carry: Option<Carry>,
     modal: bool,
     hole: Option<usize>,
@@ -523,6 +574,9 @@ impl Rows<'_> {
         Strip {
             window: self.window,
             ids: &self.ids,
+            indices: &self.indices,
+            range: self.range,
+            clamp: self.clamp,
             carry: self.carry,
             modal: self.modal,
             hole: self.hole,

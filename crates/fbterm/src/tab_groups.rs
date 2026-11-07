@@ -54,9 +54,20 @@ impl Group {
     }
 
     /// One group with `other`, as the sidebar sections them.
-    fn same(&self, other: &Self) -> bool {
+    pub(crate) fn same(&self, other: &Self) -> bool {
         self.rank() == other.rank()
     }
+}
+
+/// The group of profile `id`: its `group`, trimmed; `other` without one or when the profile
+/// is gone.
+pub(crate) fn group_of_profile(id: fbterm_config::ProfileId, profiles: &ProfileStore) -> Group {
+    profiles
+        .get(id)
+        .and_then(|p| p.group.as_deref())
+        .map(str::trim)
+        .filter(|g| !g.is_empty())
+        .map_or(Group::Other, |g| Group::Named(g.to_owned()))
 }
 
 impl Ord for Group {
@@ -82,12 +93,7 @@ pub(crate) fn group_of(tab: &Tab, profiles: &ProfileStore) -> Group {
     if tab.page.is_some() {
         return Group::Featherbit;
     }
-    profiles
-        .get(tab.focused_pane().profile)
-        .and_then(|p| p.group.as_deref())
-        .map(str::trim)
-        .filter(|g| !g.is_empty())
-        .map_or(Group::Other, |g| Group::Named(g.to_owned()))
+    group_of_profile(tab.focused_pane().profile, profiles)
 }
 
 /// The indices of `groups` in grouped order: stable, so tabs of one group keep their order,
