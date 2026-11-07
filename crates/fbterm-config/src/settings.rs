@@ -183,6 +183,9 @@ pub struct Settings {
     /// counts as [`TabBar::Top`]; the Welcome tab asks once.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tab_bar: Option<TabBar>,
+    /// Fold the sidebar's rows into the profiles' groups (only with tabs on the left).
+    #[serde(default)]
+    pub tab_groups: bool,
     /// Most redraws per second caused by program output.
     pub max_fps: MaxFps,
     /// Automatic reconnect attempts for a tunnel whose connection dropped (0 = off).
@@ -211,6 +214,7 @@ impl Default for Settings {
             background_blur: false,
             window_decorations: WindowDecorations::Fbterm,
             tab_bar: None,
+            tab_groups: false,
             max_fps: MaxFps::default(),
             tunnel_max_retries: 10,
             check_updates: None,
@@ -439,6 +443,10 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 # tab asks once.
 #tab_bar = "top"
 
+# Fold the sidebar into the profiles' groups when tabs are on the left: a collapsible header
+# per group, tabs reorder within their group. Ignored with tabs on top.
+#tab_groups = false
+
 # Most redraws per second caused by program output: a whole number from 30 to 240, or
 # "display" to follow the refresh rate of the screen (60 when it cannot be detected).
 # Caps redraws caused by program output; typing always redraws immediately. Higher values
@@ -471,6 +479,12 @@ impl Settings {
     /// Tabs are listed down the left side (`tab_bar = "left"`); unanswered counts as top.
     pub fn tabs_left(&self) -> bool {
         self.tab_bar == Some(TabBar::Left)
+    }
+
+    /// The sidebar folds its rows into groups: `tab_groups`, which only counts with tabs on
+    /// the left.
+    pub fn tab_groups_on(&self) -> bool {
+        self.tab_groups && self.tabs_left()
     }
 
     /// Whether the update check runs: only when the user said yes.

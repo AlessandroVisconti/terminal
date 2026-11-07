@@ -24,6 +24,8 @@ pub enum SettingChange {
     BackgroundBlur(bool),
     WindowDecorations(WindowDecorations),
     TabBar(TabBar),
+    /// Fold the sidebar into profile groups.
+    TabGroups(bool),
     MaxFps(MaxFps),
     TunnelMaxRetries(u32),
     CheckUpdates(bool),
@@ -49,6 +51,7 @@ impl SettingChange {
             Self::BackgroundBlur(_) => "background_blur",
             Self::WindowDecorations(_) => "window_decorations",
             Self::TabBar(_) => "tab_bar",
+            Self::TabGroups(_) => "tab_groups",
             Self::MaxFps(_) => "max_fps",
             Self::TunnelMaxRetries(_) => "tunnel_max_retries",
             Self::CheckUpdates(_) => "check_updates",
@@ -70,6 +73,7 @@ impl SettingChange {
             Self::BackgroundBlur(v) => settings.background_blur = *v,
             Self::WindowDecorations(v) => settings.window_decorations = *v,
             Self::TabBar(v) => settings.tab_bar = Some(*v),
+            Self::TabGroups(v) => settings.tab_groups = *v,
             Self::MaxFps(v) => settings.max_fps.clone_from(v),
             Self::TunnelMaxRetries(v) => settings.tunnel_max_retries = *v,
             Self::CheckUpdates(v) => settings.check_updates = Some(*v),
@@ -99,6 +103,7 @@ impl SettingChange {
             Self::SecretStorage(v) => Value::from(v.as_str()),
             Self::WindowDecorations(v) => Value::from(v.as_str()),
             Self::TabBar(v) => Value::from(v.as_str()),
+            Self::TabGroups(v) => Value::from(*v),
             // Written per action by `edit_keys`.
             Self::Keys(_) => Value::from(""),
         }
@@ -372,6 +377,7 @@ mod tests {
             SettingChange::BackgroundBlur(true),
             SettingChange::WindowDecorations(WindowDecorations::System),
             SettingChange::TabBar(TabBar::Left),
+            SettingChange::TabGroups(true),
             SettingChange::MaxFps(MaxFps::Fixed(120)),
             SettingChange::MaxFps(MaxFps::Display),
             SettingChange::TunnelMaxRetries(3),
@@ -698,6 +704,19 @@ mod tests {
         }
         assert_eq!(Settings::default().secret_storage, SecretStorage::Auto);
         assert!(toml::from_str::<Settings>("secret_storage = \"cloud\"\n").is_err());
+    }
+
+    #[test]
+    fn tab_groups_defaults_off_and_counts_only_with_tabs_left() {
+        assert!(!Settings::default().tab_groups);
+        assert!(!Settings::default().tab_groups_on());
+        let s: Settings = toml::from_str("tab_groups = true\n").unwrap();
+        assert!(s.tab_groups);
+        assert!(!s.tab_groups_on(), "nothing to fold with tabs on top");
+        let s: Settings = toml::from_str("tab_groups = true\ntab_bar = \"left\"\n").unwrap();
+        assert!(s.tab_groups_on());
+        let sample: Settings = toml::from_str(SETTINGS_TEMPLATE).unwrap();
+        assert!(!sample.tab_groups, "the sample leaves it commented out");
     }
 
     #[test]

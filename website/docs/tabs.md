@@ -18,6 +18,14 @@ With many sessions open, a row of tabs runs out of room. Choose **Tabs: Left** i
 
 Everything a tab does works in the column: select, close, reorder by dragging up and down, drop onto a tab's terminal to merge, drop a pane's handle between rows to make it a tab. The column scrolls when the tabs overflow, and the tab you select (by click or shortcut) scrolls into view. The bar keeps its buttons. In a window too narrow for the column and a 200 pixel terminal, the column gives way so the terminal keeps its width.
 
+Drag the column's right edge to make it narrower or wider, from 140 to 480 pixels; each window remembers its own width, and a double-click on the edge puts the default back. A tab whose name is cut off at the edge shows it whole when you hover it. With more than nine tabs, `Cmd+9` (`Ctrl+Shift+9`) selects the last one, wherever it is.
+
+## Tab groups
+
+With tabs on the left, turn on **Group tabs** in Settings (Appearance), or set `tab_groups = true` in [`settings.toml`](files#settingstoml), and the column folds into the groups your profiles carry (the `group` field in [`profiles.toml`](profiles), edited in the Profiles page). `featherbit` comes first, for the Profiles, Settings and Welcome tabs; then the groups by name; then `other`, for tabs without one. A header shows only while one of its tabs is open.
+
+Click a header to fold or unfold its group. A folded header shows how many tabs it hides, in violet when the selected tab is among them. Tabs can be dragged only within their group, and a new tab opens at the end of its group. Next and previous tab and the number shortcuts walk the tabs you can see, skipping folded groups; choosing a tab any other way (the palette, a double-click in the Profiles page) unfolds its group. Which groups are folded is remembered per window. With tabs on top the setting does nothing.
+
 ## The tab menu
 
 Right-click a tab, on the bar or in the column, for a small menu:

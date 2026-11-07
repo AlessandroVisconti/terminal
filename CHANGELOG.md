@@ -2,6 +2,19 @@
 
 All notable changes to featherbit terminal (`fbterm`). The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each version links to its GitHub release, where the downloads are.
 
+## [0.8.0] - 2026-11-07
+
+### Added
+
+- Tab groups in the sidebar: with tabs on the left, the `Group tabs` switch in Settings (or `tab_groups = true` in `settings.toml`) folds the column into the groups your profiles carry. `featherbit` comes first for the Profiles, Settings and Welcome tabs, then the groups by name, then `other`. Click a header to fold or unfold its group; a folded header shows how many tabs it hides, in violet when the selected tab is among them. Tabs reorder only within their group, a new tab opens at the end of its group, and which groups are folded is remembered per window ([#71](https://github.com/featherbitplatform/terminal/pull/71)).
+- Resize the tab column: drag its right edge between 140 and 480 pixels. Each window remembers its own width, and a double-click on the edge puts the default back ([#70](https://github.com/featherbitplatform/terminal/pull/70)).
+- A tab whose name is cut off in the column shows it whole when you hover it ([#70](https://github.com/featherbitplatform/terminal/pull/70)).
+
+### Changed
+
+- `Cmd+9` (`Ctrl+Shift+9` on Linux and Windows) selects the last tab, however many are open, and is listed as `Last tab` ([#70](https://github.com/featherbitplatform/terminal/pull/70)).
+- With tab groups on, next and previous tab and the number shortcuts walk the tabs you can see, skipping folded groups; choosing a tab any other way unfolds its group ([#71](https://github.com/featherbitplatform/terminal/pull/71)).
+
 ## [0.7.1] - 2026-11-07
 
 ### Added
@@ -152,6 +165,7 @@ The first release: the daily driver milestone, macOS only.
 - Compact scrollback history: a live `scrollback_lines` setting with a Settings confirmation, and memory given back when tabs close ([#2](https://github.com/featherbitplatform/terminal/pull/2)).
 - Unsigned macOS `.dmg` packaging and the release workflow ([#1](https://github.com/featherbitplatform/terminal/pull/1)).
 
+[0.8.0]: https://github.com/featherbitplatform/terminal/releases/tag/v0.8.0
 [0.7.1]: https://github.com/featherbitplatform/terminal/releases/tag/v0.7.1
 [0.7.0]: https://github.com/featherbitplatform/terminal/releases/tag/v0.7.0
 [0.6.4]: https://github.com/featherbitplatform/terminal/releases/tag/v0.6.4

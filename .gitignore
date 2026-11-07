@@ -7,3 +7,4 @@
 /website/docs/changelog.md
 .DS_Store
 /sast-out
+/.worktrees

@@ -373,6 +373,16 @@ fn appearance<'a>(
     .spacing(2);
     let tabs = container(tabs).padding(2).style(move |_| well(t));
     rows.push(setting(t, "Tabs", None, false, tabs));
+    // Folding only means something with tabs on the left: the switch shows only then.
+    if v.tabs_left() {
+        rows.push(setting(
+            t,
+            "Group tabs",
+            Some("Fold the sidebar into collapsible groups; tabs reorder within their group"),
+            false,
+            switch(t, v.tab_groups, editable, false, SettingsMsg::TabGroups),
+        ));
+    }
     if shows_title_bar_row(chrome::setup().look) {
         let shown = title_bar_shown(v.window_decorations, chrome_fell_back);
         let title_bar = row![

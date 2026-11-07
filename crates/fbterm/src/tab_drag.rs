@@ -61,6 +61,14 @@ pub(crate) struct Strip<'a> {
     pub window: window::Id,
     /// Each tab's id, in strip order.
     pub ids: &'a [TabId],
+    /// Each row's index in its window's tab order (parallel to `ids`): the sidebar lists
+    /// only the rows that can be seen, so the two differ while a group is folded.
+    pub indices: &'a [usize],
+    /// The gaps (strip indices, inclusive) the current carry may land in; `None`: any.
+    pub range: Option<(usize, usize)>,
+    /// A gap outside `range` moves to its nearer end (a carried tile lands in its group)
+    /// instead of being refused (a carried tab stays in its group: it snaps back).
+    pub clamp: bool,
     pub carry: Option<Carry>,
     /// The palette or a dialog covers the window: no tab drags, no menu.
     pub modal: bool,
@@ -103,6 +111,15 @@ pub(crate) fn gap_at(
     )
 }
 
+/// The window index a drop in strip gap `gap` lands at: before the row there, or one past
+/// the last row's window index after the end (0 for an empty strip).
+fn window_gap(indices: &[usize], gap: usize) -> usize {
+    match indices.get(gap) {
+        Some(&i) => i,
+        None => indices.last().map_or(0, |&last| last + 1),
+    }
+}
+
 /// The tab-drag and right-click side of `event` over a strip whose tabs sit at `rects`
 /// inside `bounds`: a press that travels [`DRAG_THRESHOLD`] carries its tab, a carried tab
 /// of this strip dropped in a gap asks to move there ([`DragMsg::ReorderTab`]), a carried
@@ -122,6 +139,8 @@ pub(crate) fn drag_event(
         shell.publish(Message::Drag(strip.window, msg));
     };
     let under = |p: Point| rects.iter().position(|r| r.contains(p));
+    // A row's index in its window's tab order: what the app is told.
+    let at_window = |row: usize| strip.indices.get(row).copied().unwrap_or(row);
     let index_of = |id: TabId| strip.ids.iter().position(|i| *i == id);
     let tile = matches!(strip.carry, Some(Carry::Tile(_)));
     // The index of the tab this strip is carrying, if any: it can be dropped back on the
@@ -138,6 +157,17 @@ pub(crate) fn drag_event(
     let gap = |p: Option<Point>| {
         let p = p.filter(|_| tile || own.is_some())?;
         let gap = gap_at(rects, if tile { strip.hole } else { own }, p, strip.axis)?;
+        // Outside the carry's group: a tile goes to the group's nearer end, a tab nowhere.
+        let gap = match strip.range {
+            Some((lo, hi)) if gap < lo || gap > hi => {
+                if strip.clamp {
+                    gap.clamp(lo, hi)
+                } else {
+                    return None;
+                }
+            }
+            _ => gap,
+        };
         // Right before or after the carried tab: no move.
         (own != Some(gap) && own.map(|o| o + 1) != Some(gap)).then_some(gap)
     };
@@ -158,7 +188,10 @@ pub(crate) fn drag_event(
         // A wheel click on a tab closes it, as in a browser.
         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) if !strip.modal => {
             if let Some(index) = cursor.position_over(bounds).and_then(under) {
-                shell.publish(Message::TabBar(strip.window, TabBarMsg::Close(index)));
+                shell.publish(Message::TabBar(
+                    strip.window,
+                    TabBarMsg::Close(at_window(index)),
+                ));
             }
         }
         // A right-click on a tab asks for its menu, at the pointer in window coordinates.
@@ -167,7 +200,13 @@ pub(crate) fn drag_event(
                 && let Some(index) = under(p)
             {
                 let at = Point::new(p.x, p.y - strip.scroll);
-                shell.publish(Message::TabBar(strip.window, TabBarMsg::Menu { index, at }));
+                shell.publish(Message::TabBar(
+                    strip.window,
+                    TabBarMsg::Menu {
+                        index: at_window(index),
+                        at,
+                    },
+                ));
                 return true;
             }
         }
@@ -187,7 +226,7 @@ pub(crate) fn drag_event(
                         .filter(|i| Some(*i) != mine);
                     if over != state.over {
                         state.over = over;
-                        publish(shell, DragMsg::OverTab(over));
+                        publish(shell, DragMsg::OverTab(over.map(at_window)));
                     }
                 }
             }
@@ -208,7 +247,13 @@ pub(crate) fn drag_event(
                 if let (Some(index), Some(tab)) =
                     (at.filter(|_| !tile), own.and_then(|o| strip.ids.get(o)))
                 {
-                    publish(shell, DragMsg::ReorderTab { tab: *tab, index });
+                    publish(
+                        shell,
+                        DragMsg::ReorderTab {
+                            tab: *tab,
+                            index: window_gap(strip.indices, index),
+                        },
+                    );
                 }
                 publish(shell, DragMsg::End);
                 return true;
@@ -216,7 +261,13 @@ pub(crate) fn drag_event(
             if let (Some(Carry::Tile(pane)), Some(index)) =
                 (strip.carry, gap(cursor.position_over(bounds)))
             {
-                publish(shell, DragMsg::TileToTab { pane, index });
+                publish(
+                    shell,
+                    DragMsg::TileToTab {
+                        pane,
+                        index: window_gap(strip.indices, index),
+                    },
+                );
             }
         }
         Event::Mouse(mouse::Event::CursorLeft) | Event::Window(window::Event::Unfocused) => {
@@ -297,6 +348,9 @@ mod tests {
         let strip = Strip {
             window: window::Id::unique(),
             ids,
+            indices: &(0..ids.len()).collect::<Vec<_>>(),
+            range: None,
+            clamp: false,
             carry,
             modal: false,
             hole: Some(0),
@@ -328,6 +382,184 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// A strip of four rows (30 high, 34 apart from y 0) whose window indices are
+    /// `[0, 1, 3, 4]` (window index 2 is hidden in a folded group). Runs `events` with
+    /// `carry`, `range` and `clamp`, and returns every message published.
+    fn drive_mapped(
+        carry: Option<Carry>,
+        range: Option<(usize, usize)>,
+        clamp: bool,
+        events: &[(Event, Point)],
+    ) -> (Vec<TabId>, Vec<Message>) {
+        drive_mapped_with(|_| carry, range, clamp, events)
+    }
+
+    fn drags(messages: &[Message]) -> Vec<DragMsg> {
+        messages
+            .iter()
+            .filter_map(|m| match m {
+                Message::Drag(
+                    _,
+                    d @ (DragMsg::ReorderTab { .. } | DragMsg::TileToTab { .. } | DragMsg::End),
+                ) => Some(d.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn published_indices_are_window_indices() {
+        let right = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right));
+        let (_, messages) = drive_mapped(None, None, false, &[(right, Point::new(10.0, 70.0))]);
+        assert!(
+            matches!(
+                messages.as_slice(),
+                [Message::TabBar(_, TabBarMsg::Menu { index: 3, .. })]
+            ),
+            "{messages:?}"
+        );
+        let middle = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle));
+        let (_, messages) = drive_mapped(None, None, false, &[(middle, Point::new(10.0, 110.0))]);
+        assert!(
+            matches!(
+                messages.as_slice(),
+                [Message::TabBar(_, TabBarMsg::Close(4))]
+            ),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn a_tab_dropped_outside_its_range_snaps_back() {
+        // Row 1's tab is carried; its group spans gaps 0..=2.
+        let at = Point::new(10.0, 34.0 + 15.0);
+        let away = Point::new(10.0, at.y + 10.0);
+        let below_last = Point::new(10.0, 102.0 + 25.0); // row 3's lower half: gap 4
+        let carried = |ids: &[TabId]| Some(Carry::Tab(ids[1]));
+        let (_, messages) = drive_mapped_with(
+            carried,
+            Some((0, 2)),
+            false,
+            &[
+                (press(), at),
+                (moved(away), away),
+                (moved(below_last), below_last),
+                (release(), below_last),
+            ],
+        );
+        assert_eq!(
+            drags(&messages),
+            [DragMsg::End],
+            "outside the range: only the end"
+        );
+        let top = Point::new(10.0, 5.0); // row 0's upper half: gap 0
+        let (ids, messages) = drive_mapped_with(
+            carried,
+            Some((0, 2)),
+            false,
+            &[
+                (press(), at),
+                (moved(away), away),
+                (moved(top), top),
+                (release(), top),
+            ],
+        );
+        assert_eq!(
+            drags(&messages),
+            [
+                DragMsg::ReorderTab {
+                    tab: ids[1],
+                    index: 0
+                },
+                DragMsg::End
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tile_dropped_outside_its_range_lands_at_its_groups_end() {
+        let pane = crate::layout::PaneId::next();
+        let between = Point::new(10.0, 32.0); // between rows 0 and 1: gap 1, clamped to 2
+        let (_, messages) = drive_mapped(
+            Some(Carry::Tile(pane)),
+            Some((2, 4)),
+            true,
+            &[(moved(between), between), (release(), between)],
+        );
+        assert_eq!(drags(&messages), [DragMsg::TileToTab { pane, index: 3 }]);
+    }
+
+    #[test]
+    fn a_gap_past_the_last_row_maps_to_one_past_the_last_window_index() {
+        let at = Point::new(10.0, 15.0);
+        let away = Point::new(10.0, 25.0);
+        let below = Point::new(10.0, 130.0); // row 3's lower half: gap 4
+        let (ids, messages) = drive_mapped_with(
+            |ids| Some(Carry::Tab(ids[0])),
+            None,
+            false,
+            &[
+                (press(), at),
+                (moved(away), away),
+                (moved(below), below),
+                (release(), below),
+            ],
+        );
+        assert_eq!(
+            drags(&messages),
+            [
+                DragMsg::ReorderTab {
+                    tab: ids[0],
+                    index: 5
+                },
+                DragMsg::End
+            ]
+        );
+    }
+
+    /// `drive_mapped` with the carry chosen from the strip's ids.
+    fn drive_mapped_with(
+        carry: impl Fn(&[TabId]) -> Option<Carry>,
+        range: Option<(usize, usize)>,
+        clamp: bool,
+        events: &[(Event, Point)],
+    ) -> (Vec<TabId>, Vec<Message>) {
+        use iced::advanced::Shell;
+        let rows: Vec<Rectangle> = (0..4)
+            .map(|i| Rectangle::new(Point::new(0.0, i as f32 * 34.0), Size::new(100.0, 30.0)))
+            .collect();
+        let ids = vec![TabId::next(), TabId::next(), TabId::next(), TabId::next()];
+        let indices = [0, 1, 3, 4];
+        let strip = Strip {
+            window: window::Id::unique(),
+            ids: &ids,
+            indices: &indices,
+            range,
+            clamp,
+            carry: carry(&ids),
+            modal: false,
+            hole: Some(0),
+            axis: Axis::Y,
+            scroll: 0.0,
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(100.0, 136.0));
+        let mut state = DragState::default();
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        for (event, at) in events {
+            drag_event(
+                &strip,
+                &mut state,
+                event,
+                &rows,
+                bounds,
+                mouse::Cursor::Available(*at),
+                &mut shell,
+            );
+        }
+        (ids, messages)
     }
 
     fn press() -> Event {
@@ -443,6 +675,9 @@ mod tests {
         let strip = Strip {
             window: window::Id::unique(),
             ids: &ids,
+            indices: &[0, 1],
+            range: None,
+            clamp: false,
             carry: None,
             modal: false,
             hole: Some(0),

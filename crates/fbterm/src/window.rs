@@ -176,7 +176,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
     let hairline = crate::ui::hairline(app.physical_scale(id));
     let sidebar = app.settings.tabs_left().then(|| {
         let total = app.sizes.get(&id).map_or(SIDEBAR_WIDTH, |&(w, _)| w);
-        crate::tab_sidebar::sidebar_width(total, hairline)
+        crate::tab_sidebar::sidebar_width(app.sidebar_width_of(id), total, hairline)
     });
     let left = sidebar.map_or(0.0, |w| w + hairline);
     let outline_end = app.sizes.get(&id).map(|&(total, _)| match panel.as_ref() {
@@ -298,9 +298,19 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
             DockContent::Tunnels => Mode::TunnelsPanel,
         });
     let docked_area = dock(terminal_area, panel);
+    // What the sidebar lists: rows, under group headers while folding is on.
+    let items = crate::tab_sidebar::items(&app.sections_of(id), win.active, app.groups_on());
     body = body.push(match sidebar {
         Some(width) => {
+            let tile_group = match carry {
+                Some(Carry::Tile(pane)) => win.locate(pane).map(|(t, p)| {
+                    crate::tab_groups::group_of_profile(win.tabs[t].panes[p].profile, &app.profiles)
+                }),
+                _ => None,
+            };
             let side = crate::tab_sidebar::Sidebar {
+                items: &items,
+                tile_group: tile_group.as_ref(),
                 window: id,
                 tokens: t,
                 around: Surroundings {
@@ -314,13 +324,14 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
                 modal,
                 scale: app.physical_scale(id),
                 width,
+                tips: carry.is_none() && !modal && !app.sidebar_resizing.contains(&id),
             };
-            row![
+            let beside = row![
                 crate::tab_sidebar::view(side, &win.tabs, win.active),
                 docked_area
             ]
-            .height(Length::Fill)
-            .into()
+            .height(Length::Fill);
+            crate::sidebar_resize::resizable(id, beside.into(), width, hairline, modal, t)
         }
         None => docked_area,
     });
@@ -1554,9 +1565,14 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<DragState>();
+        // The bar lists every tab: rows and window indices are the same.
+        let indices: Vec<usize> = (0..self.ids.len()).collect();
         let strip = Strip {
             window: self.window,
             ids: &self.ids,
+            indices: &indices,
+            range: None,
+            clamp: false,
             carry: self.carry,
             modal: self.modal,
             hole: self.hole,

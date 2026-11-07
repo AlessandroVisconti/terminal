@@ -470,14 +470,6 @@ impl WindowState {
         true
     }
 
-    /// Select tab `n` as numbered in the tab bar (1-based).
-    pub fn select_number(&mut self, n: u8) -> bool {
-        match usize::from(n).checked_sub(1) {
-            Some(i) => self.select(i),
-            None => false,
-        }
-    }
-
     /// Next tab, wrapping.
     pub fn next(&mut self) -> bool {
         match self.tabs.len() {
@@ -902,17 +894,12 @@ mod tests {
     }
 
     #[test]
-    fn next_prev_wrap_and_numbers_select() {
+    fn next_prev_wrap() {
         let mut w = window(&["a", "b", "c"], 0);
         assert!(w.prev());
         assert_eq!(w.active, 2);
         assert!(w.next());
         assert_eq!(w.active, 0);
-        assert!(w.select_number(2));
-        assert_eq!(w.active, 1);
-        assert!(!w.select_number(9), "no ninth tab");
-        assert!(!w.select_number(0));
-        assert_eq!(w.active, 1);
         let mut one = window(&["a"], 0);
         assert!(!one.next());
     }

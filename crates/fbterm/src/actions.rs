@@ -9,6 +9,7 @@ use crate::layout::{Dir, Side};
 use crate::palette::{self, PaletteItem, PaletteMsg, PaletteState, Pick, Placing, Stage};
 use crate::pane_actions::Zoom;
 use crate::settings_window::SettingsMsg;
+use crate::tab_groups::Step;
 use crate::tabs::{TabId, WindowState};
 
 impl App {
@@ -58,9 +59,10 @@ impl App {
                     None => Task::none(),
                 }
             }),
-            Action::NextTab => self.with_focused(WindowState::next),
-            Action::PrevTab => self.with_focused(WindowState::prev),
-            Action::SelectTab(n) => self.with_focused(|w| w.select_number(n)),
+            // Over the rows that can be seen: a folded group is skipped (`tab_groups.rs`).
+            Action::NextTab => self.travel_tabs(wid, Step::Next),
+            Action::PrevTab => self.travel_tabs(wid, Step::Prev),
+            Action::SelectTab(n) => self.travel_tabs(wid, Step::Number(n)),
             Action::Palette => match wid {
                 Some(wid) if self.palettes.contains_key(&wid) => {
                     self.palette(wid, PaletteMsg::Close)
