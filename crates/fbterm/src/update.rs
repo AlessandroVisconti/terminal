@@ -18,7 +18,7 @@ use iced::window;
 use semver::Version;
 use serde::Deserialize;
 
-use crate::app::{App, Message, SettingsSource};
+use crate::app::{App, Message};
 use crate::prompts::Dialog;
 use fbterm_config::{SettingChange, Settings};
 
@@ -272,23 +272,7 @@ impl App {
             return Task::none();
         }
         self.prompts.pop(w);
-        let change = SettingChange::CheckUpdates(yes);
-        let path = self.paths.settings();
-        let external = std::fs::read_to_string(&path).ok() != self.settings_seen;
-        if let Err(e) = Settings::write_field(&path, &change) {
-            tracing::warn!(error = %e, key = change.key(), "settings.toml not written");
-        }
-        if let Some((_, state)) = &mut self.settings_win {
-            change.apply(&mut state.values);
-        }
-        let mut next = self.settings.clone();
-        change.apply(&mut next);
-        let task = self.apply_settings(next, SettingsSource::Window);
-        if external {
-            // Someone else's edit came in meanwhile: load it (with the answer in it).
-            return Task::batch([task, self.settings_file_changed()]);
-        }
-        self.settings_seen = std::fs::read_to_string(&path).ok();
+        let task = self.set_setting(SettingChange::CheckUpdates(yes));
         Task::batch([task, self.focus_prompt(w)])
     }
 }

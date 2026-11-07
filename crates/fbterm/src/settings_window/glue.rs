@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use fbterm_config::{Settings, WindowDecorations};
+use fbterm_config::{SettingChange, Settings, WindowDecorations};
 use fbterm_term::{ColorScheme, TerminalStyle};
 use iced::{Font, Task, window};
 use parking_lot::Mutex;
@@ -149,6 +149,28 @@ impl App {
                 Task::batch(tasks)
             }
         }
+    }
+
+    /// Change one setting from outside the Settings tab (an action, the Welcome tab): written
+    /// to `settings.toml` and applied as a Settings tab change is, the open Settings tab
+    /// following. An edit that came in meanwhile from someone else is loaded with it.
+    pub(crate) fn set_setting(&mut self, change: SettingChange) -> Task<Message> {
+        let path = self.paths.settings();
+        let external = std::fs::read_to_string(&path).ok() != self.settings_seen;
+        if let Err(e) = Settings::write_field(&path, &change) {
+            tracing::warn!(error = %e, key = change.key(), "settings.toml not written");
+        }
+        if let Some((_, state)) = &mut self.settings_win {
+            change.apply(&mut state.values);
+        }
+        let mut next = self.settings.clone();
+        change.apply(&mut next);
+        let task = self.apply_settings(next, SettingsSource::Window);
+        if external {
+            return Task::batch([task, self.settings_file_changed()]);
+        }
+        self.settings_seen = std::fs::read_to_string(&path).ok();
+        task
     }
 
     /// The most history lines any open pane holds: what a lowered scrollback would cut.

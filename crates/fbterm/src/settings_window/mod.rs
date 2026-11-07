@@ -12,7 +12,8 @@ use fbterm_config::settings::{
     TUNNEL_RETRIES_RANGE,
 };
 use fbterm_config::{
-    ConfigError, MaxFps, SecretStorage, SettingChange, Settings, ThemeMode, WindowDecorations,
+    ConfigError, MaxFps, SecretStorage, SettingChange, Settings, TabBar, ThemeMode,
+    WindowDecorations,
 };
 
 mod fonts;
@@ -55,6 +56,8 @@ pub enum SettingsMsg {
     Blur(bool),
     /// Who draws the title bar (Linux).
     TitleBar(WindowDecorations),
+    /// The Appearance card's `Tabs` row: where open sessions are listed.
+    TabBar(TabBar),
     ScrollbackText(String),
     ScrollbackSubmit,
     /// Confirm lowering the scrollback below what an open tab holds: save and trim.
@@ -466,6 +469,7 @@ impl SettingsState {
             SettingsMsg::ColorScheme(id) => self.change(SettingChange::ColorScheme(id), false),
             SettingsMsg::Blur(v) => self.change(SettingChange::BackgroundBlur(v), false),
             SettingsMsg::TitleBar(v) => self.change(SettingChange::WindowDecorations(v), false),
+            SettingsMsg::TabBar(v) => self.change(SettingChange::TabBar(v), false),
             SettingsMsg::Kitty(v) => self.change(SettingChange::KittyKeyboard(v), false),
             SettingsMsg::MaxFps(v) => self.change(SettingChange::MaxFps(v), false),
             SettingsMsg::CheckUpdates(v) => self.change(SettingChange::CheckUpdates(v), false),

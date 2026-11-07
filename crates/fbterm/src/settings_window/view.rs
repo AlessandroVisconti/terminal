@@ -3,7 +3,7 @@
 
 use fbterm_config::keys::{Action, ActionGroup, Bindings, FixedShortcut, fixed_shortcuts, risk};
 use fbterm_config::settings::{FONT_SIZE_RANGE, OPACITY_RANGE};
-use fbterm_config::{SecretStorage, ThemeMode, WindowDecorations};
+use fbterm_config::{SecretStorage, TabBar, ThemeMode, WindowDecorations};
 use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, slider, text, text_input, toggler,
 };
@@ -355,6 +355,24 @@ fn appearance<'a>(
             v.background_opacity,
         ),
     ];
+    // Where open sessions are listed; an unanswered setting shows `Top`.
+    let tabs = row![
+        segment(
+            t,
+            "Top",
+            !v.tabs_left(),
+            editable.then(|| msg(SettingsMsg::TabBar(TabBar::Top))),
+        ),
+        segment(
+            t,
+            "Left",
+            v.tabs_left(),
+            editable.then(|| msg(SettingsMsg::TabBar(TabBar::Left))),
+        ),
+    ]
+    .spacing(2);
+    let tabs = container(tabs).padding(2).style(move |_| well(t));
+    rows.push(setting(t, "Tabs", None, false, tabs));
     if shows_title_bar_row(chrome::setup().look) {
         let shown = title_bar_shown(v.window_decorations, chrome_fell_back);
         let title_bar = row![
