@@ -90,6 +90,17 @@ pub(crate) fn resize_event(
     }
 }
 
+/// Whether the content under the grab zone still sees `event` after the resize answered
+/// `out` (`started`: the event began a drag): everything the resize did not take, and a
+/// cancel that ended a drag, so the terminal can clear its hover state.
+pub(crate) fn forwards(out: &Option<Out>, started: bool, event: &Event) -> bool {
+    match out {
+        Some(Out::End) => cancels_drag(event),
+        Some(_) => false,
+        None => !started,
+    }
+}
+
 /// `content` (the sidebar, its rule and the window's content side by side) with the rule
 /// draggable: the sidebar is drawn `width` wide and its rule `hairline` wide, so the grab zone
 /// starts `width` in from the left edge.
@@ -228,7 +239,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Resizable<'_> {
             None => {}
         }
         // What the resize consumed never reaches the content under the grab zone.
-        if out.is_some() || started {
+        if !forwards(&out, started, event) {
             shell.capture_event();
             return;
         }
@@ -326,7 +337,28 @@ mod tests {
 
     use iced::{Event, Point, Rectangle, mouse, window};
 
-    use super::{Out, ResizeState, resize_event};
+    use super::{Out, ResizeState, forwards, resize_event};
+
+    /// What the content under the grab zone still sees: a cancel that ends a drag (so the
+    /// terminal can clear its hover), and anything the resize did not take.
+    #[test]
+    fn cancels_that_end_a_drag_still_reach_the_content() {
+        let left = Event::Mouse(mouse::Event::CursorLeft);
+        let unfocused = Event::Window(window::Event::Unfocused);
+        assert!(forwards(&Some(Out::End), false, &left));
+        assert!(forwards(&Some(Out::End), false, &unfocused));
+        assert!(
+            !forwards(&Some(Out::End), false, &release()),
+            "the release is the resize's"
+        );
+        assert!(!forwards(&Some(Out::Resize(300.0)), false, &moved(300.0)));
+        assert!(!forwards(&Some(Out::Reset), false, &press()));
+        assert!(
+            !forwards(&None, true, &press()),
+            "the press that starts a drag"
+        );
+        assert!(forwards(&None, false, &moved(10.0)));
+    }
 
     fn grab() -> Rectangle {
         Rectangle {

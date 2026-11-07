@@ -63,7 +63,7 @@ pub enum TabBarMsg {
     SidebarResize(f32),
     /// The drag ended (or a double-click reset the width): remember it.
     SidebarResizeEnd,
-    /// A click on the header of the sidebar.s section at this index: fold or unfold it.
+    /// A click on the header of the sidebar's section at this index: fold or unfold it.
     ToggleGroup(usize),
     New,
     Profiles,
@@ -287,7 +287,9 @@ pub struct App {
     pub(crate) sidebar_widths: HashMap<window::Id, f32>,
     /// Windows whose sidebar rule is being dragged (no row tooltips meanwhile).
     pub(crate) sidebar_resizing: HashSet<window::Id>,
-    /// Each window.s folded tab groups, by key (see `tab_groups.rs`).
+    /// Windows whose column came back from the top: their next reveal unfolds nothing.
+    pub(crate) sidebar_quiet: HashSet<window::Id>,
+    /// Each window's folded tab groups, by key (see `tab_groups.rs`).
     pub(crate) collapsed: HashMap<window::Id, std::collections::BTreeSet<String>>,
     /// Each tab's group at the last regroup, to move a tab whose group changes.
     pub(crate) tab_group_seen: HashMap<TabId, crate::tab_groups::Group>,
@@ -705,6 +707,7 @@ impl App {
             sidebar_shown: HashMap::new(),
             sidebar_widths: HashMap::new(),
             sidebar_resizing: HashSet::new(),
+            sidebar_quiet: HashSet::new(),
             collapsed: HashMap::new(),
             tab_group_seen: HashMap::new(),
             clip_generation: 0,
@@ -1244,6 +1247,7 @@ impl App {
                 self.sidebar_shown.remove(&id);
                 self.sidebar_widths.remove(&id);
                 self.sidebar_resizing.remove(&id);
+                self.sidebar_quiet.remove(&id);
                 self.collapsed.remove(&id);
                 // Closed by the OS button or Quit: same teardown as closing the tab.
                 let pages: Vec<Page> = self

@@ -941,3 +941,19 @@ fn the_restart_note_needs_a_lower_opacity_and_an_opaque_window() {
     assert_eq!(view::restart_note(1.0, true), None);
     assert_eq!(view::restart_note(0.8, false), None);
 }
+
+#[test]
+fn the_group_tabs_row_shows_only_with_tabs_on_the_left() {
+    use fbterm_config::TabBar;
+    assert!(!view::shows_group_tabs_row(&Settings::default()));
+    let top = Settings {
+        tab_bar: Some(TabBar::Top),
+        ..Settings::default()
+    };
+    assert!(!view::shows_group_tabs_row(&top));
+    let left = Settings {
+        tab_bar: Some(TabBar::Left),
+        ..Settings::default()
+    };
+    assert!(view::shows_group_tabs_row(&left));
+}
