@@ -301,8 +301,7 @@ impl App {
                     None => Task::none(),
                 }
             }
-            // The copy itself arrives with `tab_menu.rs`'s messages.
-            (MenuItem::CopyPassword, MenuTarget::Tab(_)) => Task::none(),
+            (MenuItem::CopyPassword, MenuTarget::Tab(tab)) => self.copy_password(wid, tab),
             _ => Task::none(),
         }
     }

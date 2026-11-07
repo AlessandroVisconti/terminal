@@ -147,6 +147,8 @@ pub enum Message {
     Palette(window::Id, PaletteMsg),
     /// The terminal's right-click menu in a window (see [`crate::context_menu`]).
     ContextMenu(window::Id, crate::context_menu::MenuMsg),
+    /// The tab menu's own: the password copy and its clipboard clear.
+    TabMenu(crate::tab_menu::TabMenuMsg),
     /// The find bar of a window's active tab.
     Find(window::Id, FindMsg),
     /// A pane's find-bar search finished.
@@ -799,6 +801,15 @@ impl App {
             .map(|(id, _)| id)
     }
 
+    /// Show `line` in every window's banner (once, while it is not already there), also
+    /// when the banner was dismissed.
+    pub(crate) fn show_notice(&mut self, line: String) {
+        if !self.notices.contains(&line) {
+            self.notices.push(line);
+        }
+        self.notices_dismissed = false;
+    }
+
     /// Notices to show: config problems, and the move to the vault when Auto made it.
     pub fn visible_notices(&self) -> Vec<String> {
         if self.notices_dismissed {
@@ -1274,6 +1285,7 @@ impl App {
             }
             Message::Palette(wid, msg) => self.palette(wid, msg),
             Message::ContextMenu(wid, msg) => self.context_menu_msg(wid, msg),
+            Message::TabMenu(msg) => self.tab_menu_msg(msg),
             Message::Find(wid, msg) => self.find(wid, msg),
             Message::Found { pane, seq, outcome } => self.found(pane, seq, outcome),
             Message::FindRefresh(pane) => self.find_refresh(pane),

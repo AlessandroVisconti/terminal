@@ -1,14 +1,153 @@
 //! The right-click menu on a tab (bar or sidebar): `Copy password` for a password SSH
 //! profile's tab, and `Close tab`. Only the user's own right-click opens it.
 
-use fbterm_config::{AuthMethod, ProfileId, ProfileKind};
-use iced::{Point, Task, window};
+use std::time::Duration;
 
-use crate::app::{App, Message};
+use fbterm_config::{AuthMethod, ProfileId, ProfileKind};
+use fbterm_secrets::{SecretError, SecretKind};
+use iced::{Point, Task, window};
+use zeroize::Zeroizing;
+
+use crate::app::{App, Delivered, Message};
 use crate::context_menu::ContextMenu;
 use crate::tabs::TabId;
 
+/// How long a copied password stays on the clipboard before fbterm clears it, if it is
+/// still there.
+pub(crate) const CLEAR_AFTER: Duration = Duration::from_secs(60);
+
+/// What was read for a copy: the saved password, none, or the storage's refusal.
+type Read = Result<Option<Zeroizing<String>>, SecretError>;
+
+/// The tab menu's messages. None carries a password in the clear: the secret rides a
+/// [`Delivered`], whose `Debug` says nothing about its value.
+#[derive(Clone)]
+pub(crate) enum TabMenuMsg {
+    /// Copy the saved password of the profile of `tab`'s focused pane: from the menu, and
+    /// again after the vault was unlocked for it.
+    Copy(window::Id, TabId),
+    /// The saved secrets answered (on the blocking pool) for the profile.
+    Read(window::Id, ProfileId, Delivered<Read>),
+    /// The minute after a copy passed: look at the clipboard.
+    ClearDue(Delivered<Zeroizing<String>>),
+    /// The clipboard as read for the check.
+    ClearCheck(Delivered<Zeroizing<String>>, Option<String>),
+}
+
+impl std::fmt::Debug for TabMenuMsg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Copy(w, t) => write!(f, "Copy({w:?}, {t:?})"),
+            Self::Read(w, p, _) => write!(f, "Read({w:?}, {p:?}, ..)"),
+            Self::ClearDue(_) => write!(f, "ClearDue(..)"),
+            Self::ClearCheck(_, text) => {
+                write!(f, "ClearCheck(.., {:?})", text.as_ref().map(|t| t.len()))
+            }
+        }
+    }
+}
+
+/// Whether the clipboard still holds exactly the copied password: only then is it cleared.
+pub(crate) fn should_clear(copied: &str, clipboard: Option<&str>) -> bool {
+    clipboard == Some(copied)
+}
+
 impl App {
+    pub(crate) fn tab_menu_msg(&mut self, msg: TabMenuMsg) -> Task<Message> {
+        match msg {
+            TabMenuMsg::Copy(wid, tab) => self.copy_password(wid, tab),
+            TabMenuMsg::Read(wid, id, read) => match read.take() {
+                Some(read) => self.password_read(wid, id, read),
+                None => Task::none(),
+            },
+            TabMenuMsg::ClearDue(copied) => iced::clipboard::read()
+                .map(move |text| Message::TabMenu(TabMenuMsg::ClearCheck(copied.clone(), text))),
+            TabMenuMsg::ClearCheck(copied, text) => {
+                let clear = copied
+                    .take()
+                    .is_some_and(|copied| should_clear(&copied, text.as_deref()));
+                if clear {
+                    iced::clipboard::write(String::new())
+                } else {
+                    Task::none()
+                }
+            }
+        }
+    }
+
+    /// `Copy password`: read the saved password of `tab`'s profile on the blocking pool
+    /// (never on the UI thread: the vault and the keychain can take their time or ask).
+    /// A tab that is gone, or no longer a password SSH profile's, copies nothing.
+    pub(crate) fn copy_password(&mut self, wid: window::Id, tab: TabId) -> Task<Message> {
+        let Some(id) = self.tab_password_profile(wid, tab) else {
+            return Task::none();
+        };
+        let secrets = self.secrets.clone();
+        self.run_blocking(
+            move || {
+                secrets
+                    .get(&id, SecretKind::Password)
+                    .map(|found| found.map(Zeroizing::new))
+            },
+            |e| Err(SecretError::Backend(e)),
+            move |read| Message::TabMenu(TabMenuMsg::Read(wid, id, Delivered::new(read))),
+        )
+    }
+
+    /// What the read gave: the password to the clipboard (and a clear a minute later), or
+    /// why not in the window banner. A locked vault asks for its main password first and
+    /// copies after the unlock.
+    fn password_read(&mut self, wid: window::Id, id: ProfileId, read: Read) -> Task<Message> {
+        match read {
+            Ok(Some(password)) => {
+                let copied = Delivered::new(password.clone());
+                let text = password.to_string();
+                drop(password);
+                Task::batch([
+                    iced::clipboard::write(text),
+                    Task::perform(async { tokio::time::sleep(CLEAR_AFTER).await }, move |()| {
+                        Message::TabMenu(TabMenuMsg::ClearDue(copied.clone()))
+                    }),
+                ])
+            }
+            Ok(None) => {
+                let name = self
+                    .profiles
+                    .get(id)
+                    .map_or_else(|| id.to_string(), |p| p.name.clone());
+                self.show_notice(format!("No saved password for {name}."));
+                Task::none()
+            }
+            Err(SecretError::Locked) => match self.backend.needs_main_password() {
+                Some(need) => {
+                    let tab = self.windows.get(&wid).and_then(|w| {
+                        w.tabs
+                            .iter()
+                            .find(|t| t.page.is_none() && t.focused_pane().profile == id)
+                            .map(|t| t.id)
+                    });
+                    match tab {
+                        Some(tab) => self.ask_main_password(
+                            wid,
+                            need,
+                            Message::TabMenu(TabMenuMsg::Copy(wid, tab)),
+                            None,
+                        ),
+                        None => Task::none(),
+                    }
+                }
+                None => {
+                    self.show_notice(SecretError::Locked.to_string());
+                    Task::none()
+                }
+            },
+            Err(e) => {
+                self.show_notice(e.to_string());
+                Task::none()
+            }
+        }
+    }
+
     /// A right-click on the tab at `index` of window `wid`: its menu at `at`, with
     /// `Copy password` when the tab's focused pane is a password SSH profile's. Not while
     /// something covers the window (see [`App::menu_covered`]). The tab is not selected.
@@ -50,12 +189,17 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use fbterm_config::{AuthMethod, Profile, ProfileId, ProfileKind, SshProfile};
+    use std::sync::Arc;
+
+    use fbterm_config::{AuthMethod, Profile, ProfileId, ProfileKind, SecretStorage, SshProfile};
+    use fbterm_secrets::{MemoryStore, SecretBackend, SecretKind, SecretStore};
     use iced::{Point, window};
 
+    use super::{TabMenuMsg, should_clear};
     use crate::app::{App, Message, TabBarMsg};
     use crate::context_menu::{MenuItem, MenuMsg};
     use crate::restore_tests::{paths_with, profile};
+    use crate::saved_secrets::Purpose;
     use crate::tabs::{Page, Pane, Tab, WindowState};
 
     pub(crate) fn ssh_password_profile(name: &str) -> Profile {
@@ -172,6 +316,95 @@ mod tests {
         let _ = app.open_palette(wid, String::new());
         let _ = app.open_tab_menu(wid, 0, Point::ORIGIN);
         assert!(app.context_menu.is_none());
+    }
+
+    #[test]
+    fn should_clear_only_an_exact_match() {
+        assert!(should_clear("s3cret", Some("s3cret")));
+        assert!(!should_clear("s3cret", Some("s3cret ")));
+        assert!(!should_clear("s3cret", Some("")));
+        assert!(!should_clear("s3cret", None));
+        // The first copy's check after a second copy finds the second value: left alone.
+        assert!(!should_clear("first", Some("second")));
+    }
+
+    #[test]
+    fn a_missing_password_says_so_in_the_banner_and_a_saved_one_does_not() {
+        let ssh = ssh_password_profile("prod");
+        let (mut app, wid) = app_with_tabs(std::slice::from_ref(&ssh), std::slice::from_ref(&ssh));
+        app.blocking_inline = true;
+        let tab = app.windows[&wid].tabs[0].id;
+        let _ = app.update(Message::TabMenu(TabMenuMsg::Copy(wid, tab)));
+        assert!(
+            app.visible_notices()
+                .contains(&"No saved password for prod.".to_string()),
+            "{:?}",
+            app.visible_notices()
+        );
+        app.secrets
+            .set(&ssh.id, SecretKind::Password, "s3cret")
+            .unwrap();
+        app.notices.clear();
+        let _ = app.update(Message::TabMenu(TabMenuMsg::Copy(wid, tab)));
+        assert!(app.visible_notices().is_empty());
+        // A tab that is gone copies nothing and says nothing.
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::Close(0)));
+        let _ = app.update(Message::TabMenu(TabMenuMsg::Copy(wid, tab)));
+        assert!(app.visible_notices().is_empty());
+    }
+
+    #[test]
+    fn choosing_copy_password_from_the_menu_closes_it_and_runs_the_copy() {
+        let ssh = ssh_password_profile("prod");
+        let (mut app, wid) = app_with_tabs(std::slice::from_ref(&ssh), std::slice::from_ref(&ssh));
+        app.blocking_inline = true;
+        let _ = app.open_tab_menu(wid, 0, Point::ORIGIN);
+        let _ = app.update(Message::ContextMenu(
+            wid,
+            MenuMsg::Choose(MenuItem::CopyPassword),
+        ));
+        assert!(app.context_menu.is_none());
+        assert!(
+            app.visible_notices()
+                .contains(&"No saved password for prod.".to_string())
+        );
+    }
+
+    #[test]
+    fn a_locked_vault_asks_for_the_main_password_then_copies() {
+        let ssh = ssh_password_profile("prod");
+        let (mut app, wid) = app_with_tabs(std::slice::from_ref(&ssh), std::slice::from_ref(&ssh));
+        app.blocking_inline = true;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secrets.fbvault");
+        let setup = SecretBackend::with_system(
+            SecretStorage::Vault,
+            Box::new(MemoryStore::new()),
+            path.clone(),
+        );
+        setup.create_vault("main").unwrap();
+        setup.set(&ssh.id, SecretKind::Password, "s3cret").unwrap();
+        // A fresh backend on the same file: the vault is locked.
+        let locked = Arc::new(SecretBackend::with_system(
+            SecretStorage::Vault,
+            Box::new(MemoryStore::new()),
+            path,
+        ));
+        app.use_secret_backend(locked);
+        let tab = app.windows[&wid].tabs[0].id;
+        let _ = app.update(Message::TabMenu(TabMenuMsg::Copy(wid, tab)));
+        let d = app.vault.dialog.as_ref().expect("the unlock dialog");
+        assert_eq!(d.window, wid);
+        match &d.purpose {
+            Purpose::Then { then, on_cancel } => {
+                assert!(
+                    matches!(**then, Message::TabMenu(TabMenuMsg::Copy(w, t)) if w == wid && t == tab)
+                );
+                assert!(on_cancel.is_none());
+            }
+            _ => panic!("not a Then purpose"),
+        }
+        assert!(app.visible_notices().is_empty());
     }
 
     #[test]
