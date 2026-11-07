@@ -22,8 +22,21 @@ use crate::ui::{ICON_X, icon};
 use crate::window::{MIN_TERMINAL_WIDTH, dot, page_icon, snap_rect, state_color};
 use crate::windows::Carry;
 
-/// The sidebar's width, when the window has room for it beside the terminal.
+/// The sidebar's width when the user never changed it, in logical pixels.
 pub(crate) const SIDEBAR_WIDTH: f32 = 220.0;
+/// The narrowest and widest the user can make the sidebar.
+pub(crate) const MIN_SIDEBAR_WIDTH: f32 = 140.0;
+pub(crate) const MAX_SIDEBAR_WIDTH: f32 = 480.0;
+
+/// `width` within [`MIN_SIDEBAR_WIDTH`]..=[`MAX_SIDEBAR_WIDTH`]; [`SIDEBAR_WIDTH`] when it is
+/// not a number.
+pub(crate) fn clamp_sidebar_width(width: f32) -> f32 {
+    if width.is_finite() {
+        width.clamp(MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
+    } else {
+        SIDEBAR_WIDTH
+    }
+}
 /// A row's height.
 pub(crate) const ROW_HEIGHT: f32 = 32.0;
 /// Space between rows.
@@ -31,13 +44,11 @@ pub(crate) const ROW_SPACING: f32 = 2.0;
 /// Space around the list.
 pub(crate) const LIST_PADDING: f32 = 6.0;
 
-/// How wide the sidebar is in a window `total` wide whose rule is `hairline` wide: its full
-/// width while the terminal keeps [`MIN_TERMINAL_WIDTH`], less in a narrower window, down to
-/// nothing.
-pub(crate) fn sidebar_width(total: f32, hairline: f32) -> f32 {
-    SIDEBAR_WIDTH
-        .min(total - MIN_TERMINAL_WIDTH - hairline)
-        .max(0.0)
+/// How wide the sidebar is drawn in a window `total` wide whose rule is `hairline` wide, when
+/// the user chose `chosen`: that width while the terminal keeps [`MIN_TERMINAL_WIDTH`], less
+/// in a narrower window, down to nothing.
+pub(crate) fn sidebar_width(chosen: f32, total: f32, hairline: f32) -> f32 {
+    chosen.min(total - MIN_TERMINAL_WIDTH - hairline).max(0.0)
 }
 
 /// Where row `index` starts, from the top of the list's content.
@@ -432,6 +443,14 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Rows<'_> {
 }
 
 impl App {
+    /// The sidebar width the user chose for window `id`: [`SIDEBAR_WIDTH`] until changed.
+    pub(crate) fn sidebar_width_of(&self, id: window::Id) -> f32 {
+        self.sidebar_widths
+            .get(&id)
+            .copied()
+            .unwrap_or(SIDEBAR_WIDTH)
+    }
+
     /// The list scrolled (or was laid out): remember its offset and visible height, for the
     /// drag's coordinates and for scrolling a selected tab into view.
     pub(crate) fn sidebar_scrolled(&mut self, wid: window::Id, offset: f32, height: f32) {
@@ -494,7 +513,10 @@ mod tests {
     use iced::advanced::widget::Tree;
     use iced::{Pixels, Size, window};
 
-    use super::{LIST_PADDING, ROW_HEIGHT, reveal, row_top, sidebar_width};
+    use super::{
+        LIST_PADDING, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, ROW_HEIGHT, SIDEBAR_WIDTH,
+        clamp_sidebar_width, reveal, row_top, sidebar_width,
+    };
     use crate::app::{App, Message, TabBarMsg};
     use crate::restore_tests::{paths_with, profile};
     use crate::tabs::{Pane, Tab, WindowState};
@@ -533,9 +555,21 @@ mod tests {
 
     #[test]
     fn the_sidebar_yields_in_a_narrow_window() {
-        assert_eq!(sidebar_width(1000.0, 1.0), 220.0);
-        assert_eq!(sidebar_width(360.0, 1.0), 159.0);
-        assert_eq!(sidebar_width(150.0, 1.0), 0.0);
+        assert_eq!(sidebar_width(220.0, 1000.0, 1.0), 220.0);
+        assert_eq!(sidebar_width(220.0, 360.0, 1.0), 159.0);
+        assert_eq!(sidebar_width(220.0, 150.0, 1.0), 0.0);
+        // A chosen width larger than the room: the yield applies to the chosen width.
+        assert_eq!(sidebar_width(480.0, 1000.0, 1.0), 480.0);
+        assert_eq!(sidebar_width(480.0, 500.0, 1.0), 299.0);
+    }
+
+    #[test]
+    fn the_chosen_width_is_clamped_and_defaults() {
+        assert_eq!(clamp_sidebar_width(10.0), MIN_SIDEBAR_WIDTH);
+        assert_eq!(clamp_sidebar_width(5000.0), MAX_SIDEBAR_WIDTH);
+        assert_eq!(clamp_sidebar_width(300.0), 300.0);
+        assert_eq!(clamp_sidebar_width(f32::NAN), SIDEBAR_WIDTH);
+        assert_eq!(clamp_sidebar_width(f32::INFINITY), SIDEBAR_WIDTH);
     }
 
     #[test]

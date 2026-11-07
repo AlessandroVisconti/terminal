@@ -88,6 +88,9 @@ impl App {
         let mut tasks = Vec::new();
         for saved in plan {
             let (wid, open) = self.new_window(saved.size);
+            if let Some(width) = saved.sidebar_width {
+                self.sidebar_widths.insert(wid, width);
+            }
             let window = self.windows.get_mut(&wid).expect("just inserted");
             for tab in &saved.tabs {
                 if let Some(tab) = restore::build_tab(tab, &self.profiles) {
@@ -322,7 +325,12 @@ impl App {
         if !self.state_saving_enabled || self.quitting || self.profiles_error.is_some() {
             return;
         }
-        let mut state = restore::snapshot(&self.windows, &self.sizes, &self.recency);
+        let mut state = restore::snapshot(
+            &self.windows,
+            &self.sizes,
+            &self.sidebar_widths,
+            &self.recency,
+        );
         state.file_panel_width = self.file_panels.saved_width();
         state.file_panel_show_hidden = self.file_panels.saved_show_hidden();
         state.tunnels_panel_width = self.tunnels_panels.saved_width();

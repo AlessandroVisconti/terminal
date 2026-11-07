@@ -276,6 +276,8 @@ pub struct App {
     pub(crate) sidebar_scroll: HashMap<window::Id, (f32, f32)>,
     /// The active tab each window's sidebar last scrolled into view.
     pub(crate) sidebar_shown: HashMap<window::Id, TabId>,
+    /// Each window's chosen sidebar width (see `tab_sidebar.rs`); absent: the default.
+    pub(crate) sidebar_widths: HashMap<window::Id, f32>,
     /// How many passwords the tab menu copied this run: a copy's clipboard clear runs only
     /// while it is still the latest (see `tab_menu.rs`).
     pub(crate) clip_generation: u64,
@@ -688,6 +690,7 @@ impl App {
             notices_dismissed: false,
             sidebar_scroll: HashMap::new(),
             sidebar_shown: HashMap::new(),
+            sidebar_widths: HashMap::new(),
             clip_generation: 0,
             profiles_error,
             paths,
@@ -1215,6 +1218,7 @@ impl App {
                 self.os_scales.remove(&id);
                 self.sidebar_scroll.remove(&id);
                 self.sidebar_shown.remove(&id);
+                self.sidebar_widths.remove(&id);
                 // Closed by the OS button or Quit: same teardown as closing the tab.
                 let pages: Vec<Page> = self
                     .windows
