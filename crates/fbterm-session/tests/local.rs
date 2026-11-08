@@ -84,6 +84,30 @@ async fn wait_for_text(handle: &SessionHandle, needle: &str, count: usize) {
     .unwrap_or_else(|_| panic!("timed out waiting for {needle:?}: {}", grid_text(handle)));
 }
 
+/// A large output reaches the terminal complete and in order: the last screen holds the last
+/// numbers in sequence and the history holds the rest.
+#[cfg(unix)]
+#[tokio::test]
+async fn large_output_arrives_complete_and_in_order() {
+    let p = profile("sh", &["-c", "seq 1 100000; echo fbterm-end"]);
+    let (tx, _rx): (EventSink, _) = unbounded_channel();
+    let h = spawn_local(&p, size(40, 24), 200_000, tx).expect("spawn");
+    wait_for_text(&h, "fbterm-end", 1).await;
+    let screen = grid_text(&h);
+    let numbers: Vec<u32> = screen
+        .lines()
+        .filter_map(|l| l.trim().parse().ok())
+        .collect();
+    assert!(!numbers.is_empty(), "{screen}");
+    assert_eq!(*numbers.last().unwrap(), 100_000, "{screen}");
+    assert!(
+        numbers.windows(2).all(|w| w[1] == w[0] + 1),
+        "out of order: {numbers:?}"
+    );
+    let history = h.terminal.lock().history_len();
+    assert!(history + numbers.len() >= 100_000, "history {history}");
+}
+
 #[tokio::test]
 async fn echo_reaches_terminal() {
     #[cfg(unix)]
