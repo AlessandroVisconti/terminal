@@ -162,13 +162,6 @@ impl Worker {
         let Some(term) = entry.term.upgrade() else {
             return;
         };
-        #[cfg(test)]
-        if self
-            .panic_next
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
-        {
-            panic!("test: a history job panicked");
-        }
         let mut jobs = entry.jobs;
         if jobs.is_empty() {
             jobs = term.lock().next_history_jobs(BATCH);
@@ -176,7 +169,28 @@ impl Worker {
                 return;
             }
         }
-        let done: Vec<_> = jobs.into_iter().map(HistoryJob::run).collect();
+        // A job that panics must not take the thread (and every terminal's compression) down:
+        // drop its batch and turn compression off for this terminal, so the same block is not
+        // offered again and panics in a loop.
+        let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            jobs.into_iter()
+                .map(|job| {
+                    #[cfg(test)]
+                    if self
+                        .panic_next
+                        .swap(false, std::sync::atomic::Ordering::SeqCst)
+                    {
+                        panic!("test: a history job panicked");
+                    }
+                    HistoryJob::run(job)
+                })
+                .collect::<Vec<_>>()
+        }));
+        let Ok(done) = done else {
+            tracing::error!("a history compression job panicked; compression is off for its tab");
+            term.lock().set_history_compression(None);
+            return;
+        };
         let (next, more) = {
             let mut t = term.lock();
             for d in done {
@@ -373,18 +387,37 @@ mod tests {
     }
 
     #[test]
-    fn a_panicking_job_leaves_the_worker_idle() {
-        let term = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
-        let worker = Worker::new();
+    fn a_panicking_job_does_not_stop_the_worker() {
+        let bad = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        let good = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        let worker = Arc::new(Worker::new());
         worker
             .panic_next
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        worker.enqueue(&term);
-        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            worker.run_until_idle();
-        }));
-        assert!(ran.is_err());
+        // The bad terminal is first in line, so it takes the panic.
+        worker.enqueue(&bad);
+        worker.enqueue(&good);
+        // The worker thread's own loop, not `run_until_idle`.
+        let thread = worker.clone();
+        std::thread::spawn(move || thread.run());
+        worker.wait_idle();
+        assert_eq!(bad.lock().history_compression(), None);
+        assert!(!good.lock().has_history_jobs());
+        assert_eq!(good.lock().history_compression(), Some(1_000));
+        // The thread still serves later enqueues.
+        let later = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        worker.enqueue(&later);
+        worker.wait_idle();
+        assert!(!later.lock().has_history_jobs());
         assert!(!worker.queue.lock().busy);
+    }
+
+    #[test]
+    fn a_panic_outside_the_job_still_frees_waiters() {
+        // The backstop: `TurnGuard` clears `busy` when a turn unwinds for any reason.
+        let worker = Worker::new();
+        worker.queue.lock().busy = true;
+        drop(TurnGuard(&worker));
         worker.wait_idle();
     }
 

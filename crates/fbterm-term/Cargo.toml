@@ -14,6 +14,7 @@ skrifa = "0.44"
 iced = { workspace = true, features = ["advanced"] }
 feathercritty = { workspace = true }
 parking_lot = { workspace = true }
+tracing = { workspace = true }
 regex = { workspace = true }
 flate2 = { workspace = true }
 fbterm-config = { path = "../fbterm-config" }

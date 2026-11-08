@@ -639,6 +639,13 @@ thread_local! {
 /// blocking pool: the wait sleeps on a condition variable.
 pub(super) fn release_when_idle() {
     fbterm_term::history_worker::wait_idle_for(RELEASE_WAIT);
+    // Cleared even if the release panics.
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            clear_release_pending();
+        }
+    }
+    let _clear = Clear;
     crate::memory::release_freed();
-    clear_release_pending();
 }
