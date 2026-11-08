@@ -18,6 +18,7 @@ use fbterm_config::{
 
 mod fonts;
 mod glue;
+pub(crate) use glue::release_when_worker_idle;
 pub mod view;
 
 pub use fonts::FontChoice;
@@ -222,6 +223,10 @@ pub struct SettingsState {
     /// debounce: it applies when that quiet period passes (`Flush`) or on Enter, never per
     /// keystroke, so `2` on the way to `20000` cannot cut output scrolling in that moment.
     held_lower: Option<(usize, u64)>,
+    /// A recent-lines-kept-uncompressed value typed, with the change number of its debounce: it
+    /// applies when that quiet period passes (`Flush`) or on Enter, never per keystroke (each
+    /// apply re-marks every tab's history, and a lower one asks for a memory release).
+    held_uncompressed: Option<(usize, u64)>,
     /// The most history lines any open tab holds (set by the app when the window opens and
     /// before a typed scrollback is evaluated).
     pub max_open_history: usize,
@@ -269,6 +274,7 @@ impl SettingsState {
             retries_text: String::new(),
             pending_lower: None,
             held_lower: None,
+            held_uncompressed: None,
             max_open_history: 0,
             fonts,
             read_only,
@@ -299,6 +305,7 @@ impl SettingsState {
         self.retries_text = values.tunnel_max_retries.to_string();
         self.pending_lower = None;
         self.held_lower = None;
+        self.held_uncompressed = None;
         if !self.fonts.iter().any(|f| f.family == values.font_family) {
             let installed = self
                 .fonts
@@ -465,6 +472,15 @@ impl SettingsState {
                     self.held_lower = None;
                     // The tabs may have grown since it was typed.
                     self.set_scrollback(v, false)
+                }
+                _ if self.held_uncompressed.is_some_and(|(_, at)| at == n) => {
+                    let (v, _) = self.held_uncompressed.take().expect("checked above");
+                    // The scrollback (and with it the range) may have changed since.
+                    if self.uncompressed_enabled() && self.uncompressed_range().contains(&v) {
+                        self.change(SettingChange::UncompressedHistoryLines(v), false)
+                    } else {
+                        self.flush_now()
+                    }
                 }
                 _ => Effect {
                     apply: None,
@@ -664,13 +680,23 @@ impl SettingsState {
             SettingsMsg::UncompressedText(s) => {
                 let parsed = parse_count(&s);
                 self.uncompressed_text = s;
+                self.held_uncompressed = None;
                 match parsed {
+                    // Maybe a prefix of a larger number: applied after the quiet period or on
+                    // Enter, as the scrollback field holds a lower value.
                     Some(v) if self.uncompressed_range().contains(&v) => {
-                        self.change(SettingChange::UncompressedHistoryLines(v), true)
+                        self.generation += 1;
+                        self.held_uncompressed = Some((v, self.generation));
+                        Effect {
+                            apply: None,
+                            write: Write::After(self.generation),
+                        }
                     }
                     _ => Effect::NONE,
                 }
             }
+            // A held value is the field's own: applied here, its quiet period then finds it
+            // already set and applies nothing more.
             SettingsMsg::UncompressedSubmit => match parse_count(&self.uncompressed_text) {
                 Some(v) if self.uncompressed_range().contains(&v) => {
                     self.change(SettingChange::UncompressedHistoryLines(v), false)
@@ -839,6 +865,7 @@ impl SettingsState {
         if matches!(change, SettingChange::ScrollbackLines(_)) {
             // The saved uncompressed value may have been dragged down with it.
             self.uncompressed_text = self.uncompressed_effective().to_string();
+            self.held_uncompressed = None;
         }
         self.pending.retain(|p| p.key() != change.key());
         self.pending.push(change.clone());

@@ -1029,12 +1029,73 @@ fn uncompressed_in_range_saves_and_shows_default_when_absent() {
     s.update(SettingsMsg::HistoryCompression(true));
     s.take_pending();
     let e = s.update(SettingsMsg::UncompressedText("5,000".into()));
+    assert_eq!(e.apply, None, "typing waits for Enter or the quiet period");
+    let Write::After(n) = e.write else {
+        panic!("a typed value waits: {e:?}");
+    };
+    assert_eq!(s.uncompressed_error(), None);
+    let e = s.update(SettingsMsg::Flush(n));
     assert_eq!(
         e.apply,
         Some(SettingChange::UncompressedHistoryLines(5_000))
     );
-    assert!(matches!(e.write, Write::After(_)));
-    assert_eq!(s.uncompressed_error(), None);
+    assert_eq!(e.write, Write::Now);
+}
+
+/// Typing `20000` over `10000` one key at a time applies none of `2`, `20`, `200`, `2000` (a
+/// lowering would compress every tab and ask for a memory release, and each apply makes open
+/// find bars search again): only the value standing at Enter, or when the quiet period after
+/// the last key passes, applies, once.
+#[test]
+fn typing_the_uncompressed_value_applies_once() {
+    let typed = |s: &mut SettingsState| {
+        let mut generations = Vec::new();
+        for text in ["2", "20", "200", "2000", "20000"] {
+            let e = s.update(SettingsMsg::UncompressedText(text.into()));
+            assert_eq!(e.apply, None, "{text} applied while typing");
+            if let Write::After(n) = e.write {
+                generations.push(n);
+            }
+        }
+        generations
+    };
+    let fresh = || {
+        let mut s = with_scrollback(100_000);
+        s.update(SettingsMsg::HistoryCompression(true));
+        assert_eq!(s.uncompressed_text, "10000");
+        s.take_pending();
+        s
+    };
+
+    // Enter applies the value once.
+    let mut s = fresh();
+    let generations = typed(&mut s);
+    let e = s.update(SettingsMsg::UncompressedSubmit);
+    assert_eq!(
+        e.apply,
+        Some(SettingChange::UncompressedHistoryLines(20_000))
+    );
+    assert_eq!(e.write, Write::Now);
+    // The quiet periods of the keys typed then apply nothing more.
+    for n in generations {
+        assert_eq!(s.update(SettingsMsg::Flush(n)).apply, None);
+    }
+
+    // Without Enter: only the last key's quiet period applies, once.
+    let mut s = fresh();
+    let generations = typed(&mut s);
+    let (last, older) = generations.split_last().expect("typed values wait");
+    for &n in older {
+        assert_eq!(s.update(SettingsMsg::Flush(n)).apply, None);
+    }
+    let e = s.update(SettingsMsg::Flush(*last));
+    assert_eq!(
+        e.apply,
+        Some(SettingChange::UncompressedHistoryLines(20_000))
+    );
+    assert_eq!(e.write, Write::Now);
+    assert_eq!(s.update(SettingsMsg::Flush(*last)).apply, None);
+    assert_eq!(s.values.uncompressed_history_lines, Some(20_000));
 }
 
 #[test]
