@@ -507,7 +507,7 @@ fn terminal<'a>(
             t,
             "Grapheme clusters",
             Some(
-                "Keeps joined emoji and flags in one cell in new tabs. Programs can turn this on themselves.",
+                "Keeps joined emoji and flags in one cell in new terminals and after a restart or reset. Programs can turn this on themselves.",
             ),
             false,
             switch(
