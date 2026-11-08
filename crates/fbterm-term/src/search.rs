@@ -839,6 +839,22 @@ mod tests {
     }
 
     #[test]
+    fn a_joined_emoji_is_one_match_over_its_two_cells() {
+        let mut t = term(20, 5, 100);
+        t.feed("\x1b[?2027hab👨\u{200D}👩\u{200D}👧c".as_bytes());
+        let top = t.stable_line(Line(0));
+        let out = run(t, &req("👨\u{200D}👩\u{200D}👧", false));
+        assert_eq!(out.hits.len(), 1);
+        assert_eq!(
+            out.hits[0].range,
+            SearchMatch {
+                start: sp(top, 2),
+                end: sp(top, 3)
+            }
+        );
+    }
+
+    #[test]
     fn stops_at_the_limit_and_resumes_above() {
         let mut t = term(20, 5, 5000);
         for i in 0..3000 {

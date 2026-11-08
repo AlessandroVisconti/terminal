@@ -661,6 +661,41 @@ mod tests {
         assert!(t.mode().contains(TermMode::GRAPHEME_CLUSTER));
     }
 
+    /// `(char, wide)` for the first `n` cells of line 0.
+    fn cells(t: &Terminal, n: usize) -> Vec<(char, bool)> {
+        (0..n)
+            .map(|c| {
+                let cell = &t.term().grid().screen()[Line(0)][Column(c)];
+                (cell.c, cell.flags.contains(Flags::WIDE_CHAR))
+            })
+            .collect()
+    }
+
+    const CLUSTERS: &str = "🇮🇹 👍🏽 👨\u{200D}👩\u{200D}👧 ❤\u{FE0F}";
+
+    #[test]
+    fn clusters_with_mode_one_cell_each() {
+        let mut t = Terminal::new(size(80, 24), 100);
+        t.feed(format!("\x1b[?2027h{CLUSTERS}").as_bytes());
+        let wide: Vec<char> = cells(&t, 11)
+            .into_iter()
+            .filter(|&(_, wide)| wide)
+            .map(|(c, _)| c)
+            .collect();
+        assert_eq!(wide, ['🇮', '👍', '👨', '❤']);
+        assert_eq!(t.term().grid().cursor.point.column, Column(11));
+    }
+
+    #[test]
+    fn clusters_without_mode_unchanged() {
+        let mut t = Terminal::new(size(80, 24), 100);
+        t.feed(CLUSTERS.as_bytes());
+        // Regional indicators and the family's members take cells of their own; zero-width
+        // pieces attach to the cell before them: 2 + 1 + 4 + 1 + 6 + 1 + 1 columns.
+        assert_eq!(t.term().grid().cursor.point.column, Column(16));
+        assert_eq!(cells(&t, 2), [('🇮', false), ('🇹', false)]);
+    }
+
     #[test]
     fn kitty_requests_ignored_when_setting_off() {
         let mut t = Terminal::new(size(80, 24), 100);

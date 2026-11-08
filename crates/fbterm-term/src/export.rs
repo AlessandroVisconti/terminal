@@ -510,6 +510,13 @@ mod tests {
     }
 
     #[test]
+    fn grapheme_clusters_are_written_whole() {
+        let line = "🇮🇹 👍🏽 👨\u{200D}👩\u{200D}👧 ❤\u{FE0F}";
+        let t = term(20, 3, format!("\x1b[?2027h{line}").as_bytes());
+        assert_eq!(text(&t, ExportFormat::Plain), format!("{line}\n"));
+    }
+
+    #[test]
     fn ansi_keeps_colors_and_attributes_and_resets_at_line_ends() {
         let t = term(
             40,
