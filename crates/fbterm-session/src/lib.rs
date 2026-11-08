@@ -36,7 +36,8 @@ pub enum SessionEvent {
     Disconnected(String),
     /// A session task that was closed on purpose has let go of its terminal. Sent only after a
     /// close (a program ending by itself sends nothing), once the task's own reference is
-    /// dropped, so the app can tell when closing the tab freed its terminal.
+    /// dropped, so the app can tell when closing the tab freed its terminal. The app also sends
+    /// it itself (any id) when the history worker let go of a closed tab's terminal last.
     Released,
 }
 

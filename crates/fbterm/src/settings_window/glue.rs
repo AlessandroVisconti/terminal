@@ -473,17 +473,10 @@ impl App {
             (Some(old), Some(new)) => new < old,
             _ => false,
         };
-        // A release already waiting for the worker will cover this change too.
-        if !frees || !mark_release_pending() {
+        if !frees {
             return Task::none();
         }
-        Task::perform(
-            async {
-                let _ = tokio::task::spawn_blocking(release_when_idle).await;
-            },
-            |()| (),
-        )
-        .discard()
+        release_when_worker_idle()
     }
 
     /// Set every open terminal's scrollback limit. If any lost lines, release the freed memory
@@ -603,6 +596,23 @@ impl App {
         // The thread is detached: drawing detects anything it has not reached yet.
         drop(fbterm_term::ligature_sets::warm_ligature_sets(fonts));
     }
+}
+
+/// Ask for the memory release once the history worker has drained (`release_when_idle` on the
+/// blocking pool), for a user change that leaves the worker compressing history: switching
+/// compression on, fewer uncompressed lines, a reflow. A release already waiting covers this
+/// one too: none is added then.
+pub(crate) fn release_when_worker_idle() -> Task<Message> {
+    if !mark_release_pending() {
+        return Task::none();
+    }
+    Task::perform(
+        async {
+            let _ = tokio::task::spawn_blocking(release_when_idle).await;
+        },
+        |()| (),
+    )
+    .discard()
 }
 
 /// How long the release waits for the history worker to drain before it releases anyway.

@@ -2,9 +2,20 @@
 //!
 //! Dropping a scrollback frees its blocks to the allocator, which keeps much of them resident.
 //! [`release_freed`] asks the allocator to hand them back. It is called only after a *user*
-//! action that frees history (closing a tab or window, lowering the scrollback setting). A
-//! program clearing its own history (`CSI 3 J`, `RIS`) never reaches it: remote programs must
-//! not cause host work, and the freed blocks are reused by the next output anyway.
+//! action that frees history:
+//!
+//! - closing a tab or window, once the last holder of its terminals let go (the app itself, the
+//!   session task's `SessionEvent::Released`, or the history worker's notice when a close landed
+//!   during one of its lock holds, [`worker_release_notice`]);
+//! - lowering the scrollback setting;
+//! - with history compression, once the worker has drained (`release_when_idle` in the Settings
+//!   glue, at most one waiting): switching compression on, lowering the number of recent lines
+//!   kept uncompressed, and a resize that reflowed a terminal with compression on (window resize,
+//!   split, docked panel, font size), whose rebuilt history the worker compresses again.
+//!
+//! A program clearing its own history (`CSI 3 J`, `RIS`) never reaches it, and neither does
+//! anything else a program does (programs cannot resize the terminal): remote programs must not
+//! cause host work, and the freed blocks are reused by the next output anyway.
 //!
 //! Requests run on tokio's blocking pool and fold: a request runs at once unless one ran less
 //! than [`WINDOW`] ago, in which case a single run is scheduled for the end of that window and
@@ -32,6 +43,20 @@ pub(crate) fn weak_terminals<'a>(panes: impl Iterator<Item = &'a Pane>) -> Vec<W
         })
         .map(Arc::downgrade)
         .collect()
+}
+
+/// What the history worker calls when it let go of a terminal's last reference: a
+/// `SessionEvent::Released` on the app's session events, so a tab closed while a worker turn
+/// held its terminal still gets its release (`App::release_swept`).
+pub(crate) fn worker_release_notice(
+    events: fbterm_session::EventSink,
+) -> impl Fn() + Send + Sync + 'static {
+    move || {
+        let _ = events.send((
+            fbterm_session::SessionId::next(),
+            fbterm_session::SessionEvent::Released,
+        ));
+    }
 }
 
 /// Minimum time between two releases.

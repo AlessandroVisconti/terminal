@@ -65,11 +65,25 @@ pub struct Worker {
     /// The terminal (as a pointer) of every install hold, in order.
     #[cfg(test)]
     installs: Mutex<Vec<usize>>,
+    /// A test's code run once, right before the next batch's jobs run.
+    #[cfg(test)]
+    before_run: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    /// Called when a turn let go of the last reference to a terminal (see [`on_released`]).
+    released: Mutex<Option<Released>>,
 }
+
+/// See [`on_released`].
+type Released = Arc<dyn Fn() + Send + Sync>;
 
 impl Worker {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Call `f` (on the worker's thread, no lock held) whenever a turn lets go of the last
+    /// reference to a terminal; replaces an earlier one.
+    pub fn on_released(&self, f: impl Fn() + Send + Sync + 'static) {
+        *self.released.lock() = Some(Arc::new(f));
     }
 
     /// Queue `term` for history jobs and wake the worker. Cheap when it is already queued
@@ -157,17 +171,27 @@ impl Worker {
 
     /// One turn of one terminal: run its batch with no lock held, then in one hold install the
     /// results and take the next batch. Requeued while it has work left.
+    ///
+    /// The terminal is only held (upgraded from the entry's weak reference) around the lock
+    /// holds, never while jobs run: a tab closed meanwhile goes with its app and session
+    /// references, which report the memory release. If a close lands during a hold, the turn
+    /// lets go last and reports it through [`Worker::on_released`].
     fn turn(&self, entry: Entry) {
-        // A closed terminal: its jobs are dropped with it.
-        let Some(term) = entry.term.upgrade() else {
-            return;
-        };
         let mut jobs = entry.jobs;
         if jobs.is_empty() {
+            // A closed terminal: its jobs are dropped with it.
+            let Some(term) = entry.term.upgrade() else {
+                return;
+            };
             jobs = term.lock().next_history_jobs(BATCH);
+            self.let_go(term);
             if jobs.is_empty() {
                 return;
             }
+        }
+        #[cfg(test)]
+        if let Some(f) = self.before_run.lock().take() {
+            f();
         }
         // A job that panics must not take the thread (and every terminal's compression) down:
         // drop its batch and turn compression off for this terminal, so the same block is not
@@ -186,9 +210,14 @@ impl Worker {
                 })
                 .collect::<Vec<_>>()
         }));
+        // Closed while the jobs ran: the results are dropped.
+        let Some(term) = entry.term.upgrade() else {
+            return;
+        };
         let Ok(done) = done else {
             tracing::error!("a history compression job panicked; compression is off for its tab");
             term.lock().set_history_compression(None);
+            self.let_go(term);
             return;
         };
         let (next, more) = {
@@ -205,6 +234,19 @@ impl Worker {
         self.installs.lock().push(Arc::as_ptr(&term) as usize);
         if more {
             self.requeue(&term, next);
+        }
+        self.let_go(term);
+    }
+
+    /// Drop a turn's reference to `term`; if it was the last one (the tab closed during the
+    /// hold), the terminal is dropped here and the release hook is called.
+    fn let_go(&self, term: SharedTerminal) {
+        if let Some(last) = Arc::into_inner(term) {
+            drop(last);
+            let hook = self.released.lock().clone();
+            if let Some(hook) = hook {
+                hook();
+            }
         }
     }
 
@@ -230,6 +272,13 @@ impl Worker {
 /// the first call.
 pub fn enqueue(term: &SharedTerminal) {
     global().enqueue(term);
+}
+
+/// Call `f` whenever the process-wide worker lets go of the last reference to a terminal (a tab
+/// closed while one of its lock holds ran), so the app can ask for the memory release as it does
+/// when a session task lets go last. Does not start the worker's thread.
+pub fn on_released(f: impl Fn() + Send + Sync + 'static) {
+    WORKER.get_or_init(Worker::new).on_released(f);
 }
 
 /// Block until the process-wide worker has nothing queued and no turn running. Returns at once
@@ -428,6 +477,53 @@ mod tests {
         worker.enqueue(&term);
         drop(term);
         worker.run_until_idle();
+    }
+
+    /// The tab of a terminal is closed while a turn runs its jobs: the worker holds no
+    /// reference across the run, so the terminal goes with the app's and the session's, and
+    /// when the worker is the last to let go it says so once (the app then asks for the memory
+    /// release, as for a session that let go last).
+    #[test]
+    fn closing_a_terminal_mid_turn_reports_its_release() {
+        let term = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        let weak = Arc::downgrade(&term);
+        let worker = Worker::new();
+        let released = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = released.clone();
+        worker.on_released(move || {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+        // Mid-run, the app and the session let go: nothing but the worker may still hold it.
+        let holder = Arc::new(Mutex::new(Some(term.clone())));
+        let held = holder.clone();
+        let seen = Arc::new(Mutex::new(None));
+        let strong = seen.clone();
+        let watched = weak.clone();
+        *worker.before_run.lock() = Some(Box::new(move || {
+            held.lock().take();
+            *strong.lock() = Some(watched.strong_count());
+        }));
+        worker.enqueue(&term);
+        drop(term);
+        worker.run_until_idle();
+        assert_eq!(
+            *seen.lock(),
+            Some(0),
+            "the worker held the terminal across the run"
+        );
+        assert_eq!(weak.strong_count(), 0);
+        // Nobody else let go last here, so the worker reported nothing it did not do.
+        assert!(holder.lock().is_none());
+        assert_eq!(released.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        // The worker lets go last (the others dropped theirs during one of its lock holds):
+        // reported exactly once, and only then.
+        let term = shared(Terminal::new(size(), 100));
+        let other = term.clone();
+        worker.let_go(term);
+        assert_eq!(released.load(std::sync::atomic::Ordering::SeqCst), 0);
+        worker.let_go(other);
+        assert_eq!(released.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]

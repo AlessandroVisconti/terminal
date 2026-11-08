@@ -331,8 +331,9 @@ pub struct App {
     pub(crate) grids: HashMap<PaneId, GridSize>,
     /// The area each terminal window lays its panes out in, as last drawn.
     pub(crate) areas: HashMap<window::Id, iced::Size>,
-    /// Session resizes waiting for their quiet period: generation and grid, by pane.
-    pub(crate) pending_resizes: HashMap<PaneId, (u64, GridSize)>,
+    /// Session resizes waiting for their quiet period: generation, grid and whether any of them
+    /// changed the columns (a reflow), by pane.
+    pub(crate) pending_resizes: HashMap<PaneId, (u64, GridSize, bool)>,
     /// Counts pane resizes, so only the last of a burst reaches the session.
     pub(crate) resize_generation: u64,
     /// The window that last had focus: where unscoped actions go.
@@ -436,8 +437,9 @@ pub struct App {
     /// The banner lines about `font_features` entries now in `notices`
     /// (see `App::refresh_feature_notices`).
     pub(crate) feature_notices: Vec<String>,
-    /// Terminals of tabs the user closed that a session task still holds; the release is
-    /// requested when `SessionEvent::Released` shows the last holder let go (`windows.rs`).
+    /// Terminals of tabs the user closed that a session task (or a history worker turn) still
+    /// holds; the release is requested when `SessionEvent::Released` shows the last holder let go
+    /// (`windows.rs`).
     pub(crate) pending_release: Vec<Vec<crate::memory::WeakTerminal>>,
     /// Whether one of our windows has focus at all (the app is in front).
     pub app_active: bool,
@@ -689,6 +691,11 @@ impl App {
 
         let style = crate::settings_window::terminal_style(&settings);
         let (events, rx) = unbounded_channel();
+        // A tab closed while a history worker turn held its terminal: the worker lets go last
+        // and says so here, like a session task does.
+        fbterm_term::history_worker::on_released(crate::memory::worker_release_notice(
+            events.clone(),
+        ));
         let tunnel_retries = Arc::new(AtomicU32::new(settings.tunnel_max_retries));
         let mut app = Self {
             tunnels: Tunnels::new(pool.clone()),
@@ -1086,10 +1093,7 @@ impl App {
             Message::Terminal(wid, pane, output) => self.terminal_output(wid, pane, output),
             Message::Tiles(wid, msg) => self.tiles_msg(wid, msg),
             Message::Drag(wid, msg) => self.drag_msg(wid, msg),
-            Message::ResizeSettled(pane, generation) => {
-                self.resize_settled(pane, generation);
-                Task::none()
-            }
+            Message::ResizeSettled(pane, generation) => self.resize_settled(pane, generation),
             Message::NewTab => self.action(None, Action::NewTab),
             Message::CloseTab(i) => match self.focused_window() {
                 Some(wid) => self.close_tab_asking(wid, i),

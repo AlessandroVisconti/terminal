@@ -754,3 +754,76 @@ fn lowering_scrollback_below_uncompressed_applies_both() {
         assert_eq!(t.lock().history_compression(), keep);
     }
 }
+
+/// A resize that changes a compressed terminal's columns rebuilds its history uncompressed
+/// (a reflow); the worker compresses it again, and the memory that frees goes back to the OS
+/// once it drains: one release per settled resize, however many steps a drag had, and one
+/// waiting at most. Lines-only resizes and terminals without compression ask for none.
+#[test]
+fn a_reflow_with_compression_on_asks_for_one_release() {
+    use fbterm_term::{GridSize, TerminalOutput};
+    let (mut app, terms) = app_with_two_tabs(50);
+    apply(&mut app, |s| s.history_compression = true);
+    // The switch-on release ran.
+    super::glue::release_when_idle();
+    let (wid, pane) = app
+        .windows
+        .iter()
+        .find_map(|(wid, w)| {
+            w.tabs.iter().flat_map(|t| &t.panes).find_map(|p| {
+                p.terminal()
+                    .is_some_and(|t| std::sync::Arc::ptr_eq(t, &terms[0]))
+                    .then_some((*wid, p.id))
+            })
+        })
+        .unwrap();
+    let grid = |cols: u16, rows: u16| GridSize {
+        cols,
+        rows,
+        ..crate::app::DEFAULT_GRID
+    };
+    let resized = |app: &mut App, g: GridSize| {
+        let _ = app.update(Message::Terminal(wid, pane, TerminalOutput::Resized(g)));
+        app.pending_resizes[&pane].0
+    };
+    let settle = |app: &mut App, generation: u64| {
+        app.update(Message::ResizeSettled(pane, generation)).units()
+    };
+
+    // The first layout is not a reflow of anything the worker compressed.
+    let g = resized(&mut app, grid(100, 30));
+    assert_eq!(settle(&mut app, g), 0);
+
+    // A drag: several column changes, one settle, one release task.
+    let generations: Vec<u64> = [90, 80, 70]
+        .into_iter()
+        .map(|cols| resized(&mut app, grid(cols, 30)))
+        .collect();
+    for &stale in &generations[..2] {
+        assert_eq!(settle(&mut app, stale), 0);
+    }
+    assert_eq!(settle(&mut app, generations[2]), 1);
+    // Another reflow while that release waits for the worker spawns no second waiter.
+    let g = resized(&mut app, grid(60, 30));
+    assert_eq!(settle(&mut app, g), 0);
+    let before = crate::memory::requests();
+    super::glue::release_when_idle();
+    assert_eq!(crate::memory::requests(), before + 1);
+
+    // Lines only: no reflow, no release.
+    let g = resized(&mut app, grid(60, 20));
+    assert_eq!(settle(&mut app, g), 0);
+    // A divider drag ending flushes the resize at once: the release comes with it.
+    resized(&mut app, grid(50, 20));
+    assert_eq!(
+        app.update(Message::Tiles(wid, crate::tiles::TilesMsg::EndDrag))
+            .units(),
+        1
+    );
+    super::glue::release_when_idle();
+
+    // With compression off a reflow frees nothing to release.
+    apply(&mut app, |s| s.history_compression = false);
+    let g = resized(&mut app, grid(40, 20));
+    assert_eq!(settle(&mut app, g), 0);
+}

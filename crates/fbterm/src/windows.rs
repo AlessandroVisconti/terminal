@@ -272,7 +272,8 @@ impl App {
     /// A tab or window the user closed freed `terminals`: request the memory release once none
     /// is held any more. The session task may still hold its reference for a moment (or, with a
     /// background job on the PTY, for long), so a held terminal waits in `pending_release` for
-    /// `SessionEvent::Released` (see `release_swept`); nothing polls. Only user closes come
+    /// `SessionEvent::Released` (see `release_swept`; the history worker sends one too when a
+    /// turn of its held the terminal and let go last); nothing polls. Only user closes come
     /// here, never output or the end of a program.
     pub(crate) fn release_closed(&mut self, terminals: Vec<crate::memory::WeakTerminal>) {
         if terminals.is_empty() {
