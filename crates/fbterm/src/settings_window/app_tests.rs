@@ -827,3 +827,61 @@ fn a_reflow_with_compression_on_asks_for_one_release() {
     let g = resized(&mut app, grid(40, 20));
     assert_eq!(settle(&mut app, g), 0);
 }
+
+/// A reflow rebuilds a compressed terminal's history uncompressed, and nothing else may come to
+/// queue it (the program can stay silent): the settled resize hands it to the worker, which
+/// compresses it again before the release.
+#[test]
+fn a_reflow_queues_the_terminal_for_recompression() {
+    use fbterm_term::{GridSize, TerminalOutput};
+    let (mut app, terms) = app_with_two_tabs(0);
+    apply(&mut app, |s| {
+        s.scrollback_lines = 100_000;
+        s.history_compression = true;
+        s.uncompressed_history_lines = Some(1_000);
+    });
+    let term = &terms[0];
+    {
+        let mut t = term.lock();
+        for i in 0..20_000 {
+            t.feed(format!("service line {i} with some padding to fill blocks\r\n").as_bytes());
+        }
+        t.run_history_jobs();
+        assert!(!t.has_history_jobs());
+    }
+    super::glue::release_when_idle();
+    let (wid, pane) = app
+        .windows
+        .iter()
+        .find_map(|(wid, w)| {
+            w.tabs.iter().flat_map(|t| &t.panes).find_map(|p| {
+                p.terminal()
+                    .is_some_and(|t| std::sync::Arc::ptr_eq(t, term))
+                    .then_some((*wid, p.id))
+            })
+        })
+        .unwrap();
+    let grid = |cols: u16| GridSize {
+        cols,
+        rows: 30,
+        ..crate::app::DEFAULT_GRID
+    };
+    // What the widget does: resize the terminal, then report it; the settle flushes it.
+    let resize = |app: &mut App, g: GridSize| {
+        term.lock().resize(g);
+        let _ = app.update(Message::Terminal(wid, pane, TerminalOutput::Resized(g)));
+        let generation = app.pending_resizes[&pane].0;
+        let _ = app.update(Message::ResizeSettled(pane, generation));
+    };
+    resize(&mut app, grid(100));
+    resize(&mut app, grid(70));
+    assert!(
+        fbterm_term::history_worker::wait_idle_for(std::time::Duration::from_secs(10)),
+        "worker did not drain"
+    );
+    assert!(
+        !term.lock().has_history_jobs(),
+        "the reflowed history was never queued for compression"
+    );
+    super::glue::release_when_idle();
+}

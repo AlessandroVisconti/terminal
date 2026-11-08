@@ -491,17 +491,25 @@ impl App {
     /// Settled resizes reflowed `panes`: a terminal with history compression on rebuilt its
     /// history uncompressed, and the worker compresses it again. Once it drains, the memory that
     /// frees goes back to the OS (one release waiting at most, however many steps a drag had).
-    /// Only the user's own resizes get here: programs cannot resize the terminal.
+    /// Only the user's own resizes get here: programs cannot resize the terminal. Each such
+    /// terminal is queued on the worker here, since a silent program would never queue it.
     fn release_after_reflow(&self, panes: impl IntoIterator<Item = PaneId>) -> Task<Message> {
-        let compressed = panes.into_iter().any(|pane| {
-            self.windows
-                .values()
-                .find_map(|w| {
-                    let (t, p) = w.locate(pane)?;
-                    w.tabs[t].panes[p].terminal()
-                })
-                .is_some_and(|term| term.lock().history_compression().is_some())
-        });
+        let mut compressed = false;
+        for pane in panes {
+            let term = self.windows.values().find_map(|w| {
+                let (t, p) = w.locate(pane)?;
+                w.tabs[t].panes[p].terminal()
+            });
+            let Some(term) = term else { continue };
+            let (on, jobs) = {
+                let t = term.lock();
+                (t.history_compression().is_some(), t.has_history_jobs())
+            };
+            if jobs {
+                fbterm_term::history_worker::enqueue(term);
+            }
+            compressed |= on;
+        }
         if compressed {
             crate::settings_window::release_when_worker_idle()
         } else {
