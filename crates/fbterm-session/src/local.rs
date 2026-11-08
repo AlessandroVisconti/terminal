@@ -73,6 +73,19 @@ pub fn spawn_local(
     spawn_local_into(profile, terminal, events)
 }
 
+/// Serializes [`open_pty`]: macOS `openpty` is not safe to call from several threads at once
+/// (about one call in a thousand fails with `Unknown error: -6` under contention), and
+/// sessions can open together, such as restored tabs.
+static OPEN_PTY: Mutex<()> = parking_lot::const_mutex(());
+
+/// A new pseudo-terminal pair. Calls take turns; see [`OPEN_PTY`].
+fn open_pty(size: PtySize) -> Result<portable_pty::PtyPair, SessionError> {
+    let _turn = OPEN_PTY.lock();
+    native_pty_system()
+        .openpty(size)
+        .map_err(|e| SessionError::Pty(e.to_string()))
+}
+
 /// Like [`spawn_local`], but the program's output continues in an existing terminal (at its
 /// current size), below whatever it already shows; its scrollback is kept.
 pub fn spawn_local_into(
@@ -81,9 +94,7 @@ pub fn spawn_local_into(
     events: EventSink,
 ) -> Result<SessionHandle, SessionError> {
     let size = terminal.lock().size();
-    let pair = native_pty_system()
-        .openpty(pty_size(size))
-        .map_err(|e| SessionError::Pty(e.to_string()))?;
+    let pair = open_pty(pty_size(size))?;
 
     let mut cmd = CommandBuilder::new(&profile.program);
     cmd.args(&profile.args);
@@ -318,5 +329,30 @@ mod tests {
             1,
             "a reaped pid is never signalled"
         );
+    }
+    /// macOS `openpty` fails now and then (`Unknown error: -6`) when several threads call it
+    /// at once; sessions opened together (restored tabs, parallel tests) must all succeed.
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_pty_opens_all_succeed() {
+        let size = super::pty_size(fbterm_term::GridSize {
+            cols: 80,
+            rows: 24,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        });
+        let failures = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..24 {
+                scope.spawn(|| {
+                    for _ in 0..600 {
+                        if super::open_pty(size).is_err() {
+                            failures.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                });
+            }
+        });
+        assert_eq!(failures.load(Ordering::Relaxed), 0);
     }
 }
