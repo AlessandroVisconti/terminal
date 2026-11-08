@@ -3,6 +3,7 @@
 mod export;
 mod input;
 mod kitty;
+pub mod ligature_sets;
 mod palette;
 mod search;
 mod selection;
