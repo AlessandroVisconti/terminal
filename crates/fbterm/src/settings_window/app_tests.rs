@@ -600,3 +600,132 @@ fn the_key_log_never_listens_while_it_is_off() {
     assert!(app.recording_window().is_some());
     assert!(!app.key_log_listening());
 }
+
+/// An app with two tabs, each with a terminal holding `lines` lines of history.
+fn app_with_two_tabs(lines: usize) -> (App, Vec<fbterm_term::SharedTerminal>) {
+    use crate::restore_tests::{fill_history, paths_with, profile, saved};
+    let (a, b) = (profile("a"), profile("b"));
+    let paths = paths_with(&[a.clone(), b.clone()]);
+    fbterm_config::SavedState {
+        windows: vec![saved(&[&a, &b], 0)],
+        ..Default::default()
+    }
+    .save(&paths.state())
+    .unwrap();
+    let (mut app, _) = App::build(paths, true);
+    // A background tab starts on first show.
+    let _ = app.update(Message::SelectTab(1));
+    let terms: Vec<_> = app
+        .windows
+        .values()
+        .flat_map(|w| &w.tabs)
+        .flat_map(|t| &t.panes)
+        .filter_map(|p| p.terminal().cloned())
+        .collect();
+    assert_eq!(terms.len(), 2);
+    for t in &terms {
+        fill_history(t, lines);
+    }
+    (app, terms)
+}
+
+fn apply(app: &mut App, edit: impl FnOnce(&mut Settings)) {
+    let mut new = app.settings.clone();
+    edit(&mut new);
+    let _ = app.apply_settings(new, crate::app::SettingsSource::Window);
+}
+
+#[test]
+fn compression_setting_reaches_open_terminals() {
+    let (mut app, terms) = app_with_two_tabs(50);
+    assert!(
+        terms
+            .iter()
+            .all(|t| t.lock().history_compression().is_none())
+    );
+    apply(&mut app, |s| s.history_compression = true);
+    let keep = app.settings.history_compression_keep();
+    assert!(keep.is_some());
+    for t in &terms {
+        assert_eq!(t.lock().history_compression(), keep);
+    }
+}
+
+#[test]
+fn compression_off_applies_to_open_terminals() {
+    let (mut app, terms) = app_with_two_tabs(50);
+    apply(&mut app, |s| s.history_compression = true);
+    apply(&mut app, |s| s.history_compression = false);
+    for t in &terms {
+        assert_eq!(t.lock().history_compression(), None);
+    }
+}
+
+#[test]
+fn switching_on_requests_release_once_idle() {
+    let (mut app, _terms) = app_with_two_tabs(50);
+    let before = crate::memory::requests();
+    apply(&mut app, |s| s.history_compression = true);
+    // The release waits for the worker: nothing yet, then exactly one request once idle.
+    assert_eq!(crate::memory::requests(), before);
+    super::glue::release_when_idle();
+    assert_eq!(crate::memory::requests(), before + 1);
+}
+
+#[test]
+fn only_a_freeing_change_asks_for_the_release_task() {
+    let (mut app, _terms) = app_with_two_tabs(50);
+    let units = |app: &mut App, edit: &dyn Fn(&mut Settings)| {
+        let mut new = app.settings.clone();
+        edit(&mut new);
+        app.apply_settings(new, crate::app::SettingsSource::Window)
+            .units()
+    };
+    assert_eq!(units(&mut app, &|s| s.history_compression = true), 1);
+    // Lowering the kept lines frees memory; raising them again does not.
+    assert_eq!(
+        units(&mut app, &|s| s.uncompressed_history_lines = Some(2_000)),
+        1
+    );
+    assert_eq!(
+        units(&mut app, &|s| s.uncompressed_history_lines = Some(5_000)),
+        0
+    );
+    // Turning off does not.
+    assert_eq!(units(&mut app, &|s| s.history_compression = false), 0);
+}
+
+#[test]
+fn output_driven_compression_never_requests_release() {
+    let (mut app, terms) = app_with_two_tabs(0);
+    apply(&mut app, |s| s.history_compression = true);
+    let before = crate::memory::requests();
+    let worker = fbterm_term::history_worker::Worker::new();
+    for t in &terms {
+        {
+            let mut g = t.lock();
+            for i in 0..12_000 {
+                g.feed(format!("output line {i} with some padding to fill blocks\r\n").as_bytes());
+            }
+        }
+        worker.enqueue(t);
+    }
+    worker.run_until_idle();
+    assert_eq!(crate::memory::requests(), before);
+}
+
+#[test]
+fn lowering_scrollback_below_uncompressed_applies_both() {
+    let (mut app, terms) = app_with_two_tabs(50);
+    apply(&mut app, |s| {
+        s.history_compression = true;
+        s.uncompressed_history_lines = Some(8_000);
+    });
+    assert_eq!(app.settings.history_compression_keep(), Some(8_000));
+    apply(&mut app, |s| s.scrollback_lines = 3_000);
+    let keep = app.settings.history_compression_keep();
+    assert_eq!(keep, Some(2_999));
+    for t in &terms {
+        assert_eq!(t.lock().history_compression(), keep);
+    }
+}

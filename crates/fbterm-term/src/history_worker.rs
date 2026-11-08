@@ -14,6 +14,7 @@
 //! waits in its queue entry for its next turn.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once, OnceLock, Weak};
 
 use feathercritty::term::HistoryJob;
@@ -37,6 +38,11 @@ struct Entry {
 pub struct Worker {
     queue: Mutex<VecDeque<Entry>>,
     wake: Condvar,
+    /// A turn is in progress. Only written with `queue` locked, so "queue empty and not busy"
+    /// is read without a gap between a turn's end and the check of a waiter.
+    busy: AtomicBool,
+    /// Signalled (with `queue` locked) when the queue is empty and no turn is in progress.
+    idle: Condvar,
     /// The terminal (as a pointer) of every install hold, in order.
     #[cfg(test)]
     installs: Mutex<Vec<usize>>,
@@ -67,10 +73,36 @@ impl Worker {
     /// Run turns until no terminal is queued (tests; the thread blocks instead).
     pub fn run_until_idle(&self) {
         loop {
-            let Some(entry) = self.queue.lock().pop_front() else {
+            let Some(entry) = self.take(&mut self.queue.lock()) else {
                 return;
             };
             self.turn(entry);
+            self.finish_turn();
+        }
+    }
+
+    /// Block until the queue is empty and no turn is in progress. A carried batch keeps its
+    /// entry queued, so it counts as work. Sleeps on a condition variable.
+    pub fn wait_idle(&self) {
+        let mut queue = self.queue.lock();
+        while !queue.is_empty() || self.busy.load(Ordering::SeqCst) {
+            self.idle.wait(&mut queue);
+        }
+    }
+
+    /// Pop the next entry, marking a turn in progress in the same hold.
+    fn take(&self, queue: &mut VecDeque<Entry>) -> Option<Entry> {
+        let entry = queue.pop_front()?;
+        self.busy.store(true, Ordering::SeqCst);
+        Some(entry)
+    }
+
+    /// A turn ended (any requeue already happened): wake waiters if nothing is left.
+    fn finish_turn(&self) {
+        let queue = self.queue.lock();
+        self.busy.store(false, Ordering::SeqCst);
+        if queue.is_empty() {
+            self.idle.notify_all();
         }
     }
 
@@ -80,13 +112,14 @@ impl Worker {
             let entry = {
                 let mut queue = self.queue.lock();
                 loop {
-                    if let Some(entry) = queue.pop_front() {
+                    if let Some(entry) = self.take(&mut queue) {
                         break entry;
                     }
                     self.wake.wait(&mut queue);
                 }
             };
             self.turn(entry);
+            self.finish_turn();
         }
     }
 
@@ -146,8 +179,17 @@ pub fn enqueue(term: &SharedTerminal) {
     global().enqueue(term);
 }
 
+/// Block until the process-wide worker has nothing queued and no turn running. Returns at once
+/// when its thread was never started.
+pub fn wait_idle() {
+    if let Some(worker) = WORKER.get() {
+        worker.wait_idle();
+    }
+}
+
+static WORKER: OnceLock<Worker> = OnceLock::new();
+
 fn global() -> &'static Worker {
-    static WORKER: OnceLock<Worker> = OnceLock::new();
     static START: Once = Once::new();
     let worker = WORKER.get_or_init(Worker::new);
     START.call_once(|| {
@@ -246,6 +288,25 @@ mod tests {
         for i in 1..=a.history_size() as i32 {
             assert!(ra.row(a, Line(-i)) == rb.row(b, Line(-i)), "row {}", -i);
         }
+    }
+
+    #[test]
+    fn wait_idle_returns_when_nothing_is_queued() {
+        Worker::new().wait_idle();
+    }
+
+    #[test]
+    fn wait_idle_blocks_until_every_job_is_done() {
+        let term = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        let worker = Arc::new(Worker::new());
+        worker.enqueue(&term);
+        let waiter = {
+            let worker = worker.clone();
+            std::thread::spawn(move || worker.wait_idle())
+        };
+        worker.run_until_idle();
+        waiter.join().unwrap();
+        assert!(!term.lock().has_history_jobs());
     }
 
     #[test]

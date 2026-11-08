@@ -389,6 +389,15 @@ impl App {
         } else {
             Task::none()
         };
+        let (old_keep, new_keep) = (
+            self.settings.history_compression_keep(),
+            new.history_compression_keep(),
+        );
+        let task = if new_keep == old_keep {
+            task
+        } else {
+            Task::batch([task, self.apply_history_compression(old_keep, new_keep)])
+        };
         let backdrop =
             |s: &Settings| Chrome::current().backdrop(s.background_opacity, s.background_blur);
         let (old_b, new_b) = (backdrop(&self.settings), backdrop(&new));
@@ -433,6 +442,47 @@ impl App {
             return Task::batch([task, chrome]);
         }
         task
+    }
+
+    /// Set every open terminal's history compression (`None`: off) and queue each for the
+    /// background worker. The memory that compressing frees goes back to the OS once, after the
+    /// worker drains, and only for a change the user made that frees memory: off to on, or a
+    /// lower number of uncompressed lines. Raising it or turning it off frees nothing.
+    fn apply_history_compression(
+        &mut self,
+        old: Option<usize>,
+        new: Option<usize>,
+    ) -> Task<Message> {
+        let panes = self
+            .windows
+            .values()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes);
+        for term in panes.filter_map(|p| p.terminal()) {
+            let queued = {
+                let mut t = term.lock();
+                t.set_history_compression(new);
+                t.has_history_jobs()
+            };
+            if queued {
+                fbterm_term::history_worker::enqueue(term);
+            }
+        }
+        let frees = match (old, new) {
+            (None, Some(_)) => true,
+            (Some(old), Some(new)) => new < old,
+            _ => false,
+        };
+        if !frees {
+            return Task::none();
+        }
+        Task::perform(
+            async {
+                let _ = tokio::task::spawn_blocking(release_when_idle).await;
+            },
+            |()| (),
+        )
+        .discard()
     }
 
     /// Set every open terminal's scrollback limit. If any lost lines, release the freed memory
@@ -552,4 +602,11 @@ impl App {
         // The thread is detached: drawing detects anything it has not reached yet.
         drop(fbterm_term::ligature_sets::warm_ligature_sets(fonts));
     }
+}
+
+/// Wait for the history worker to drain, then ask for the memory release (once). Runs on the
+/// blocking pool: the wait sleeps on a condition variable.
+pub(super) fn release_when_idle() {
+    fbterm_term::history_worker::wait_idle();
+    crate::memory::release_freed();
 }
