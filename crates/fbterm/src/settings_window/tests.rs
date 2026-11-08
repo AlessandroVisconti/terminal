@@ -971,3 +971,123 @@ fn the_group_tabs_row_shows_only_with_tabs_on_the_left() {
     };
     assert!(view::shows_group_tabs_row(&left));
 }
+
+fn with_scrollback(lines: usize) -> SettingsState {
+    let mut s = state();
+    s.update(SettingsMsg::ScrollbackText(lines.to_string()));
+    s.update(SettingsMsg::ScrollbackSubmit);
+    assert_eq!(s.values.scrollback_lines, lines);
+    s.take_pending();
+    s
+}
+
+#[test]
+fn compression_switch_saves() {
+    let mut s = state();
+    assert!(!s.values.history_compression);
+    let e = s.update(SettingsMsg::HistoryCompression(true));
+    assert_eq!(e.apply, Some(SettingChange::HistoryCompression(true)));
+    assert_eq!(e.write, Write::Now);
+    assert!(s.values.history_compression);
+    assert_eq!(s.take_pending(), [SettingChange::HistoryCompression(true)]);
+}
+
+#[test]
+fn uncompressed_field_disabled_while_off() {
+    let mut s = state();
+    assert!(!s.uncompressed_enabled());
+    assert_eq!(
+        s.uncompressed_note(),
+        None,
+        "off is not a scrollback problem"
+    );
+    // The field shows the effective default while the setting is absent.
+    assert_eq!(s.uncompressed_text, "9999");
+    s.update(SettingsMsg::HistoryCompression(true));
+    assert!(s.uncompressed_enabled());
+}
+
+#[test]
+fn uncompressed_field_disabled_with_small_scrollback() {
+    let mut s = with_scrollback(1_000);
+    s.update(SettingsMsg::HistoryCompression(true));
+    assert!(!s.uncompressed_enabled());
+    assert_eq!(
+        s.uncompressed_note(),
+        Some("Needs scrollback above 1,000 lines.")
+    );
+    assert_eq!(s.uncompressed_text, "999");
+    let mut s = with_scrollback(1_001);
+    s.update(SettingsMsg::HistoryCompression(true));
+    assert!(s.uncompressed_enabled());
+    assert_eq!(s.uncompressed_note(), None);
+}
+
+#[test]
+fn uncompressed_in_range_saves_and_shows_default_when_absent() {
+    let mut s = state();
+    s.update(SettingsMsg::HistoryCompression(true));
+    s.take_pending();
+    let e = s.update(SettingsMsg::UncompressedText("5,000".into()));
+    assert_eq!(
+        e.apply,
+        Some(SettingChange::UncompressedHistoryLines(5_000))
+    );
+    assert!(matches!(e.write, Write::After(_)));
+    assert_eq!(s.uncompressed_error(), None);
+}
+
+#[test]
+fn uncompressed_out_of_range_saves_nothing() {
+    let mut s = state();
+    s.update(SettingsMsg::HistoryCompression(true));
+    s.take_pending();
+    for typed in ["500", "10000", "20000"] {
+        let e = s.update(SettingsMsg::UncompressedText(typed.into()));
+        assert_eq!(e, Effect::NONE);
+        assert_eq!(
+            s.uncompressed_error().as_deref(),
+            Some("Enter a number from 1,000 to 9,999.")
+        );
+        let e = s.update(SettingsMsg::UncompressedSubmit);
+        assert_eq!(e.apply, None);
+        assert!(!s.has_pending());
+        assert_eq!(s.values.uncompressed_history_lines, None);
+    }
+    // A valid value clears the message.
+    s.update(SettingsMsg::UncompressedText("2000".into()));
+    assert_eq!(s.uncompressed_error(), None);
+}
+
+#[test]
+fn confirmation_mentions_uncompressed_drop() {
+    let mut s = with_tab(8_000);
+    s.update(SettingsMsg::HistoryCompression(true));
+    s.update(SettingsMsg::UncompressedText("9000".into()));
+    s.update(SettingsMsg::UncompressedSubmit);
+    assert_eq!(s.values.uncompressed_history_lines, Some(9_000));
+    s.update(SettingsMsg::ScrollbackText("5000".into()));
+    assert_eq!(
+        s.scrollback_warning().as_deref(),
+        Some(
+            "Open tabs will lose their oldest lines beyond 5,000. This can't be undone.\nRecent lines kept uncompressed will drop to 4,999."
+        )
+    );
+    // Applying drags the stored value and the field follows.
+    s.update(SettingsMsg::ScrollbackApply);
+    assert_eq!(s.values.uncompressed_history_lines, Some(4_999));
+    assert_eq!(s.uncompressed_text, "4999");
+}
+
+#[test]
+fn confirmation_has_no_extra_line_when_nothing_drops() {
+    let mut s = with_tab(8_000);
+    s.update(SettingsMsg::HistoryCompression(true));
+    s.update(SettingsMsg::UncompressedText("2000".into()));
+    s.update(SettingsMsg::UncompressedSubmit);
+    s.update(SettingsMsg::ScrollbackText("5000".into()));
+    assert_eq!(
+        s.scrollback_warning().as_deref(),
+        Some("Open tabs will lose their oldest lines beyond 5,000. This can't be undone.")
+    );
+}

@@ -13,7 +13,7 @@ use fbterm_config::settings::{
 };
 use fbterm_config::{
     ConfigError, MaxFps, SecretStorage, SettingChange, Settings, TabBar, ThemeMode,
-    WindowDecorations,
+    UNCOMPRESSED_DEFAULT, UNCOMPRESSED_FLOOR, WindowDecorations,
 };
 
 mod fonts;
@@ -62,6 +62,9 @@ pub enum SettingsMsg {
     TabGroups(bool),
     ScrollbackText(String),
     ScrollbackSubmit,
+    HistoryCompression(bool),
+    UncompressedText(String),
+    UncompressedSubmit,
     /// Confirm lowering the scrollback below what an open tab holds: save and trim.
     ScrollbackApply,
     /// Drop the lowered value: the saved one comes back.
@@ -136,6 +139,12 @@ fn withheld_note(mac: bool, chord: Option<Chord>) -> String {
 pub const SCROLLBACK_NOTE: &str =
     "Large history: resizing a window can pause briefly while history rewraps.";
 
+/// The note on the compression switch.
+pub const COMPRESSION_NOTE: &str = "Saves memory on very long histories, at the cost of extra CPU when output scrolls into old history and when you scroll back, search or export. Recommended for scrollback of 100,000 lines or more.";
+
+/// The note on the disabled `Recent lines kept uncompressed` field with a small scrollback.
+pub const UNCOMPRESSED_NEEDS_SCROLLBACK: &str = "Needs scrollback above 1,000 lines.";
+
 /// `n` with a comma between thousands (`2,000`).
 pub(crate) fn thousands(n: usize) -> String {
     let digits = n.to_string();
@@ -202,6 +211,8 @@ pub struct SettingsState {
     /// Background opacity in percent, as typed.
     pub opacity_text: String,
     pub scrollback_text: String,
+    /// Recent lines kept uncompressed, as typed (the effective value while the setting is absent).
+    pub uncompressed_text: String,
     /// Tunnel reconnect attempts, as typed.
     pub retries_text: String,
     /// A lower scrollback typed but not saved, because an open tab holds more lines than it
@@ -254,6 +265,7 @@ impl SettingsState {
             font_size_text: String::new(),
             opacity_text: String::new(),
             scrollback_text: String::new(),
+            uncompressed_text: String::new(),
             retries_text: String::new(),
             pending_lower: None,
             held_lower: None,
@@ -283,6 +295,7 @@ impl SettingsState {
         self.font_size_text = size_text(values.font_size);
         self.opacity_text = percent_text(values.background_opacity);
         self.scrollback_text = values.scrollback_lines.to_string();
+        self.uncompressed_text = self.uncompressed_effective().to_string();
         self.retries_text = values.tunnel_max_retries.to_string();
         self.pending_lower = None;
         self.held_lower = None;
@@ -645,6 +658,30 @@ impl SettingsState {
                     }
                 }
             }
+            SettingsMsg::HistoryCompression(on) => {
+                self.change(SettingChange::HistoryCompression(on), false)
+            }
+            SettingsMsg::UncompressedText(s) => {
+                let parsed = parse_count(&s);
+                self.uncompressed_text = s;
+                match parsed {
+                    Some(v) if self.uncompressed_range().contains(&v) => {
+                        self.change(SettingChange::UncompressedHistoryLines(v), true)
+                    }
+                    _ => Effect::NONE,
+                }
+            }
+            SettingsMsg::UncompressedSubmit => match parse_count(&self.uncompressed_text) {
+                Some(v) if self.uncompressed_range().contains(&v) => {
+                    self.change(SettingChange::UncompressedHistoryLines(v), false)
+                }
+                // Out of range: nothing is saved and the message stays under the field.
+                Some(_) => self.flush_now(),
+                None => {
+                    self.uncompressed_text = self.uncompressed_effective().to_string();
+                    self.flush_now()
+                }
+            },
             SettingsMsg::RetriesText(s) => {
                 let parsed = s.trim().parse::<u32>().ok();
                 self.retries_text = s;
@@ -705,12 +742,65 @@ impl SettingsState {
         self.change(SettingChange::ScrollbackLines(v), debounce)
     }
 
-    /// The question shown under the Scrollback field while a lowered value waits.
+    /// The question shown under the Scrollback field while a lowered value waits. When the
+    /// lowered scrollback would also pull a saved `uncompressed_history_lines` down, a second
+    /// line says so.
     pub fn scrollback_warning(&self) -> Option<String> {
         self.pending_lower.map(|v| {
-            format!(
+            let mut why = format!(
                 "Open tabs will lose their oldest lines beyond {}. This can't be undone.",
                 thousands(v)
+            );
+            if let Some(keep) = self.values.uncompressed_history_lines
+                && v > UNCOMPRESSED_FLOOR
+                && keep >= v
+            {
+                why.push_str(&format!(
+                    "\nRecent lines kept uncompressed will drop to {}.",
+                    thousands(v - 1)
+                ));
+            }
+            why
+        })
+    }
+
+    /// The value the uncompressed field shows: the setting, or its default for this scrollback.
+    fn uncompressed_effective(&self) -> usize {
+        let top = self.values.scrollback_lines.saturating_sub(1);
+        self.values
+            .uncompressed_history_lines
+            .unwrap_or_else(|| UNCOMPRESSED_DEFAULT.min(top))
+    }
+
+    /// The values the uncompressed field accepts: 1,000 up to one below the scrollback.
+    fn uncompressed_range(&self) -> std::ops::RangeInclusive<usize> {
+        UNCOMPRESSED_FLOOR..=self.values.scrollback_lines.saturating_sub(1)
+    }
+
+    /// Whether the `Recent lines kept uncompressed` field can be edited: compression is on and
+    /// the scrollback leaves room above the floor.
+    pub fn uncompressed_enabled(&self) -> bool {
+        self.values.history_compression && self.values.scrollback_lines > UNCOMPRESSED_FLOOR
+    }
+
+    /// Why the uncompressed field is disabled, when the scrollback is the reason.
+    pub fn uncompressed_note(&self) -> Option<&'static str> {
+        (self.values.scrollback_lines <= UNCOMPRESSED_FLOOR)
+            .then_some(UNCOMPRESSED_NEEDS_SCROLLBACK)
+    }
+
+    /// The message under the uncompressed field while its typed number is out of range.
+    pub fn uncompressed_error(&self) -> Option<String> {
+        if !self.uncompressed_enabled() {
+            return None;
+        }
+        let v = parse_count(&self.uncompressed_text)?;
+        let range = self.uncompressed_range();
+        (!range.contains(&v)).then(|| {
+            format!(
+                "Enter a number from {} to {}.",
+                thousands(*range.start()),
+                thousands(*range.end())
             )
         })
     }
@@ -746,6 +836,10 @@ impl SettingsState {
             };
         }
         self.values = next;
+        if matches!(change, SettingChange::ScrollbackLines(_)) {
+            // The saved uncompressed value may have been dragged down with it.
+            self.uncompressed_text = self.uncompressed_effective().to_string();
+        }
         self.pending.retain(|p| p.key() != change.key());
         self.pending.push(change.clone());
         self.generation += 1;
@@ -758,6 +852,12 @@ impl SettingsState {
             },
         }
     }
+}
+
+/// A typed whole number, with `,` and `_` allowed between digits.
+fn parse_count(s: &str) -> Option<usize> {
+    let digits: String = s.chars().filter(|c| *c != ',' && *c != '_').collect();
+    digits.trim().parse().ok()
 }
 
 /// A typed percentage (`85`, `85%`, `85.5`) as a fraction.
