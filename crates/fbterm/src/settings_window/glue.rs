@@ -320,6 +320,8 @@ impl App {
     /// see [`SettingsSource`]).
     /// `kitty_keyboard` applies to every open terminal at once: turning it off drops the
     /// protocol flags programs have set, turning it on affects their requests from then on.
+    /// `grapheme_clusters` becomes every open terminal's default for mode 2027, used by new
+    /// terminals and after a reset or restart; a running program's mode is never flipped.
     /// `color_scheme` recolors the open panes that follow it (those without a scheme of their
     /// own, or whose own is not found).
     /// `background_opacity` is read each frame too; a window can only show through if it was

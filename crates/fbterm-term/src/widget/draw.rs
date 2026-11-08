@@ -353,10 +353,24 @@ fn is_han(c: char) -> bool {
         0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0x20000..=0x3134F)
 }
 
+/// The color emoji font that ships with the system.
+#[cfg(target_os = "macos")]
+const EMOJI_FONT: &str = "Apple Color Emoji";
+#[cfg(target_os = "windows")]
+const EMOJI_FONT: &str = "Segoe UI Emoji";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const EMOJI_FONT: &str = "Noto Color Emoji";
+
 /// Font for a run. The text stack's default Han fallback on macOS names a font that is not always
 /// installed as a file, so ideographs would render blank; point them at one that ships with the OS.
+/// A wide cluster asking for emoji presentation (VS16) is drawn with the color emoji font: the
+/// terminal font's own glyph for the base (such as a text-style heart) would otherwise win. A
+/// narrow one (without mode 2027 the cluster keeps one cell) keeps the terminal font, which fits.
 fn run_font(base: Font, run: &TextRun) -> Font {
     let mut font = base;
+    if run.span.cells == 2 && run.text.contains('\u{FE0F}') {
+        return Font::with_name(EMOJI_FONT);
+    }
     if cfg!(target_os = "macos")
         && run.span.cells == 2
         && run.text.chars().next().is_some_and(is_han)
@@ -510,6 +524,32 @@ mod tests {
         );
         t.feed(bytes);
         t
+    }
+
+    #[test]
+    fn emoji_presentation_draws_with_the_color_emoji_font() {
+        let t = term_with("\x1b[?2027h❤\u{FE0F} ❤ 日".as_bytes());
+        let list = build(&mut RowReader::new(), &t, &scheme(), true, None, None);
+        let font_of = |text: &str| {
+            let run = list.texts.iter().find(|r| r.text == text).expect(text);
+            run_font(Font::MONOSPACE, run).family
+        };
+        assert_eq!(font_of("❤\u{FE0F}"), iced::font::Family::Name(EMOJI_FONT));
+        assert_eq!(
+            font_of("❤"),
+            Font::MONOSPACE.family,
+            "text presentation keeps the font"
+        );
+
+        // Without the mode the cluster has one cell: a color emoji would spill over the next.
+        let t = term_with("❤\u{FE0F}x".as_bytes());
+        let list = build(&mut RowReader::new(), &t, &scheme(), true, None, None);
+        let run = list.texts.iter().find(|r| r.text == "❤\u{FE0F}").unwrap();
+        assert_eq!(run.span.cells, 1);
+        assert_eq!(
+            run_font(Font::MONOSPACE, run).family,
+            Font::MONOSPACE.family
+        );
     }
 
     #[test]
