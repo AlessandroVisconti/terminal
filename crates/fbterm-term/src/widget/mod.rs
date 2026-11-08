@@ -5,8 +5,10 @@
 
 mod colors;
 mod draw;
+mod features;
 mod geometry;
 mod input;
+mod shaped;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -26,6 +28,7 @@ use crate::{GridSize, SearchMatch, SearchPattern, SharedTerminal};
 
 pub use colors::cell_colors;
 pub use draw::{DrawList, build as build_draw_list};
+pub use features::FontFeatures;
 pub use geometry::{grid_size_from_bounds, pixel_to_cell, pixel_to_point};
 pub use input::paste_input;
 
@@ -35,6 +38,8 @@ pub struct TerminalStyle {
     pub scheme: ColorScheme,
     pub font: Font,
     pub font_size: f32,
+    /// Ligatures and other OpenType features for the grid text.
+    pub features: FontFeatures,
     /// When set, a 1 px border in this color (e.g. the active pane of a split).
     pub accent: Option<Rgb>,
     /// Keyboard input goes to the terminal and the cursor is solid only when focused.
@@ -159,6 +164,8 @@ struct State {
     /// Reads the rows in view while building the draw list; kept across frames so a view
     /// scrolled into the history reuses its scratch row.
     reader: RefCell<RowReader<Cell>>,
+    /// Grid text shaped with its features, kept across frames.
+    shapes: RefCell<shaped::ShapeCache>,
     /// Terminal and grid size last synced to the terminal, to avoid locking on every event.
     synced: Option<(usize, GridSize)>,
     input: input::InputState,
@@ -351,9 +358,11 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TerminalView<'_, 
                     cell: m.cell,
                     font: m.font,
                     font_size: m.font_size,
+                    features: self.style.features.clone(),
                 },
                 self.style.accent,
                 self.style.background_opacity,
+                &mut state.shapes.borrow_mut(),
             );
         }
     }

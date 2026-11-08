@@ -1,6 +1,7 @@
 //! The app side of settings: the Settings tab, applying settings live, and reloading
 //! `settings.toml` when it changes on disk.
 
+use fbterm_config::font_features::parse_features;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -33,6 +34,10 @@ pub(crate) fn intern(name: &str) -> &'static str {
 pub(crate) fn terminal_style(settings: &Settings) -> TerminalStyle {
     TerminalStyle {
         scheme: ColorScheme::graphite(),
+        features: fbterm_term::FontFeatures {
+            ligatures: settings.ligatures,
+            extra: parse_features(&settings.font_features).0.into(),
+        },
         font: Font::with_name(intern(&settings.font_family)),
         font_size: settings.font_size,
         accent: None,
@@ -57,6 +62,7 @@ impl App {
             .map_or(self.settings.font_size, |s| s.clamp(lo, hi));
         TerminalStyle {
             scheme: ColorScheme::from(&scheme.colors),
+            features: self.style.features.clone(),
             font: match &scheme.font_family {
                 Some(family) => Font::with_name(intern(family)),
                 None => self.style.font,
@@ -343,8 +349,11 @@ impl App {
         if new == self.settings {
             return Task::none();
         }
-        if new.font_family != self.settings.font_family || new.font_size != self.settings.font_size
-        {
+        let restyle = new.font_family != self.settings.font_family
+            || new.font_size != self.settings.font_size
+            || new.ligatures != self.settings.ligatures
+            || new.font_features != self.settings.font_features;
+        if restyle {
             self.style = terminal_style(&new);
         }
         if new.theme != self.settings.theme {
@@ -409,6 +418,10 @@ impl App {
         let scheme_changed = new.color_scheme != self.settings.color_scheme;
         let before = scheme_changed.then(|| self.pane_colors());
         self.settings = new;
+        self.refresh_feature_notices();
+        if restyle {
+            self.warm_ligature_sets();
+        }
         if rate_changed {
             self.update_output_rate();
         }
@@ -494,4 +507,49 @@ fn keys(changes: &[fbterm_config::SettingChange]) -> String {
         .map(fbterm_config::SettingChange::key)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+impl App {
+    /// The banner lines for `font_features` entries that do not parse, one per distinct entry,
+    /// kept in step with the settings like the scheme notices.
+    pub(crate) fn refresh_feature_notices(&mut self) {
+        let mut lines: Vec<String> = Vec::new();
+        for entry in parse_features(&self.settings.font_features).1 {
+            let line = format!("font_features: \"{entry}\" is not a feature tag; it is ignored.");
+            if !lines.contains(&line) {
+                lines.push(line);
+            }
+        }
+        if lines == self.feature_notices {
+            return;
+        }
+        let old = std::mem::take(&mut self.feature_notices);
+        self.notices.retain(|n| !old.contains(n));
+        if !lines.is_empty() {
+            self.notices_dismissed = false;
+        }
+        self.notices.extend(lines.iter().cloned());
+        self.feature_notices = lines;
+    }
+}
+
+impl App {
+    /// Detects the ligature-only stylistic sets of the terminal font and every scheme's font in
+    /// the background, so the first frame drawn with one never reads a font file itself.
+    pub(crate) fn warm_ligature_sets(&self) {
+        if !self.settings.ligatures {
+            return;
+        }
+        let mut fonts = vec![self.style.font];
+        for scheme in self.schemes.all() {
+            if let Some(family) = &scheme.font_family {
+                let font = Font::with_name(intern(family));
+                if !fonts.contains(&font) {
+                    fonts.push(font);
+                }
+            }
+        }
+        // The thread is detached: drawing detects anything it has not reached yet.
+        drop(fbterm_term::ligature_sets::warm_ligature_sets(fonts));
+    }
 }

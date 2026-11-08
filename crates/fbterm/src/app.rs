@@ -433,6 +433,9 @@ pub struct App {
     pub(crate) scheme_errors: Vec<String>,
     /// The banner lines about schemes now in `notices` (see `App::refresh_scheme_notices`).
     pub(crate) scheme_notices: Vec<String>,
+    /// The banner lines about `font_features` entries now in `notices`
+    /// (see `App::refresh_feature_notices`).
+    pub(crate) feature_notices: Vec<String>,
     /// Terminals of tabs the user closed that a session task still holds; the release is
     /// requested when `SessionEvent::Released` shows the last holder let go (`windows.rs`).
     pub(crate) pending_release: Vec<Vec<crate::memory::WeakTerminal>>,
@@ -775,6 +778,7 @@ impl App {
             schemes,
             scheme_errors,
             scheme_notices: Vec::new(),
+            feature_notices: Vec::new(),
             pending_release: Vec::new(),
             app_active: true,
             style,
@@ -804,6 +808,8 @@ impl App {
         };
         app.update_output_rate();
         app.refresh_scheme_notices();
+        app.refresh_feature_notices();
+        app.warm_ligature_sets();
         // A report the last run left: said once (debug-aid runs that keep no state leave the
         // marker for a real run).
         if app.state_saving_enabled

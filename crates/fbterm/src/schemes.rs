@@ -156,6 +156,7 @@ impl App {
         self.schemes = set;
         self.scheme_errors = errors;
         tracing::info!(schemes = self.schemes.all().len(), "schemes reloaded");
+        self.warm_ligature_sets();
         if let Some((_, state)) = &mut self.schemes_win {
             state.refresh(&self.schemes);
         }

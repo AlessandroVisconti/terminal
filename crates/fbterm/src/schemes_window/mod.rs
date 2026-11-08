@@ -505,6 +505,7 @@ impl SchemesState {
         };
         TerminalStyle {
             scheme: ColorScheme::from(&d.colors),
+            features: base.features.clone(),
             font: d.font_family.as_deref().map_or(base.font, |f| {
                 iced::Font::with_name(crate::settings_window::intern(f))
             }),

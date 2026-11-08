@@ -10,12 +10,14 @@ use feathercritty::grid::{Dimensions, RowReader};
 use feathercritty::index::{Column, Line, Point};
 use feathercritty::term::cell::{Cell, Flags, Hyperlink};
 use feathercritty::vte::ansi::CursorShape;
+use iced::advanced::graphics::text::{Raw, Renderer as _};
 use iced::advanced::renderer::{Quad, Renderer as _};
-use iced::advanced::text::{self, Renderer as _};
-use iced::{Border, Font, Pixels, Rectangle, Size};
+use iced::{Border, Font, Rectangle, Size};
 
 use super::Highlight;
 use super::colors::{cell_colors, resolve};
+use super::features::{FontFeatures, run_features};
+use super::shaped::{ShapeCache, ShapeKey};
 use crate::palette::ColorScheme;
 use crate::{SearchMatch, Terminal};
 
@@ -34,6 +36,9 @@ pub struct TextRun {
     pub fg: Rgb,
     pub bold: bool,
     pub italic: bool,
+    /// A cell drawn on its own (wide, a grapheme cluster, or a standalone symbol): no ligature
+    /// can form in it.
+    pub alone: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +170,9 @@ pub fn build(
         let line = Line(y as i32 - offset as i32);
         let row = reader.row(grid, line);
         let mut run: Option<TextRun> = None;
+        // What a run must share besides foreground and font style: a ligature never spans a
+        // change of background, decoration, selection, match or the cursor cell.
+        let mut run_key = None;
         let flush = |run: &mut Option<TextRun>, texts: &mut Vec<TextRun>| {
             if let Some(mut r) = run.take() {
                 let trimmed = r.text.trim_end_matches(' ').len();
@@ -182,13 +190,17 @@ pub fn build(
             let selected = selection.is_some_and(|s| s.contains(Point::new(line, Column(x))));
             let (mut fg, mut bg) = cell_colors(cell, colors, scheme, selected);
             // Search matches: the current one strongest, then the selection, then the others.
-            if let Some((h, marks)) = &marks {
-                let mut hit = marks[y].iter().filter(|m| (m.from..=m.to).contains(&x));
-                let current = hit.clone().any(|m| m.current);
+            // One scan of the row's matches gives both answers.
+            let (in_match, current) = marks.as_ref().map_or((false, false), |(_, m)| {
+                m[y].iter()
+                    .filter(|m| (m.from..=m.to).contains(&x))
+                    .fold((false, false), |(_, cur), m| (true, cur || m.current))
+            });
+            if let Some((h, _)) = &marks {
                 if current {
                     bg = h.current_bg;
                     fg = h.current_fg;
-                } else if hit.next().is_some() && !selected {
+                } else if in_match && !selected {
                     bg = h.match_bg;
                 }
             }
@@ -233,6 +245,9 @@ pub fn build(
                 push_span(&mut strikes, row_u16, col, 1, (fg, LineKind::Strike));
             }
 
+            let decoration = flags & (Flags::ALL_UNDERLINES | Flags::STRIKEOUT);
+            let key = (bg, decoration, hovered, selected, in_match, is_cursor_cell);
+
             // Glyphs.
             if flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
                 continue;
@@ -259,19 +274,27 @@ pub fn build(
                     fg,
                     bold,
                     italic,
+                    alone: true,
                 });
                 continue;
             }
             let c = if cell.c == '\t' { ' ' } else { cell.c };
             match &mut run {
                 // A blank continues any run: it draws nothing.
-                Some(r) if c == ' ' || (r.fg == fg && r.bold == bold && r.italic == italic) => {
+                Some(r)
+                    if c == ' '
+                        || (r.fg == fg
+                            && r.bold == bold
+                            && r.italic == italic
+                            && run_key == Some(key)) =>
+                {
                     r.text.push(c);
                     r.span.cells += 1;
                 }
                 _ if c == ' ' => flush(&mut run, &mut list.texts),
                 _ => {
                     flush(&mut run, &mut list.texts);
+                    run_key = Some(key);
                     run = Some(TextRun {
                         span: Span {
                             row: row_u16,
@@ -282,6 +305,7 @@ pub fn build(
                         fg,
                         bold,
                         italic,
+                        alone: false,
                     });
                 }
             }
@@ -330,11 +354,12 @@ fn background_fill(list: &DrawList, opacity: f32) -> Option<iced::Color> {
 }
 
 /// Font metrics used to place cells.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Metrics {
     pub cell: Size,
     pub font: Font,
     pub font_size: f32,
+    pub features: FontFeatures,
 }
 
 fn fill(renderer: &mut iced::Renderer, bounds: Rectangle, c: Rgb) {
@@ -388,6 +413,7 @@ pub fn render(
     m: Metrics,
     accent: Option<Rgb>,
     background_opacity: f32,
+    shapes: &mut ShapeCache,
 ) {
     let (cw, ch) = (m.cell.width, m.cell.height);
     let rect = |s: Span| Rectangle {
@@ -461,6 +487,9 @@ pub fn render(
             ),
         }
     }
+    // Grid text is shaped here, with the run's OpenType features, and handed to the renderer
+    // as shaped buffers; the cache keeps them alive until the frame after their last use.
+    shapes.end_frame();
     for run in &list.texts {
         let mut font = run_font(m.font, run);
         if run.bold {
@@ -469,23 +498,29 @@ pub fn render(
         if run.italic {
             font.style = iced::font::Style::Italic;
         }
+        let detected = if m.features.ligatures && !run.alone {
+            shapes.sets(font)
+        } else {
+            std::sync::Arc::from([])
+        };
+        let features = run_features(&m.features, &detected, run.alone);
         let r = rect(run.span);
-        renderer.fill_text(
-            text::Text {
-                content: run.text.clone(),
-                bounds: Size::new(r.width + cw, ch),
-                size: Pixels(m.font_size),
-                line_height: text::LineHeight::Absolute(Pixels(ch)),
-                font,
-                align_x: text::Alignment::Left,
-                align_y: iced::alignment::Vertical::Top,
-                shaping: text::Shaping::Advanced,
-                wrapping: text::Wrapping::None,
-            },
-            iced::Point::new(r.x, r.y),
-            color(run.fg),
-            bounds,
+        let key = ShapeKey::new(
+            &run.text,
+            font,
+            m.font_size,
+            ch,
+            r.width + cw,
+            features,
+            !run.alone,
         );
+        let buffer = shapes.buffer(key);
+        renderer.fill_raw(Raw {
+            buffer: std::sync::Arc::downgrade(&buffer),
+            position: iced::Point::new(r.x, r.y),
+            color: color(run.fg),
+            clip_bounds: bounds,
+        });
     }
     if let Some(a) = accent {
         renderer.fill_quad(
@@ -650,6 +685,90 @@ mod tests {
         );
         assert_eq!(hovered.lines.len(), 1);
         assert_eq!(hovered.lines[0].0.cells, 4);
+    }
+
+    /// The text of each run on row 0, in order.
+    fn row0(list: &DrawList) -> Vec<&str> {
+        list.texts
+            .iter()
+            .filter(|r| r.span.row == 0)
+            .map(|r| r.text.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn runs_split_at_the_cursor() {
+        let t = term_with(b"a->b\x1b[1;3H");
+        let list = build(&mut RowReader::new(), &t, &scheme(), true, None, None);
+        assert_eq!(row0(&list), ["a-", ">", "b"]);
+        // An unfocused (hollow) cursor keeps the cell's colors, and still splits.
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
+        assert_eq!(row0(&list), ["a-", ">", "b"]);
+    }
+
+    #[test]
+    fn runs_split_at_selection_edges() {
+        let mut t = term_with(b"a->b");
+        t.set_selection(Some(crate::Selection::on_line(0, 2, 3)));
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
+        assert_eq!(row0(&list), ["a-", ">b"]);
+    }
+
+    #[test]
+    fn runs_split_at_match_edges() {
+        let t = term_with(b"a->b");
+        let pattern = crate::SearchPattern::new(&crate::SearchQuery::new(">", false))
+            .unwrap()
+            .unwrap();
+        let h = Highlight {
+            pattern,
+            current: None,
+            match_bg: Rgb { r: 1, g: 1, b: 1 },
+            current_bg: Rgb { r: 2, g: 2, b: 2 },
+            current_fg: Rgb { r: 3, g: 3, b: 3 },
+        };
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, Some(&h));
+        assert_eq!(row0(&list), ["a-", ">", "b"]);
+    }
+
+    #[test]
+    fn runs_split_on_background_and_underline() {
+        let t = term_with(b"\x1b[41m-\x1b[0m>");
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
+        assert_eq!(row0(&list), ["-", ">"]);
+        let t = term_with(b"\x1b[4m-\x1b[0m>");
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
+        assert_eq!(row0(&list), ["-", ">"]);
+    }
+
+    #[test]
+    fn alone_runs_are_marked() {
+        let t = term_with("日 e\u{301} ->".as_bytes());
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
+        let alone: Vec<(&str, bool)> = list
+            .texts
+            .iter()
+            .map(|r| (r.text.as_str(), r.alone))
+            .collect();
+        assert_eq!(alone, [("日", true), ("e\u{301}", true), ("->", false)]);
+    }
+
+    #[test]
+    fn a_ligature_at_the_last_cells_stays_in_its_run() {
+        let mut t = Terminal::new(
+            crate::GridSize {
+                cols: 4,
+                rows: 3,
+                cell_width: 8.0,
+                cell_height: 16.0,
+            },
+            100,
+        );
+        t.feed(b"ab->\r\n");
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
+        let run = list.texts.iter().find(|r| r.span.row == 0).unwrap();
+        assert_eq!(run.text, "ab->");
+        assert_eq!((run.span.col, run.span.cells), (0, 4));
     }
 
     #[test]
