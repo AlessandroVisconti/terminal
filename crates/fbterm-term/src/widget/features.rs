@@ -19,8 +19,6 @@ const OFF: [&[u8; 4]; 4] = [b"liga", b"calt", b"clig", b"dlig"];
 /// on, the standard ligature features and the font's ligature-only stylistic sets (`detected`),
 /// except for a cell drawn on its own (`alone`), where no ligature can form; with them off, every
 /// ligature feature off. Then the extra entries.
-// Used by the renderer from the next change on.
-#[allow(dead_code)]
 pub(crate) fn run_features(f: &FontFeatures, detected: &[[u8; 4]], alone: bool) -> Vec<(u32, u32)> {
     let mut out: Vec<(u32, u32)> = if f.ligatures {
         let sets = if alone { &[][..] } else { detected };

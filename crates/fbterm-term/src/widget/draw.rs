@@ -10,12 +10,14 @@ use feathercritty::grid::{Dimensions, RowReader};
 use feathercritty::index::{Column, Line, Point};
 use feathercritty::term::cell::{Cell, Flags, Hyperlink};
 use feathercritty::vte::ansi::CursorShape;
+use iced::advanced::graphics::text::{Raw, Renderer as _};
 use iced::advanced::renderer::{Quad, Renderer as _};
-use iced::advanced::text::{self, Renderer as _};
-use iced::{Border, Font, Pixels, Rectangle, Size};
+use iced::{Border, Font, Rectangle, Size};
 
 use super::Highlight;
 use super::colors::{cell_colors, resolve};
+use super::features::{FontFeatures, run_features};
+use super::shaped::{ShapeCache, ShapeKey};
 use crate::palette::ColorScheme;
 use crate::{SearchMatch, Terminal};
 
@@ -351,11 +353,12 @@ fn background_fill(list: &DrawList, opacity: f32) -> Option<iced::Color> {
 }
 
 /// Font metrics used to place cells.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Metrics {
     pub cell: Size,
     pub font: Font,
     pub font_size: f32,
+    pub features: FontFeatures,
 }
 
 fn fill(renderer: &mut iced::Renderer, bounds: Rectangle, c: Rgb) {
@@ -409,6 +412,7 @@ pub fn render(
     m: Metrics,
     accent: Option<Rgb>,
     background_opacity: f32,
+    shapes: &mut ShapeCache,
 ) {
     let (cw, ch) = (m.cell.width, m.cell.height);
     let rect = |s: Span| Rectangle {
@@ -482,6 +486,9 @@ pub fn render(
             ),
         }
     }
+    // Grid text is shaped here, with the run's OpenType features, and handed to the renderer
+    // as shaped buffers; the cache keeps them alive until the frame after their last use.
+    shapes.end_frame();
     for run in &list.texts {
         let mut font = run_font(m.font, run);
         if run.bold {
@@ -490,23 +497,29 @@ pub fn render(
         if run.italic {
             font.style = iced::font::Style::Italic;
         }
+        let detected = if m.features.ligatures && !run.alone {
+            shapes.sets(font)
+        } else {
+            std::sync::Arc::from([])
+        };
+        let features = run_features(&m.features, &detected, run.alone);
         let r = rect(run.span);
-        renderer.fill_text(
-            text::Text {
-                content: run.text.clone(),
-                bounds: Size::new(r.width + cw, ch),
-                size: Pixels(m.font_size),
-                line_height: text::LineHeight::Absolute(Pixels(ch)),
-                font,
-                align_x: text::Alignment::Left,
-                align_y: iced::alignment::Vertical::Top,
-                shaping: text::Shaping::Advanced,
-                wrapping: text::Wrapping::None,
-            },
-            iced::Point::new(r.x, r.y),
-            color(run.fg),
-            bounds,
+        let key = ShapeKey::new(
+            &run.text,
+            font,
+            m.font_size,
+            ch,
+            r.width + cw,
+            features,
+            !run.alone,
         );
+        let buffer = shapes.buffer(key);
+        renderer.fill_raw(Raw {
+            buffer: std::sync::Arc::downgrade(&buffer),
+            position: iced::Point::new(r.x, r.y),
+            color: color(run.fg),
+            clip_bounds: bounds,
+        });
     }
     if let Some(a) = accent {
         renderer.fill_quad(
