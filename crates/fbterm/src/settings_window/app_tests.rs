@@ -668,8 +668,30 @@ fn switching_on_requests_release_once_idle() {
     apply(&mut app, |s| s.history_compression = true);
     // The release waits for the worker: nothing yet, then exactly one request once idle.
     assert_eq!(crate::memory::requests(), before);
+    // The returned task runs this function on the blocking pool; a test cannot observe a
+    // request made on another thread (the counter is per thread), so it runs here.
     super::glue::release_when_idle();
     assert_eq!(crate::memory::requests(), before + 1);
+}
+
+#[test]
+fn two_freeing_changes_back_to_back_request_one_release() {
+    let (mut app, _terms) = app_with_two_tabs(50);
+    let before = crate::memory::requests();
+    let units = |app: &mut App, keep: usize| {
+        let mut new = app.settings.clone();
+        new.history_compression = true;
+        new.uncompressed_history_lines = Some(keep);
+        app.apply_settings(new, crate::app::SettingsSource::Window)
+            .units()
+    };
+    assert_eq!(units(&mut app, 5_000), 1);
+    // A second lowering while the first release waits spawns no second waiter.
+    assert_eq!(units(&mut app, 2_000), 0);
+    super::glue::release_when_idle();
+    assert_eq!(crate::memory::requests(), before + 1);
+    // Once it ran, the next freeing change starts a new one.
+    assert_eq!(units(&mut app, 1_000), 1);
 }
 
 #[test]
@@ -682,11 +704,14 @@ fn only_a_freeing_change_asks_for_the_release_task() {
             .units()
     };
     assert_eq!(units(&mut app, &|s| s.history_compression = true), 1);
+    // The release ran (a pending one would absorb the next freeing change).
+    super::glue::release_when_idle();
     // Lowering the kept lines frees memory; raising them again does not.
     assert_eq!(
         units(&mut app, &|s| s.uncompressed_history_lines = Some(2_000)),
         1
     );
+    super::glue::release_when_idle();
     assert_eq!(
         units(&mut app, &|s| s.uncompressed_history_lines = Some(5_000)),
         0

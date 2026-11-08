@@ -14,8 +14,8 @@
 //! waits in its queue entry for its next turn.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once, OnceLock, Weak};
+use std::time::{Duration, Instant};
 
 use feathercritty::term::HistoryJob;
 use parking_lot::{Condvar, Mutex};
@@ -32,15 +32,34 @@ struct Entry {
     jobs: Vec<HistoryJob>,
 }
 
+/// The queued terminals and whether a turn is in progress. `busy` lives under the same lock as
+/// the entries, so "empty and not busy" is read without a gap between a turn's end and the
+/// check of a waiter.
+#[derive(Default)]
+struct Queue {
+    entries: VecDeque<Entry>,
+    busy: bool,
+}
+
+/// Ends a turn when dropped, also when a job panicked: clears `busy` and wakes waiters, so
+/// they never wait on a turn that is gone.
+struct TurnGuard<'a>(&'a Worker);
+
+impl Drop for TurnGuard<'_> {
+    fn drop(&mut self) {
+        self.0.finish_turn();
+    }
+}
+
 /// Runs terminals' history jobs, round robin. The app uses the process-wide one through
 /// [`enqueue`]; tests drive their own with [`Worker::run_until_idle`].
 #[derive(Default)]
 pub struct Worker {
-    queue: Mutex<VecDeque<Entry>>,
+    queue: Mutex<Queue>,
     wake: Condvar,
-    /// A turn is in progress. Only written with `queue` locked, so "queue empty and not busy"
-    /// is read without a gap between a turn's end and the check of a waiter.
-    busy: AtomicBool,
+    /// A test makes the next turn's job panic.
+    #[cfg(test)]
+    panic_next: std::sync::atomic::AtomicBool,
     /// Signalled (with `queue` locked) when the queue is empty and no turn is in progress.
     idle: Condvar,
     /// The terminal (as a pointer) of every install hold, in order.
@@ -59,10 +78,10 @@ impl Worker {
     pub fn enqueue(&self, term: &SharedTerminal) {
         let mut queue = self.queue.lock();
         let ptr = Arc::as_ptr(term);
-        if queue.iter().any(|e| e.term.as_ptr() == ptr) {
+        if queue.entries.iter().any(|e| e.term.as_ptr() == ptr) {
             return;
         }
-        queue.push_back(Entry {
+        queue.entries.push_back(Entry {
             term: Arc::downgrade(term),
             jobs: Vec::new(),
         });
@@ -76,8 +95,8 @@ impl Worker {
             let Some(entry) = self.take(&mut self.queue.lock()) else {
                 return;
             };
+            let _guard = TurnGuard(self);
             self.turn(entry);
-            self.finish_turn();
         }
     }
 
@@ -85,23 +104,36 @@ impl Worker {
     /// entry queued, so it counts as work. Sleeps on a condition variable.
     pub fn wait_idle(&self) {
         let mut queue = self.queue.lock();
-        while !queue.is_empty() || self.busy.load(Ordering::SeqCst) {
+        while !queue.entries.is_empty() || queue.busy {
             self.idle.wait(&mut queue);
         }
     }
 
+    /// Like [`Worker::wait_idle`], but gives up at one deadline `timeout` from now. Returns
+    /// whether the worker was idle.
+    pub fn wait_idle_for(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut queue = self.queue.lock();
+        while !queue.entries.is_empty() || queue.busy {
+            if self.idle.wait_until(&mut queue, deadline).timed_out() {
+                return queue.entries.is_empty() && !queue.busy;
+            }
+        }
+        true
+    }
+
     /// Pop the next entry, marking a turn in progress in the same hold.
-    fn take(&self, queue: &mut VecDeque<Entry>) -> Option<Entry> {
-        let entry = queue.pop_front()?;
-        self.busy.store(true, Ordering::SeqCst);
+    fn take(&self, queue: &mut Queue) -> Option<Entry> {
+        let entry = queue.entries.pop_front()?;
+        queue.busy = true;
         Some(entry)
     }
 
     /// A turn ended (any requeue already happened): wake waiters if nothing is left.
     fn finish_turn(&self) {
-        let queue = self.queue.lock();
-        self.busy.store(false, Ordering::SeqCst);
-        if queue.is_empty() {
+        let mut queue = self.queue.lock();
+        queue.busy = false;
+        if queue.entries.is_empty() {
             self.idle.notify_all();
         }
     }
@@ -118,8 +150,8 @@ impl Worker {
                     self.wake.wait(&mut queue);
                 }
             };
+            let _guard = TurnGuard(self);
             self.turn(entry);
-            self.finish_turn();
         }
     }
 
@@ -130,6 +162,13 @@ impl Worker {
         let Some(term) = entry.term.upgrade() else {
             return;
         };
+        #[cfg(test)]
+        if self
+            .panic_next
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            panic!("test: a history job panicked");
+        }
         let mut jobs = entry.jobs;
         if jobs.is_empty() {
             jobs = term.lock().next_history_jobs(BATCH);
@@ -160,13 +199,13 @@ impl Worker {
     fn requeue(&self, term: &SharedTerminal, jobs: Vec<HistoryJob>) {
         let mut queue = self.queue.lock();
         let ptr = Arc::as_ptr(term);
-        if let Some(entry) = queue.iter_mut().find(|e| e.term.as_ptr() == ptr) {
+        if let Some(entry) = queue.entries.iter_mut().find(|e| e.term.as_ptr() == ptr) {
             if entry.jobs.is_empty() {
                 entry.jobs = jobs;
             }
             return;
         }
-        queue.push_back(Entry {
+        queue.entries.push_back(Entry {
             term: Arc::downgrade(term),
             jobs,
         });
@@ -185,6 +224,11 @@ pub fn wait_idle() {
     if let Some(worker) = WORKER.get() {
         worker.wait_idle();
     }
+}
+
+/// [`wait_idle`] for at most `timeout`; returns whether the worker was idle.
+pub fn wait_idle_for(timeout: Duration) -> bool {
+    WORKER.get().is_none_or(|w| w.wait_idle_for(timeout))
 }
 
 static WORKER: OnceLock<Worker> = OnceLock::new();
@@ -300,13 +344,48 @@ mod tests {
         let term = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
         let worker = Arc::new(Worker::new());
         worker.enqueue(&term);
+        let (tx, rx) = std::sync::mpsc::channel();
         let waiter = {
             let worker = worker.clone();
-            std::thread::spawn(move || worker.wait_idle())
+            std::thread::spawn(move || {
+                worker.wait_idle();
+                tx.send(()).unwrap();
+            })
         };
+        // Work is queued: the waiter must still be waiting.
+        assert!(rx.recv_timeout(Duration::from_millis(100)).is_err());
         worker.run_until_idle();
+        rx.recv_timeout(Duration::from_secs(30)).unwrap();
         waiter.join().unwrap();
         assert!(!term.lock().has_history_jobs());
+    }
+
+    #[test]
+    fn wait_idle_for_gives_up_at_its_deadline_while_a_turn_runs() {
+        let worker = Worker::new();
+        assert!(worker.wait_idle_for(Duration::from_millis(50)));
+        worker.queue.lock().busy = true;
+        let start = Instant::now();
+        assert!(!worker.wait_idle_for(Duration::from_millis(50)));
+        assert!(start.elapsed() >= Duration::from_millis(50));
+        worker.finish_turn();
+        assert!(worker.wait_idle_for(Duration::from_millis(50)));
+    }
+
+    #[test]
+    fn a_panicking_job_leaves_the_worker_idle() {
+        let term = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        let worker = Worker::new();
+        worker
+            .panic_next
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        worker.enqueue(&term);
+        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            worker.run_until_idle();
+        }));
+        assert!(ran.is_err());
+        assert!(!worker.queue.lock().busy);
+        worker.wait_idle();
     }
 
     #[test]
