@@ -163,6 +163,12 @@ impl<'de> Deserialize<'de> for MaxFps {
 pub struct Settings {
     pub font_family: String,
     pub font_size: f32,
+    /// Draw ligatures (`->`, `!=` ...) in fonts that have them, including ligatures a font keeps
+    /// in a stylistic set. Off turns every ligature feature off.
+    pub ligatures: bool,
+    /// Extra OpenType features for the terminal font, applied after `ligatures`: `"ss11"`,
+    /// `"-calt"`, `"cv01=2"`. Entries that do not parse are reported and skipped.
+    pub font_features: Vec<String>,
     pub scrollback_lines: usize,
     pub theme: ThemeMode,
     /// Id of the terminal color scheme used by every session without its own (a built-in id or
@@ -210,6 +216,8 @@ impl Default for Settings {
         Self {
             font_family: "Geist Mono".into(),
             font_size: 13.0,
+            ligatures: true,
+            font_features: Vec::new(),
             scrollback_lines: 10_000,
             theme: ThemeMode::Dark,
             color_scheme: "graphite".into(),
@@ -418,6 +426,12 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 
 # Font size in points, from 6.0 to 72.0.
 #font_size = 13.0
+
+# Draw sequences such as -> and != as one symbol when the font has them (true or false).
+#ligatures = true
+
+# Extra OpenType features for the terminal font, such as "ss02", "-calt" or "cv01=2".
+#font_features = []
 
 # Lines of history kept per tab, from 0 to 1000000. Applies to open tabs at once: lowering it
 # drops their oldest lines (the Settings tab asks first). Above 100000, resizing a window

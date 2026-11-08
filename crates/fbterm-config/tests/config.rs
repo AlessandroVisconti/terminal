@@ -335,6 +335,23 @@ fn grapheme_clusters_setting_defaults_off_and_parses() {
 }
 
 #[test]
+fn ligature_settings_default_and_parse() {
+    let path = tmp("settings.toml");
+    std::fs::write(&path, "theme = \"light\"\n").unwrap();
+    let s = Settings::load_or_default(&path);
+    assert!(s.ligatures, "ligatures are on by default");
+    assert!(s.font_features.is_empty());
+    std::fs::write(
+        &path,
+        "ligatures = false\nfont_features = [\"ss11\", \"-calt\"]\n",
+    )
+    .unwrap();
+    let s = Settings::load_or_default(&path);
+    assert!(!s.ligatures);
+    assert_eq!(s.font_features, ["ss11", "-calt"]);
+}
+
+#[test]
 fn kitty_keyboard_setting_parses() {
     let path = tmp("settings.toml");
     std::fs::write(&path, "kitty_keyboard = true\n").unwrap();

@@ -1,6 +1,7 @@
 //! Configuration loading, saved profiles and shell discovery.
 
 pub mod catalog;
+pub mod font_features;
 pub mod keys;
 pub mod paths;
 pub mod profile;

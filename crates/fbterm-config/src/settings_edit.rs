@@ -21,6 +21,7 @@ pub enum SettingChange {
     ColorScheme(String),
     KittyKeyboard(bool),
     GraphemeClusters(bool),
+    Ligatures(bool),
     BackgroundOpacity(f32),
     BackgroundBlur(bool),
     WindowDecorations(WindowDecorations),
@@ -49,6 +50,7 @@ impl SettingChange {
             Self::ColorScheme(_) => "color_scheme",
             Self::KittyKeyboard(_) => "kitty_keyboard",
             Self::GraphemeClusters(_) => "grapheme_clusters",
+            Self::Ligatures(_) => "ligatures",
             Self::BackgroundOpacity(_) => "background_opacity",
             Self::BackgroundBlur(_) => "background_blur",
             Self::WindowDecorations(_) => "window_decorations",
@@ -72,6 +74,7 @@ impl SettingChange {
             Self::ColorScheme(v) => settings.color_scheme.clone_from(v),
             Self::KittyKeyboard(v) => settings.kitty_keyboard = *v,
             Self::GraphemeClusters(v) => settings.grapheme_clusters = *v,
+            Self::Ligatures(v) => settings.ligatures = *v,
             Self::BackgroundOpacity(v) => settings.background_opacity = *v,
             Self::BackgroundBlur(v) => settings.background_blur = *v,
             Self::WindowDecorations(v) => settings.window_decorations = *v,
@@ -97,6 +100,7 @@ impl SettingChange {
             Self::Theme(ThemeMode::Light) => Value::from("light"),
             Self::KittyKeyboard(v)
             | Self::GraphemeClusters(v)
+            | Self::Ligatures(v)
             | Self::BackgroundBlur(v)
             | Self::CheckUpdates(v) => Value::from(*v),
             // A number for a fixed rate, the string for the display's.
@@ -378,6 +382,7 @@ mod tests {
             SettingChange::Theme(ThemeMode::Light),
             SettingChange::KittyKeyboard(true),
             SettingChange::GraphemeClusters(true),
+            SettingChange::Ligatures(false),
             SettingChange::BackgroundOpacity(0.85),
             SettingChange::BackgroundBlur(true),
             SettingChange::WindowDecorations(WindowDecorations::System),
@@ -810,6 +815,22 @@ mod tests {
         for line in SETTINGS_TEMPLATE.lines() {
             assert!(text.contains(line), "lost {line:?}");
         }
+    }
+
+    #[test]
+    fn ligatures_written_after_its_template_line() {
+        let dir = std::env::temp_dir().join(format!("fbterm-edit-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("settings.toml");
+        Settings::write_field(&path, &SettingChange::Ligatures(false)).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            text,
+            SETTINGS_TEMPLATE.replace(
+                "#ligatures = true\n",
+                "#ligatures = true\nligatures = false\n"
+            )
+        );
+        assert!(!Settings::load(&path).unwrap().ligatures);
     }
 
     #[test]
