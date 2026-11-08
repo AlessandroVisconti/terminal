@@ -17,6 +17,13 @@
 #   H  one tab with 4 panes, every pane streaming the system log (--perf-panes 4); H-tabs is
 #      the comparison: 4 tabs, every tab streaming, the last one visible. No gate: it shows
 #      what splitting costs against the same streams in background tabs
+#   I  one tab with scrollback_lines = 1000000 filled with colored service-log lines
+#      (dev/perf/servicelog.pl, 1,050,000 lines as fast as fbterm reads them), then idle;
+#      I-off with history compression off, I-on with it on (uncompressed_history_lines at its
+#      default, 10,000). Measured after SOAK_I s (default 60), when the output and the
+#      compression backlog have drained; the CPU window then shows whether the history worker
+#      sleeps (pass: 0.00% with compression on). Runs with SHELL=/bin/sh and only these
+#      settings in the temp config dir
 # Every run records RSS and, on macOS, footprint (`footprint <pid>`, phys_footprint: includes
 # GPU memory that RSS misses); footprint is `na` where the tool is missing.
 # The window must stay visible and unoccluded during runs (a hidden window may not render).
@@ -31,9 +38,10 @@ TABS=${TABS:-20}
 WARMUP=${WARMUP:-30}
 SAMPLE=${SAMPLE:-10}
 RUNS=${RUNS:-3}
-SCENARIOS=${SCENARIOS:-A B C D E F G H Ht}
+SCENARIOS=${SCENARIOS:-A B C D E F G H Ht I}
 PANES=${PANES:-4}
 SOAK_E=${SOAK_E:-120}
+SOAK_I=${SOAK_I:-60}
 BIN=target/release/fbterm
 
 cargo build --release -p fbterm >&2
@@ -91,15 +99,17 @@ trap 'cleanup; exit 130' INT TERM
 
 # run_one <scenario> <label> <tabs> <visible-tab command> <idle-tab command> <warmup> [close-after]
 # Tab i of N gets FBTERM_PERF_TAB=i, so the last (visible) tab runs the visible command and
-# every other tab the idle one.
+# every other tab the idle one. PERF_SETTINGS, when set, is written to the temp config dir's
+# settings.toml first; PERF_SHELL, when set, replaces SHELL for the tabs.
 run_one() {
   local name=$1 label=$2 tabs=$3 vis=$4 idle=$5 warm=$6 closeafter=${7:-}
   local closeflag=(); [ -n "$closeafter" ] && closeflag=(--perf-close-after "$closeafter")
   CFG=$(mktemp -d)
+  [ -n "${PERF_SETTINGS:-}" ] && printf '%s\n' "$PERF_SETTINGS" >"$CFG/settings.toml"
   local load; load=$(uptime | sed 's/.*load averages*: //')
   local unit=--perf-tabs; [ -n "${PERF_PANES_MODE:-}" ] && unit=--perf-panes
   local cmd="if [ \"\$FBTERM_PERF_TAB\" -lt \"\$FBTERM_PERF_TABS\" ]; then $idle; else $vis; fi"
-  FBTERM_CONFIG_DIR="$CFG" "$BIN" "$unit" "$tabs" --perf-cmd "$cmd" \
+  SHELL=${PERF_SHELL:-$SHELL} FBTERM_CONFIG_DIR="$CFG" "$BIN" "$unit" "$tabs" --perf-cmd "$cmd" \
     --perf-exit-after $((warm + SAMPLE + 60)) "${closeflag[@]+"${closeflag[@]}"}" 2>"$CFG/stderr" &
   PID=$!
   sleep "$warm"
@@ -125,6 +135,7 @@ run_one() {
 }
 
 FILL="seq 1 12000 | awk '{printf \"%05d xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\n\", \$1}'; exec sleep 100000"
+SERVICE_LOG="perl '$PWD/dev/perf/servicelog.pl' 1050000; exec sleep 100000"
 FILL_SHORT="seq 1 12000 | awk '{printf \"%05d xxxxxxxxxx\\n\", \$1}'; exec sleep 100000"
 for s in $SCENARIOS; do
   for r in $(seq "$RUNS"); do
@@ -139,6 +150,12 @@ for s in $SCENARIOS; do
       G) run_one G full-then-19-closed "$TABS" "$FILL" "$FILL" $((SOAK_E + 10)) "$SOAK_E" ;;
       H) PERF_PANES_MODE=1 run_one H one-tab-streaming-panes "$PANES" "$STREAM" "$STREAM" "$WARMUP" ;;
       Ht) run_one Ht streaming-tabs "$PANES" "$STREAM" "$STREAM" "$WARMUP" ;;
+      I)
+        for c in false true; do
+          PERF_SHELL=/bin/sh PERF_SETTINGS="scrollback_lines = 1000000
+history_compression = $c" run_one "I-$( [ $c = true ] && echo on || echo off )" \
+            million-line-log 1 "$SERVICE_LOG" "exec sleep 100000" "$SOAK_I"
+        done ;;
     esac
   done
 done
