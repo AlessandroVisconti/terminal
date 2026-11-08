@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use iced::Font;
-use iced::advanced::graphics::text::cosmic_text::{self, Buffer, FeatureTag, Shaping, Wrap};
+use iced::advanced::graphics::text::cosmic_text::{self, Align, Buffer, FeatureTag, Shaping, Wrap};
 use iced::advanced::graphics::text::{font_system, to_attributes};
 
 /// What a shaped buffer depends on. `join` is for runs of several cells: a cell drawn on its
@@ -126,7 +126,9 @@ fn shape(key: &ShapeKey) -> Buffer {
     } else {
         key.text.clone()
     };
-    buffer.set_text(fs, &text, &attrs, Shaping::Advanced, None);
+    // Left-aligned whatever the direction: cosmic-text right-aligns a right-to-left line by
+    // default, which would push a Hebrew or Arabic cell into the next one.
+    buffer.set_text(fs, &text, &attrs, Shaping::Advanced, Some(Align::Left));
     buffer.shape_until_scroll(fs, false);
     buffer
 }
@@ -182,6 +184,29 @@ mod tests {
         assert!(glyph_ids(&cache.buffer(key("a->b", on))).contains(&arrow));
         let off = vec![(tag(b"liga"), 0), (tag(b"calt"), 0)];
         assert!(!glyph_ids(&cache.buffer(key("->", off))).contains(&arrow));
+    }
+
+    #[test]
+    fn right_to_left_text_starts_at_its_cell() {
+        load_geist();
+        let mut cache = ShapeCache::default();
+        for text in ["\u{5e9}", "\u{627}"] {
+            let key = ShapeKey::new(
+                text,
+                Font::with_name("Geist Mono"),
+                13.0,
+                16.0,
+                16.0,
+                vec![],
+                false,
+            );
+            let buffer = cache.buffer(key);
+            let x = buffer
+                .layout_runs()
+                .flat_map(|r| r.glyphs.iter().map(|g| g.x))
+                .fold(f32::MAX, f32::min);
+            assert!(x < 1.0, "{text:?} starts at x={x}");
+        }
     }
 
     #[test]

@@ -6,12 +6,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use iced::advanced::graphics::text::{cosmic_text::fontdb, font_system};
 use iced::font::{Family, Stretch, Style, Weight};
-use skrifa::GlyphId;
 use skrifa::instance::{LocationRef, Size};
 use skrifa::metrics::GlyphMetrics;
+use skrifa::outline::OutlineGlyphCollection;
 use skrifa::raw::tables::gsub::{Gsub, SingleSubst, SubstitutionSubtables};
 use skrifa::raw::tables::layout::{ChainedSequenceContext, SequenceContext, SequenceLookupRecord};
 use skrifa::raw::{FontRef, TableProvider};
+use skrifa::{GlyphId, MetadataProvider};
 
 /// The stylistic sets (`ss01` to `ss20`) of the face at `index` in `data` that only make
 /// ligatures, sorted. Empty when the font cannot be read or has no `GSUB` table.
@@ -31,6 +32,14 @@ pub fn ligature_sets(data: &[u8], index: u32) -> Vec<[u8; 4]> {
     let Ok(features) = gsub.feature_list() else {
         return Vec::new();
     };
+    let tags: Vec<[u8; 4]> = features
+        .feature_records()
+        .iter()
+        .map(|r| r.feature_tag().to_be_bytes())
+        .collect();
+    if has_default_ligatures(&tags) {
+        return Vec::new();
+    }
     let metrics = GlyphMetrics::new(&font, Size::unscaled(), LocationRef::default());
     let mut out = Vec::new();
     for record in features.feature_records() {
@@ -41,12 +50,7 @@ pub fn ligature_sets(data: &[u8], index: u32) -> Vec<[u8; 4]> {
         let Ok(feature) = record.feature(features.offset_data()) else {
             continue;
         };
-        let mut check = Check {
-            gsub: &gsub,
-            metrics: &metrics,
-            seen: HashSet::new(),
-            substitutions: 0,
-        };
+        let mut check = Check::new(&font, &gsub, &metrics);
         let joins = feature
             .lookup_list_indices()
             .iter()
@@ -60,14 +64,35 @@ pub fn ligature_sets(data: &[u8], index: u32) -> Vec<[u8; 4]> {
     out
 }
 
+/// Whether the font has standard ligature features of its own (`liga`, `calt`, `clig`). Such a
+/// font shows its ligatures by default, so no stylistic set is added: a set there would restyle
+/// the ligatures it already draws, and the font would look different from its default.
+fn has_default_ligatures(tags: &[[u8; 4]]) -> bool {
+    tags.iter()
+        .any(|t| matches!(t, b"liga" | b"calt" | b"clig"))
+}
+
 struct Check<'a> {
     gsub: &'a Gsub<'a>,
     metrics: &'a GlyphMetrics<'a>,
+    outlines: OutlineGlyphCollection<'a>,
+    glyph_count: u32,
     seen: HashSet<u16>,
     substitutions: usize,
 }
 
-impl Check<'_> {
+impl<'a> Check<'a> {
+    fn new(font: &FontRef<'a>, gsub: &'a Gsub<'a>, metrics: &'a GlyphMetrics<'a>) -> Self {
+        Self {
+            gsub,
+            metrics,
+            outlines: font.outline_glyphs(),
+            glyph_count: font.maxp().map_or(0, |m| u32::from(m.num_glyphs())),
+            seen: HashSet::new(),
+            substitutions: 0,
+        }
+    }
+
     /// Whether every substitution of lookup `index` joins characters.
     fn lookup(&mut self, index: u16) -> bool {
         if !self.seen.insert(index) {
@@ -144,7 +169,9 @@ impl Check<'_> {
     /// its cell. (Geist Mono's `|=` reaches 0.485 of an advance; letters stay inside.)
     fn spacer_or_wide(&self, glyph: GlyphId) -> bool {
         let Some(bounds) = self.metrics.bounds(glyph) else {
-            return true;
+            // No bounds: blank only for a real glyph with an (empty) outline. A glyph that cannot
+            // be read, or a font without outlines, gives no evidence, so it disqualifies the set.
+            return glyph.to_u32() < self.glyph_count && self.outlines.get(glyph).is_some();
         };
         if bounds.x_max <= bounds.x_min {
             return true;
@@ -205,10 +232,30 @@ type FaceSets = HashMap<fontdb::ID, Arc<[[u8; 4]]>>;
 /// cached per face. Empty when no face matches.
 pub fn detected_sets(font: iced::Font) -> Arc<[[u8; 4]]> {
     static CACHE: OnceLock<Mutex<FaceSets>> = OnceLock::new();
-    let Ok(mut system) = font_system().write() else {
+    let Some(id) = face_for(font) else {
         return Arc::from([]);
     };
-    let db = system.raw().db();
+    let mut cache = CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(sets) = cache.get(&id) {
+        return sets.clone();
+    }
+    let mut system = font_system().write().unwrap_or_else(|e| e.into_inner());
+    let sets: Arc<[[u8; 4]]> = system
+        .raw()
+        .db()
+        .with_face_data(id, ligature_sets)
+        .unwrap_or_default()
+        .into();
+    cache.insert(id, sets.clone());
+    sets
+}
+
+/// The face of iced's font system that `font` resolves to (family, weight, stretch, style).
+fn face_for(font: iced::Font) -> Option<fontdb::ID> {
+    let mut system = font_system().write().unwrap_or_else(|e| e.into_inner());
     let family = match font.family {
         Family::Name(name) => fontdb::Family::Name(name),
         Family::Serif => fontdb::Family::Serif,
@@ -217,7 +264,7 @@ pub fn detected_sets(font: iced::Font) -> Arc<[[u8; 4]]> {
         Family::Fantasy => fontdb::Family::Fantasy,
         Family::Monospace => fontdb::Family::Monospace,
     };
-    let query = fontdb::Query {
+    system.raw().db().query(&fontdb::Query {
         families: &[family],
         weight: fontdb::Weight(weight(font.weight)),
         stretch: stretch(font.stretch),
@@ -226,22 +273,7 @@ pub fn detected_sets(font: iced::Font) -> Arc<[[u8; 4]]> {
             Style::Italic => fontdb::Style::Italic,
             Style::Oblique => fontdb::Style::Oblique,
         },
-    };
-    let Some(id) = db.query(&query) else {
-        return Arc::from([]);
-    };
-    let mut cache = CACHE
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    cache
-        .entry(id)
-        .or_insert_with(|| {
-            db.with_face_data(id, ligature_sets)
-                .unwrap_or_default()
-                .into()
-        })
-        .clone()
+    })
 }
 
 fn weight(w: Weight) -> u16 {
@@ -293,6 +325,47 @@ mod tests {
     fn unparsable_font_selects_nothing() {
         assert!(ligature_sets(b"not a font", 0).is_empty());
         assert!(ligature_sets(&GEIST[..64], 0).is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_glyph_is_not_a_spacer() {
+        let font = FontRef::new(GEIST).unwrap();
+        let gsub = font.gsub().unwrap();
+        let metrics = GlyphMetrics::new(&font, Size::unscaled(), LocationRef::default());
+        let check = Check::new(&font, &gsub, &metrics);
+        assert!(
+            !check.spacer_or_wide(GlyphId::new(60_000)),
+            "past the glyph count"
+        );
+    }
+
+    #[test]
+    fn fonts_with_default_ligatures_get_no_extra_sets() {
+        assert!(has_default_ligatures(&[*b"ss01", *b"calt"]));
+        assert!(has_default_ligatures(&[*b"liga"]));
+        assert!(has_default_ligatures(&[*b"clig", *b"ss02"]));
+        assert!(
+            !has_default_ligatures(&[*b"ss11", *b"ccmp", *b"case"]),
+            "Geist Mono's kind"
+        );
+    }
+
+    #[test]
+    fn bold_resolves_to_its_own_face() {
+        let mut system = iced::advanced::graphics::text::font_system()
+            .write()
+            .expect("font system");
+        system.load_font(std::borrow::Cow::Borrowed(GEIST));
+        system.load_font(std::borrow::Cow::Borrowed(GEIST_BOLD));
+        drop(system);
+        let regular = iced::Font::with_name("Geist Mono");
+        let bold = iced::Font {
+            weight: iced::font::Weight::Bold,
+            ..regular
+        };
+        assert_ne!(face_for(regular), face_for(bold));
+        assert!(face_for(bold).is_some());
+        assert!(detected_sets(bold).contains(b"ss11"));
     }
 
     #[test]
