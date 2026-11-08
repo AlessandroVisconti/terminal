@@ -1558,6 +1558,7 @@ dependencies = [
  "feathercritty",
  "flate2",
  "iced",
+ "libc",
  "parking_lot",
  "png",
  "portable-pty",

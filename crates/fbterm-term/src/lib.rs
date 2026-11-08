@@ -1,6 +1,7 @@
 //! Terminal emulation and local shells.
 
 mod export;
+pub mod history_worker;
 mod input;
 mod kitty;
 pub mod ligature_sets;
