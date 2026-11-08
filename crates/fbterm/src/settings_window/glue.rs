@@ -349,11 +349,11 @@ impl App {
         if new == self.settings {
             return Task::none();
         }
-        if new.font_family != self.settings.font_family
+        let restyle = new.font_family != self.settings.font_family
             || new.font_size != self.settings.font_size
             || new.ligatures != self.settings.ligatures
-            || new.font_features != self.settings.font_features
-        {
+            || new.font_features != self.settings.font_features;
+        if restyle {
             self.style = terminal_style(&new);
         }
         if new.theme != self.settings.theme {
@@ -419,6 +419,9 @@ impl App {
         let before = scheme_changed.then(|| self.pane_colors());
         self.settings = new;
         self.refresh_feature_notices();
+        if restyle {
+            self.warm_ligature_sets();
+        }
         if rate_changed {
             self.update_output_rate();
         }
@@ -510,12 +513,13 @@ impl App {
     /// The banner lines for `font_features` entries that do not parse, one per distinct entry,
     /// kept in step with the settings like the scheme notices.
     pub(crate) fn refresh_feature_notices(&mut self) {
-        let mut lines: Vec<String> = parse_features(&self.settings.font_features)
-            .1
-            .into_iter()
-            .map(|e| format!("font_features: \"{e}\" is not a feature tag; it is ignored."))
-            .collect();
-        lines.dedup();
+        let mut lines: Vec<String> = Vec::new();
+        for entry in parse_features(&self.settings.font_features).1 {
+            let line = format!("font_features: \"{entry}\" is not a feature tag; it is ignored.");
+            if !lines.contains(&line) {
+                lines.push(line);
+            }
+        }
         if lines == self.feature_notices {
             return;
         }
@@ -526,5 +530,26 @@ impl App {
         }
         self.notices.extend(lines.iter().cloned());
         self.feature_notices = lines;
+    }
+}
+
+impl App {
+    /// Detects the ligature-only stylistic sets of the terminal font and every scheme's font in
+    /// the background, so the first frame drawn with one never reads a font file itself.
+    pub(crate) fn warm_ligature_sets(&self) {
+        if !self.settings.ligatures {
+            return;
+        }
+        let mut fonts = vec![self.style.font];
+        for scheme in self.schemes.all() {
+            if let Some(family) = &scheme.font_family {
+                let font = Font::with_name(intern(family));
+                if !fonts.contains(&font) {
+                    fonts.push(font);
+                }
+            }
+        }
+        // The thread is detached: drawing detects anything it has not reached yet.
+        drop(fbterm_term::ligature_sets::warm_ligature_sets(fonts));
     }
 }

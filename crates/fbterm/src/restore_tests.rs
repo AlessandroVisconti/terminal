@@ -443,6 +443,20 @@ fn restart_restores_grapheme_default() {
 }
 
 #[test]
+fn a_repeated_bad_feature_entry_shows_once() {
+    let a = profile("a");
+    let paths = paths_with(std::slice::from_ref(&a));
+    std::fs::write(
+        paths.settings(),
+        "font_features = [\"bad\", \"worse!\", \"bad\"]\n",
+    )
+    .unwrap();
+    let (app, _) = App::build(paths, true);
+    let line = "font_features: \"bad\" is not a feature tag; it is ignored.";
+    assert_eq!(app.notices.iter().filter(|n| n.as_str() == line).count(), 1);
+}
+
+#[test]
 fn ligature_settings_reach_pane_styles_and_report_bad_entries() {
     let a = profile("a");
     let paths = paths_with(std::slice::from_ref(&a));

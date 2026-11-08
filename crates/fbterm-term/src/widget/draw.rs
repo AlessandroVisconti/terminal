@@ -190,13 +190,17 @@ pub fn build(
             let selected = selection.is_some_and(|s| s.contains(Point::new(line, Column(x))));
             let (mut fg, mut bg) = cell_colors(cell, colors, scheme, selected);
             // Search matches: the current one strongest, then the selection, then the others.
-            if let Some((h, marks)) = &marks {
-                let mut hit = marks[y].iter().filter(|m| (m.from..=m.to).contains(&x));
-                let current = hit.clone().any(|m| m.current);
+            // One scan of the row's matches gives both answers.
+            let (in_match, current) = marks.as_ref().map_or((false, false), |(_, m)| {
+                m[y].iter()
+                    .filter(|m| (m.from..=m.to).contains(&x))
+                    .fold((false, false), |(_, cur), m| (true, cur || m.current))
+            });
+            if let Some((h, _)) = &marks {
                 if current {
                     bg = h.current_bg;
                     fg = h.current_fg;
-                } else if hit.next().is_some() && !selected {
+                } else if in_match && !selected {
                     bg = h.match_bg;
                 }
             }
@@ -241,9 +245,6 @@ pub fn build(
                 push_span(&mut strikes, row_u16, col, 1, (fg, LineKind::Strike));
             }
 
-            let in_match = marks
-                .as_ref()
-                .is_some_and(|(_, m)| m[y].iter().any(|m| (m.from..=m.to).contains(&x)));
             let decoration = flags & (Flags::ALL_UNDERLINES | Flags::STRIKEOUT);
             let key = (bg, decoration, hovered, selected, in_match, is_cursor_cell);
 

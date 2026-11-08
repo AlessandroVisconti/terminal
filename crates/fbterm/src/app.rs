@@ -809,6 +809,7 @@ impl App {
         app.update_output_rate();
         app.refresh_scheme_notices();
         app.refresh_feature_notices();
+        app.warm_ligature_sets();
         // A report the last run left: said once (debug-aid runs that keep no state leave the
         // marker for a real run).
         if app.state_saving_enabled

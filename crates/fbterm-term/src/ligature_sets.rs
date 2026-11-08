@@ -231,31 +231,78 @@ type FaceSets = HashMap<fontdb::ID, Arc<[[u8; 4]]>>;
 /// The ligature-only stylistic sets of the face `font` resolves to in iced's font system,
 /// cached per face. Empty when no face matches.
 pub fn detected_sets(font: iced::Font) -> Arc<[[u8; 4]]> {
-    static CACHE: OnceLock<Mutex<FaceSets>> = OnceLock::new();
     let Some(id) = face_for(font) else {
         return Arc::from([]);
     };
-    let mut cache = CACHE
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(sets) = cache.get(&id) {
+    if let Some(sets) = lock(cache()).get(&id) {
         return sets.clone();
     }
-    let mut system = font_system().write().unwrap_or_else(|e| e.into_inner());
-    let sets: Arc<[[u8; 4]]> = system
-        .raw()
-        .db()
-        .with_face_data(id, ligature_sets)
-        .unwrap_or_default()
-        .into();
-    cache.insert(id, sets.clone());
+    // Only the face's source is taken under the font system's lock; reading and parsing the
+    // font happen after it is released, so drawing elsewhere never waits on a large font.
+    let source = lock_system().raw().db().face_source(id);
+    let sets: Arc<[[u8; 4]]> = match source {
+        Some((fontdb::Source::Binary(data), index))
+        | Some((fontdb::Source::SharedFile(_, data), index)) => {
+            ligature_sets((*data).as_ref(), index).into()
+        }
+        Some((fontdb::Source::File(path), index)) => std::fs::read(path)
+            .map(|data| ligature_sets(&data, index))
+            .unwrap_or_default()
+            .into(),
+        None => Arc::from([]),
+    };
+    lock(cache()).insert(id, sets.clone());
     sets
+}
+
+/// Detects the ligature-only sets of `fonts` (each in its regular, bold, italic and bold italic
+/// face) on a background thread, so the first frame drawn with them finds the answer cached.
+/// Returns the thread, or `None` when it could not be started (drawing then detects as it goes).
+pub fn warm_ligature_sets(fonts: Vec<iced::Font>) -> Option<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("fbterm-ligature-sets".into())
+        .spawn(move || {
+            for font in fonts {
+                for (weight, style) in [
+                    (font.weight, font.style),
+                    (Weight::Bold, font.style),
+                    (font.weight, Style::Italic),
+                    (Weight::Bold, Style::Italic),
+                ] {
+                    detected_sets(iced::Font {
+                        weight,
+                        style,
+                        ..font
+                    });
+                }
+            }
+        })
+        .ok()
+}
+
+/// The cached sets of `font`'s face, if detected already.
+#[cfg(test)]
+fn cached(font: iced::Font) -> Option<Arc<[[u8; 4]]>> {
+    face_for(font).and_then(|id| lock(cache()).get(&id).cloned())
+}
+
+fn cache() -> &'static Mutex<FaceSets> {
+    static CACHE: OnceLock<Mutex<FaceSets>> = OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn lock_system() -> std::sync::RwLockWriteGuard<'static, iced::advanced::graphics::text::FontSystem>
+{
+    font_system().write().unwrap_or_else(|e| e.into_inner())
 }
 
 /// The face of iced's font system that `font` resolves to (family, weight, stretch, style).
 fn face_for(font: iced::Font) -> Option<fontdb::ID> {
-    let mut system = font_system().write().unwrap_or_else(|e| e.into_inner());
+    let mut system = lock_system();
     let family = match font.family {
         Family::Name(name) => fontdb::Family::Name(name),
         Family::Serif => fontdb::Family::Serif,
@@ -348,6 +395,27 @@ mod tests {
             !has_default_ligatures(&[*b"ss11", *b"ccmp", *b"case"]),
             "Geist Mono's kind"
         );
+    }
+
+    #[test]
+    fn warming_fills_the_cache_for_every_style() {
+        let mut system = iced::advanced::graphics::text::font_system()
+            .write()
+            .expect("font system");
+        system.load_font(std::borrow::Cow::Borrowed(GEIST));
+        system.load_font(std::borrow::Cow::Borrowed(GEIST_BOLD));
+        drop(system);
+        let regular = iced::Font::with_name("Geist Mono");
+        warm_ligature_sets(vec![regular])
+            .expect("thread")
+            .join()
+            .expect("warming thread");
+        let bold = iced::Font {
+            weight: iced::font::Weight::Bold,
+            ..regular
+        };
+        assert!(cached(regular).is_some_and(|s| s.contains(b"ss11")));
+        assert!(cached(bold).is_some_and(|s| s.contains(b"ss11")));
     }
 
     #[test]
