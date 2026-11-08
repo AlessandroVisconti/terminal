@@ -20,6 +20,7 @@ pub enum SettingChange {
     Theme(ThemeMode),
     ColorScheme(String),
     KittyKeyboard(bool),
+    GraphemeClusters(bool),
     BackgroundOpacity(f32),
     BackgroundBlur(bool),
     WindowDecorations(WindowDecorations),
@@ -47,6 +48,7 @@ impl SettingChange {
             Self::Theme(_) => "theme",
             Self::ColorScheme(_) => "color_scheme",
             Self::KittyKeyboard(_) => "kitty_keyboard",
+            Self::GraphemeClusters(_) => "grapheme_clusters",
             Self::BackgroundOpacity(_) => "background_opacity",
             Self::BackgroundBlur(_) => "background_blur",
             Self::WindowDecorations(_) => "window_decorations",
@@ -69,6 +71,7 @@ impl SettingChange {
             Self::Theme(v) => settings.theme = *v,
             Self::ColorScheme(v) => settings.color_scheme.clone_from(v),
             Self::KittyKeyboard(v) => settings.kitty_keyboard = *v,
+            Self::GraphemeClusters(v) => settings.grapheme_clusters = *v,
             Self::BackgroundOpacity(v) => settings.background_opacity = *v,
             Self::BackgroundBlur(v) => settings.background_blur = *v,
             Self::WindowDecorations(v) => settings.window_decorations = *v,
@@ -92,9 +95,10 @@ impl SettingChange {
             Self::ScrollbackLines(v) => Value::from(i64::try_from(*v).unwrap_or(i64::MAX)),
             Self::Theme(ThemeMode::Dark) => Value::from("dark"),
             Self::Theme(ThemeMode::Light) => Value::from("light"),
-            Self::KittyKeyboard(v) | Self::BackgroundBlur(v) | Self::CheckUpdates(v) => {
-                Value::from(*v)
-            }
+            Self::KittyKeyboard(v)
+            | Self::GraphemeClusters(v)
+            | Self::BackgroundBlur(v)
+            | Self::CheckUpdates(v) => Value::from(*v),
             // A number for a fixed rate, the string for the display's.
             Self::MaxFps(MaxFps::Fixed(n)) => Value::from(i64::from(*n)),
             Self::MaxFps(MaxFps::Display) => Value::from("display"),
@@ -373,6 +377,7 @@ mod tests {
             SettingChange::ScrollbackLines(25_000),
             SettingChange::Theme(ThemeMode::Light),
             SettingChange::KittyKeyboard(true),
+            SettingChange::GraphemeClusters(true),
             SettingChange::BackgroundOpacity(0.85),
             SettingChange::BackgroundBlur(true),
             SettingChange::WindowDecorations(WindowDecorations::System),
@@ -805,6 +810,22 @@ mod tests {
         for line in SETTINGS_TEMPLATE.lines() {
             assert!(text.contains(line), "lost {line:?}");
         }
+    }
+
+    #[test]
+    fn grapheme_clusters_written_after_its_template_line() {
+        let dir = std::env::temp_dir().join(format!("fbterm-edit-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("settings.toml");
+        Settings::write_field(&path, &SettingChange::GraphemeClusters(true)).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            text,
+            SETTINGS_TEMPLATE.replace(
+                "#grapheme_clusters = false\n",
+                "#grapheme_clusters = false\ngrapheme_clusters = true\n"
+            )
+        );
+        assert!(Settings::load(&path).unwrap().grapheme_clusters);
     }
 
     #[test]

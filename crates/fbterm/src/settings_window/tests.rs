@@ -174,6 +174,13 @@ fn typed_opacity_is_kept_in_whole_percent() {
 }
 
 #[test]
+fn clusters_switch_queues_its_setting() {
+    let mut s = state();
+    s.update(SettingsMsg::Clusters(true));
+    assert_eq!(s.take_pending(), [SettingChange::GraphemeClusters(true)]);
+}
+
+#[test]
 fn unwritten_changes_go_back_in_line_unless_newer_ones_wait() {
     let mut s = state();
     s.update(SettingsMsg::Kitty(true));

@@ -45,6 +45,7 @@ scrollback_lines = 10000
 theme = "dark"
 color_scheme = "graphite"
 kitty_keyboard = false
+grapheme_clusters = false
 background_opacity = 1.0
 background_blur = false
 window_decorations = "fbterm"
@@ -63,6 +64,7 @@ secret_storage = "auto"
 | `theme` | `"dark"` or `"light"` | `"dark"` | Color theme. |
 | `color_scheme` | string (scheme id) | `"graphite"` | Color scheme for every session; a profile can override it. An id that matches no scheme uses Graphite and is reported in the banner. See [Color schemes](color-schemes). |
 | `kitty_keyboard` | `true` or `false` | `false` | Let programs turn on the kitty keyboard protocol, which reports keys such as Esc, Ctrl and Alt chords, and optionally every key and key releases, as unambiguous escape codes. When `false`, programs' requests for it are ignored and keys use the classic encoding. A change applies to open tabs at once: turning it off returns every tab to the classic encoding, turning it on lets programs enable the protocol from then on (restart a program that asked for it earlier). |
+| `grapheme_clusters` | `true` or `false` | `false` | Count joined emoji, flags and skin tones as one character in one cell, as programs that support it ask for themselves. When `false`, only programs that ask get it. A change applies to new tabs and to tabs after a reset or a restart, never to a program already running. |
 | `background_opacity` | number, `0.05` to `1.0` | `1.0` | Opacity of the terminal's background and of the tab bar, from `0.05` (nearly see-through) to `1.0` (opaque). Text, the cursor, the selection and cells a program gives their own background color stay opaque. On macOS a change applies to open windows at once; on Linux and Windows a window can only become see-through if it was opened while the value was below `1.0`, so open a new window after lowering it (or restart fbterm: while a window opened at `1.0` is open, Settings shows `Restart fbterm to apply this to open windows.` under the control). |
 | `background_blur` | `true` or `false` | `false` | Blur what shows through a see-through background. Takes effect only for windows opened while `background_opacity` is below `1.0`, so open a new window after changing it. Works on macOS, on Windows 11 22H2 and newer, and on KDE Plasma under Wayland; elsewhere the Settings switch is disabled and reads `Not supported on this system`. |
 | `window_decorations` | `"fbterm"` or `"system"` | `"fbterm"` | Linux only; other systems ignore it. Who draws the window's title bar: `"fbterm"` draws it in the tab bar, `"system"` uses the desktop's. In the file it is written as `# Window title bar on Linux: "fbterm" draws it in the tab bar, "system" uses the desktop's.` In Settings this is **Title bar**. If the desktop refuses to let fbterm move its window, the session uses the system title bar anyway and says so once; the setting stays as you wrote it. See [Install on Linux](install-linux#title-bar). |

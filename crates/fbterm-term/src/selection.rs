@@ -78,6 +78,12 @@ impl Selection {
             let wrapped = grid.wraps(line);
             let row = reader.row(grid, line);
             let mut seg = String::new();
+            // A selection starting on a wide character's second column copies the character.
+            let from = if from > 0 && row[Column(from)].flags.contains(Flags::WIDE_CHAR_SPACER) {
+                from - 1
+            } else {
+                from
+            };
             for c in from..=to {
                 let cell = &row[Column(c)];
                 if cell
@@ -87,6 +93,8 @@ impl Selection {
                     continue;
                 }
                 seg.push(cell.c);
+                // Combining marks and the rest of a grapheme cluster live with the cell.
+                seg.extend(cell.zerowidth().into_iter().flatten());
             }
             if wrapped && to == last_col {
                 out.push_str(&seg);
@@ -133,6 +141,21 @@ mod tests {
         assert!(s.contains(p(0, 3)));
         assert!(!s.contains(p(2, 0)));
     }
+    #[test]
+    fn joined_pieces_are_copied_with_their_cell() {
+        let mut t = term();
+        t.feed("\x1b[?2027hab👨\u{200D}👩\u{200D}👧c e\u{301}".as_bytes());
+        let s = Selection::on_line(0, 0, 9);
+        assert_eq!(s.text(&t), "ab👨\u{200D}👩\u{200D}👧c e\u{301}");
+    }
+
+    #[test]
+    fn a_selection_starting_on_a_spacer_copies_its_wide_character() {
+        let mut t = term();
+        t.feed("ab界c".as_bytes());
+        assert_eq!(Selection::on_line(0, 3, 4).text(&t), "界c");
+    }
+
     #[test]
     fn wrapped_lines_join_without_newline() {
         let mut t = term();
