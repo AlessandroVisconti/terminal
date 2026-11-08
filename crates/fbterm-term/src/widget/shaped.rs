@@ -170,8 +170,12 @@ mod tests {
     #[test]
     fn geist_ss11_shapes_an_arrow() {
         load_geist();
-        let face = ttf_parser::Face::parse(GEIST, 0).unwrap();
-        let arrow = face.glyph_index_by_name("hyphen_greater.liga").unwrap().0;
+        let font = skrifa::FontRef::new(GEIST).unwrap();
+        let arrow = skrifa::GlyphNames::new(&font)
+            .iter()
+            .find(|(_, name)| name.as_str() == "hyphen_greater.liga")
+            .map(|(glyph, _)| glyph.to_u32() as u16)
+            .unwrap();
         let mut cache = ShapeCache::default();
         let on = vec![(tag(b"liga"), 1), (tag(b"calt"), 1), (tag(b"ss11"), 1)];
         assert!(glyph_ids(&cache.buffer(key("->", on.clone()))).contains(&arrow));

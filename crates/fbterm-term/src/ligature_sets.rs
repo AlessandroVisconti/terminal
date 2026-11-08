@@ -6,11 +6,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use iced::advanced::graphics::text::{cosmic_text::fontdb, font_system};
 use iced::font::{Family, Stretch, Style, Weight};
-use ttf_parser::gsub::SubstitutionSubtable;
-use ttf_parser::opentype_layout::{
-    ChainedContextLookup, ContextLookup, Coverage, LayoutTable, SequenceLookupRecord,
-};
-use ttf_parser::{Face, GlyphId};
+use skrifa::GlyphId;
+use skrifa::instance::{LocationRef, Size};
+use skrifa::metrics::GlyphMetrics;
+use skrifa::raw::tables::gsub::{Gsub, SingleSubst, SubstitutionSubtables};
+use skrifa::raw::tables::layout::{ChainedSequenceContext, SequenceContext, SequenceLookupRecord};
+use skrifa::raw::{FontRef, TableProvider};
 
 /// The stylistic sets (`ss01` to `ss20`) of the face at `index` in `data` that only make
 /// ligatures, sorted. Empty when the font cannot be read or has no `GSUB` table.
@@ -21,25 +22,35 @@ use ttf_parser::{Face, GlyphId};
 /// than a third of an advance outside its own cell (how monospace fonts draw ligatures across the
 /// spacers before them). A restyled character stays inside its cell, so it disqualifies the set.
 pub fn ligature_sets(data: &[u8], index: u32) -> Vec<[u8; 4]> {
-    let Ok(face) = Face::parse(data, index) else {
+    let Ok(font) = FontRef::from_index(data, index) else {
         return Vec::new();
     };
-    let Some(gsub) = face.tables().gsub else {
+    let Ok(gsub) = font.gsub() else {
         return Vec::new();
     };
+    let Ok(features) = gsub.feature_list() else {
+        return Vec::new();
+    };
+    let metrics = GlyphMetrics::new(&font, Size::unscaled(), LocationRef::default());
     let mut out = Vec::new();
-    for feature in gsub.features {
-        let tag = feature.tag.to_bytes();
+    for record in features.feature_records() {
+        let tag = record.feature_tag().to_be_bytes();
         if &tag[..2] != b"ss" || !tag[2].is_ascii_digit() || !tag[3].is_ascii_digit() {
             continue;
         }
+        let Ok(feature) = record.feature(features.offset_data()) else {
+            continue;
+        };
         let mut check = Check {
-            face: &face,
             gsub: &gsub,
+            metrics: &metrics,
             seen: HashSet::new(),
             substitutions: 0,
         };
-        let joins = feature.lookup_indices.into_iter().all(|i| check.lookup(i));
+        let joins = feature
+            .lookup_list_indices()
+            .iter()
+            .all(|i| check.lookup(i.get()));
         if joins && check.substitutions > 0 {
             out.push(tag);
         }
@@ -50,8 +61,8 @@ pub fn ligature_sets(data: &[u8], index: u32) -> Vec<[u8; 4]> {
 }
 
 struct Check<'a> {
-    face: &'a Face<'a>,
-    gsub: &'a LayoutTable<'a>,
+    gsub: &'a Gsub<'a>,
+    metrics: &'a GlyphMetrics<'a>,
     seen: HashSet<u16>,
     substitutions: usize,
 }
@@ -62,96 +73,129 @@ impl Check<'_> {
         if !self.seen.insert(index) {
             return true;
         }
-        let Some(lookup) = self.gsub.lookups.get(index) else {
+        let Some(subtables) = self
+            .gsub
+            .lookup_list()
+            .ok()
+            .and_then(|list| list.lookups().get(usize::from(index)).ok())
+            .and_then(|lookup| lookup.subtables().ok())
+        else {
             return false;
         };
-        lookup
-            .subtables
-            .into_iter::<SubstitutionSubtable>()
-            .all(|subtable| self.subtable(subtable))
-    }
-
-    fn subtable(&mut self, subtable: SubstitutionSubtable) -> bool {
-        match subtable {
-            SubstitutionSubtable::Single(single) => {
-                let outputs: Vec<GlyphId> = match single {
-                    ttf_parser::gsub::SingleSubstitution::Format1 { coverage, delta } => {
-                        glyphs(coverage)
-                            .map(|g| GlyphId((i32::from(g.0) + i32::from(delta)) as u16))
-                            .collect()
-                    }
-                    ttf_parser::gsub::SingleSubstitution::Format2 { substitutes, .. } => {
-                        substitutes.into_iter().collect()
-                    }
-                };
-                self.substitutions += outputs.len();
-                outputs.into_iter().all(|g| self.spacer_or_wide(g))
-            }
-            SubstitutionSubtable::Ligature(ligatures) => {
-                ligatures.ligature_sets.into_iter().all(|set| {
-                    set.into_iter().all(|ligature| {
+        match subtables {
+            SubstitutionSubtables::Single(tables) => tables.iter().all(|t| match t {
+                Ok(single) => self.single(&single),
+                Err(_) => false,
+            }),
+            SubstitutionSubtables::Ligature(tables) => tables.iter().all(|t| {
+                let Ok(table) = t else { return false };
+                table.ligature_sets().iter().all(|set| {
+                    let Ok(set) = set else { return false };
+                    set.ligatures().iter().all(|ligature| {
                         self.substitutions += 1;
-                        !ligature.components.is_empty()
+                        ligature.is_ok_and(|l| !l.component_glyph_ids().is_empty())
                     })
                 })
-            }
-            SubstitutionSubtable::Context(context) => {
-                let records = context_records(context);
-                records
-                    .into_iter()
-                    .all(|r| self.lookup(r.lookup_list_index))
-            }
-            SubstitutionSubtable::ChainContext(context) => {
-                let records = chained_records(context);
-                records
-                    .into_iter()
-                    .all(|r| self.lookup(r.lookup_list_index))
-            }
+            }),
+            SubstitutionSubtables::Contextual(tables) => tables.iter().all(|t| match t {
+                Ok(context) => context_records(&context).is_some_and(|records| {
+                    records
+                        .into_iter()
+                        .all(|r| self.lookup(r.lookup_list_index()))
+                }),
+                Err(_) => false,
+            }),
+            SubstitutionSubtables::ChainContextual(tables) => tables.iter().all(|t| match t {
+                Ok(context) => chained_records(&context).is_some_and(|records| {
+                    records
+                        .into_iter()
+                        .all(|r| self.lookup(r.lookup_list_index()))
+                }),
+                Err(_) => false,
+            }),
+            SubstitutionSubtables::EmptyExtension => true,
             _ => false,
         }
+    }
+
+    fn single(&mut self, single: &SingleSubst) -> bool {
+        let outputs: Vec<GlyphId> = match single {
+            SingleSubst::Format1(t) => {
+                let Ok(coverage) = t.coverage() else {
+                    return false;
+                };
+                let delta = i32::from(t.delta_glyph_id());
+                coverage
+                    .iter()
+                    .map(|g| GlyphId::new(((i32::from(g.to_u16()) + delta) & 0xFFFF) as u32))
+                    .collect()
+            }
+            SingleSubst::Format2(t) => t
+                .substitute_glyph_ids()
+                .iter()
+                .map(|g| g.get().into())
+                .collect(),
+        };
+        self.substitutions += outputs.len();
+        outputs.into_iter().all(|g| self.spacer_or_wide(g))
     }
 
     /// A blank glyph (no ink), or one whose ink reaches more than a third of an advance outside
     /// its cell. (Geist Mono's `|=` reaches 0.485 of an advance; letters stay inside.)
     fn spacer_or_wide(&self, glyph: GlyphId) -> bool {
-        let Some(bbox) = self.face.glyph_bounding_box(glyph) else {
+        let Some(bounds) = self.metrics.bounds(glyph) else {
             return true;
         };
-        let advance = i32::from(self.face.glyph_hor_advance(glyph).unwrap_or(0)).max(1);
-        i32::from(bbox.x_min) < -advance / 3 || i32::from(bbox.x_max) > advance + advance / 3
-    }
-}
-
-fn glyphs(coverage: Coverage) -> Box<dyn Iterator<Item = GlyphId> + '_> {
-    match coverage {
-        Coverage::Format1 { glyphs } => Box::new(glyphs.into_iter()),
-        Coverage::Format2 { records } => Box::new(
-            records
-                .into_iter()
-                .flat_map(|r| (r.start.0..=r.end.0).map(GlyphId)),
-        ),
-    }
-}
-
-fn context_records(context: ContextLookup) -> Vec<SequenceLookupRecord> {
-    match context {
-        ContextLookup::Format1 { sets, .. } | ContextLookup::Format2 { sets, .. } => sets
-            .into_iter()
-            .flat_map(|set| set.into_iter().flat_map(|rule| rule.lookups.into_iter()))
-            .collect(),
-        ContextLookup::Format3 { lookups, .. } => lookups.into_iter().collect(),
-    }
-}
-
-fn chained_records(context: ChainedContextLookup) -> Vec<SequenceLookupRecord> {
-    match context {
-        ChainedContextLookup::Format1 { sets, .. } | ChainedContextLookup::Format2 { sets, .. } => {
-            sets.into_iter()
-                .flat_map(|set| set.into_iter().flat_map(|rule| rule.lookups.into_iter()))
-                .collect()
+        if bounds.x_max <= bounds.x_min {
+            return true;
         }
-        ChainedContextLookup::Format3 { lookups, .. } => lookups.into_iter().collect(),
+        let advance = self.metrics.advance_width(glyph).unwrap_or(0.0).max(1.0);
+        bounds.x_min < -advance / 3.0 || bounds.x_max > advance + advance / 3.0
     }
+}
+
+fn context_records(context: &SequenceContext) -> Option<Vec<SequenceLookupRecord>> {
+    let mut out = Vec::new();
+    match context {
+        SequenceContext::Format1(t) => {
+            for set in t.seq_rule_sets().iter().flatten() {
+                for rule in set.ok()?.seq_rules().iter() {
+                    out.extend_from_slice(rule.ok()?.seq_lookup_records());
+                }
+            }
+        }
+        SequenceContext::Format2(t) => {
+            for set in t.class_seq_rule_sets().iter().flatten() {
+                for rule in set.ok()?.class_seq_rules().iter() {
+                    out.extend_from_slice(rule.ok()?.seq_lookup_records());
+                }
+            }
+        }
+        SequenceContext::Format3(t) => out.extend_from_slice(t.seq_lookup_records()),
+    }
+    Some(out)
+}
+
+fn chained_records(context: &ChainedSequenceContext) -> Option<Vec<SequenceLookupRecord>> {
+    let mut out = Vec::new();
+    match context {
+        ChainedSequenceContext::Format1(t) => {
+            for set in t.chained_seq_rule_sets().iter().flatten() {
+                for rule in set.ok()?.chained_seq_rules().iter() {
+                    out.extend_from_slice(rule.ok()?.seq_lookup_records());
+                }
+            }
+        }
+        ChainedSequenceContext::Format2(t) => {
+            for set in t.chained_class_seq_rule_sets().iter().flatten() {
+                for rule in set.ok()?.chained_class_seq_rules().iter() {
+                    out.extend_from_slice(rule.ok()?.seq_lookup_records());
+                }
+            }
+        }
+        ChainedSequenceContext::Format3(t) => out.extend_from_slice(t.seq_lookup_records()),
+    }
+    Some(out)
 }
 
 /// Detected sets per face of the font system.

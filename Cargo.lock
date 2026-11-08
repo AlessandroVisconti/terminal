@@ -1563,7 +1563,7 @@ dependencies = [
  "portable-pty",
  "regex",
  "serde_json",
- "ttf-parser",
+ "skrifa 0.44.0",
 ]
 
 [[package]]
