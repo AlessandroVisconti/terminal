@@ -155,6 +155,7 @@ fn default_panes_use_graphite_unchanged() {
     // Today's look: Graphite, the settings' font and size, the background left to the window.
     let s = style(&app, wid, ids[0]);
     let today = TerminalStyle {
+        features: s.features.clone(),
         scheme: ColorScheme::graphite(),
         font: Font::with_name("Geist Mono"),
         font_size: app.settings.font_size,

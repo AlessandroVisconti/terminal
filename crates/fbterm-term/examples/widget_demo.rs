@@ -98,6 +98,10 @@ fn pane(sample: String, focused: bool, accent: Option<Rgb>) -> Pane {
     Pane {
         term: Arc::new(Mutex::new(t)),
         style: TerminalStyle {
+            features: fbterm_term::FontFeatures {
+                ligatures: true,
+                extra: [].into(),
+            },
             scheme,
             font: Font::MONOSPACE,
             font_size: 14.0,

@@ -5,6 +5,7 @@
 
 mod colors;
 mod draw;
+mod features;
 mod geometry;
 mod input;
 
@@ -26,6 +27,7 @@ use crate::{GridSize, SearchMatch, SearchPattern, SharedTerminal};
 
 pub use colors::cell_colors;
 pub use draw::{DrawList, build as build_draw_list};
+pub use features::FontFeatures;
 pub use geometry::{grid_size_from_bounds, pixel_to_cell, pixel_to_point};
 pub use input::paste_input;
 
@@ -35,6 +37,8 @@ pub struct TerminalStyle {
     pub scheme: ColorScheme,
     pub font: Font,
     pub font_size: f32,
+    /// Ligatures and other OpenType features for the grid text.
+    pub features: FontFeatures,
     /// When set, a 1 px border in this color (e.g. the active pane of a split).
     pub accent: Option<Rgb>,
     /// Keyboard input goes to the terminal and the cursor is solid only when focused.

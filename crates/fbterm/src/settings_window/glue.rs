@@ -33,6 +33,10 @@ pub(crate) fn intern(name: &str) -> &'static str {
 pub(crate) fn terminal_style(settings: &Settings) -> TerminalStyle {
     TerminalStyle {
         scheme: ColorScheme::graphite(),
+        features: fbterm_term::FontFeatures {
+            ligatures: true,
+            extra: [].into(),
+        },
         font: Font::with_name(intern(&settings.font_family)),
         font_size: settings.font_size,
         accent: None,
@@ -57,6 +61,7 @@ impl App {
             .map_or(self.settings.font_size, |s| s.clamp(lo, hi));
         TerminalStyle {
             scheme: ColorScheme::from(&scheme.colors),
+            features: self.style.features.clone(),
             font: match &scheme.font_family {
                 Some(family) => Font::with_name(intern(family)),
                 None => self.style.font,

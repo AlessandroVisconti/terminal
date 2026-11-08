@@ -208,6 +208,10 @@ fn start_widget_io(workload: &str) {
     WIDGET_TERM.set(term.clone()).ok();
     WIDGET_STYLE
         .set(fbterm_term::TerminalStyle {
+            features: fbterm_term::FontFeatures {
+                ligatures: true,
+                extra: [].into(),
+            },
             scheme,
             font: Font::MONOSPACE,
             font_size: FONT_SIZE,
