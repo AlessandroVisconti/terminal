@@ -63,7 +63,7 @@ impl App {
                 min_size: Some(iced::Size::new(360.0, 200.0)),
                 exit_on_close_request: false,
                 transparent: backdrop.transparent,
-                blur: backdrop.blur,
+                blur: chrome.window_blur(backdrop),
                 ..window::Settings::default()
             },
         );
