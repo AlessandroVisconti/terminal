@@ -346,6 +346,13 @@ fn appearance<'a>(
         setting(t, "Font family", None, false, fonts),
         setting(t, "Color scheme", None, false, scheme),
         setting(t, "Font size", None, false, size),
+        setting(
+            t,
+            "Ligatures",
+            Some("Draws sequences such as -> and != as one symbol when the font has them."),
+            false,
+            switch(t, v.ligatures, editable, false, SettingsMsg::Ligatures),
+        ),
         opacity_row.into(),
         blur_setting(
             t,

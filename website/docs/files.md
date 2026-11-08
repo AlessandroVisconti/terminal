@@ -41,6 +41,8 @@ To edit the file by hand, run **Open settings file** from the palette (`Cmd+Shif
 ```toml
 font_family = "Geist Mono"
 font_size = 13.0
+ligatures = true
+font_features = []
 scrollback_lines = 10000
 theme = "dark"
 color_scheme = "graphite"
@@ -60,6 +62,8 @@ secret_storage = "auto"
 | --- | --- | --- | --- |
 | `font_family` | string | `"Geist Mono"` | Terminal font family. |
 | `font_size` | number, `6.0` to `72.0` | `13.0` | Font size in points. |
+| `ligatures` | `true` or `false` | `true` | Draw sequences such as `->`, `=>` and `!=` as one symbol when the font has them, including ligatures a font keeps in a stylistic set (Geist Mono's are in `ss11`): fbterm turns on a stylistic set automatically only when it contains nothing but ligatures, so letters keep their usual shapes. A ligature breaks apart under the cursor and where the color, the selection or a search match changes. Copying gives the plain characters. `false` turns every ligature off. In the Settings tab this is **Ligatures** under Appearance. Applies to open tabs at once. |
+| `font_features` | list of strings | `[]` | Extra OpenType features for the terminal font, applied after `ligatures`: a four-letter tag to turn a feature on (`"ss02"`), with `-` to turn one off (`"-calt"`), or with `=` and a number for a variant (`"cv01=2"`). An entry that is not a feature tag is ignored and shown in the window banner. Applies to open tabs at once. |
 | `scrollback_lines` | integer, `0` to `1000000` | `10000` | Lines of history kept per tab, open tabs included. A change applies at once. Raising it keeps everything; lowering it drops the oldest lines of open tabs that hold more, and in the Settings tab that asks first (Apply or Cancel), because it cannot be undone. Lowering it in the file applies when you save and a banner says how many tabs lost lines. Above `100000`, resizing a window can pause briefly while the history rewraps. |
 | `theme` | `"dark"` or `"light"` | `"dark"` | Color theme. |
 | `color_scheme` | string (scheme id) | `"graphite"` | Color scheme for every session; a profile can override it. An id that matches no scheme uses Graphite and is reported in the banner. See [Color schemes](color-schemes). |

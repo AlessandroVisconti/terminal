@@ -443,6 +443,53 @@ fn restart_restores_grapheme_default() {
 }
 
 #[test]
+fn ligature_settings_reach_pane_styles_and_report_bad_entries() {
+    let a = profile("a");
+    let paths = paths_with(std::slice::from_ref(&a));
+    SavedState {
+        windows: vec![saved(&[&a], 0)],
+        ..Default::default()
+    }
+    .save(&paths.state())
+    .unwrap();
+    let (mut app, _) = App::build(paths.clone(), true);
+    app.state_saving_enabled = false;
+    let features = |app: &App| {
+        let w = app.windows.values().next().unwrap();
+        app.pane_style(
+            *app.windows.keys().next().unwrap(),
+            &w.tabs[0],
+            &w.tabs[0].panes[0],
+        )
+        .features
+    };
+    assert!(features(&app).ligatures, "on by default");
+    let changed = Changed {
+        profiles: false,
+        settings: true,
+        schemes: false,
+    };
+    std::fs::write(
+        paths.settings(),
+        "ligatures = false\nfont_features = [\"ss02\", \"bad!\"]\n",
+    )
+    .unwrap();
+    let _ = app.update(Message::ConfigChanged(changed));
+    let f = features(&app);
+    assert!(!f.ligatures);
+    assert_eq!(f.extra.len(), 1);
+    let line = "font_features: \"bad!\" is not a feature tag; it is ignored.";
+    assert_eq!(app.notices.iter().filter(|n| n.as_str() == line).count(), 1);
+    std::fs::write(paths.settings(), "ligatures = true\n").unwrap();
+    let _ = app.update(Message::ConfigChanged(changed));
+    assert!(features(&app).ligatures);
+    assert!(
+        !app.notices.iter().any(|n| n.as_str() == line),
+        "the notice goes with the entry"
+    );
+}
+
+#[test]
 fn kitty_keyboard_setting_reaches_open_and_new_terminals() {
     let a = profile("a");
     let paths = paths_with(std::slice::from_ref(&a));

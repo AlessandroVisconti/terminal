@@ -174,6 +174,13 @@ fn typed_opacity_is_kept_in_whole_percent() {
 }
 
 #[test]
+fn ligatures_switch_queues_its_setting() {
+    let mut s = state();
+    s.update(SettingsMsg::Ligatures(false));
+    assert_eq!(s.take_pending(), [SettingChange::Ligatures(false)]);
+}
+
+#[test]
 fn clusters_switch_queues_its_setting() {
     let mut s = state();
     s.update(SettingsMsg::Clusters(true));
