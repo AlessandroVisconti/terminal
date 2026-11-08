@@ -66,11 +66,28 @@ The features for a run are built in this order, later entries winning for the sa
 2. Then each entry of `font_features`, in order.
 
 **Ligature-only stylistic sets.** When a font is first used, fbterm reads its `GSUB` table and
-turns on a stylistic set (`ss01` to `ss20`) only if every substitution it makes replaces a
-sequence of two or more characters (a ligature substitution, or a contextual substitution whose
-rule matches two or more glyphs), and it never replaces a single character with an
-alternate on its own. For Geist Mono 1.802 this must select `ss11` and none of `ss01` to `ss10`.
-The result is cached per font face. *(Builder: the exact parse is yours. A maintained crate for
+turns on a stylistic set (`ss01` to `ss20`) only if every substitution it makes joins two or
+more characters into one symbol, and none restyles a character on its own. Concretely, each
+substitution must be one of:
+
+- a ligature substitution entry with two or more components (an entry with one component, such
+  as `(` becoming `parenleft.alt`, is a letter alternate and disqualifies the set);
+- a contextual rule matching two or more glyphs whose nested substitutions turn every matched
+  glyph but one into a blank spacer glyph (no outline) and the remaining one into the symbol
+  covering all of them, which is how monospace fonts build ligatures.
+
+A contextual rule that only restyles one character by its neighbours (a different backslash
+before a letter, `x` drawn as a multiplication sign between digits) disqualifies the set: the
+anti-goal wins over any structural test. *(My call.)* For Geist Mono 1.802 this must select
+`ss11` (all chained rules of the spacer kind) and none of `ss01` to `ss10` (`ss10` is a ligature
+lookup whose entries mostly have one component).
+The result is cached per font face. Features apply to a whole run, so a character in it that
+falls back to another font gets the detected sets too; this is accepted rather than splitting
+runs wherever the main font lacks a glyph (a character-map lookup per cell, against the redraw
+budget), and detected sets are left off the cells drawn on their own (wide, clusters,
+standalone), where no ligature can form. *(My call: a fallback font's same-numbered set is
+rarely a letter alternate for the box-drawing and symbol characters that fall back; cost if
+wrong, an odd glyph in a fallback character.)* *(Builder: the exact parse is yours. A maintained crate for
 reading OpenType tables (`ttf-parser`, `skrifa` or `read-fonts`) is expected, MIT or Apache-2.0,
 passing `cargo deny`; prefer one already in the dependency tree.)*
 
