@@ -1,6 +1,6 @@
 # Ligatures and font features
 
-Date: 2026-11-08. Status: draft for owner review.
+Date: 2026-11-08. Status: approved by the owner, 2026-11-08.
 
 ## Intent
 
