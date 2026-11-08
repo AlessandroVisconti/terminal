@@ -515,6 +515,10 @@ Performance follow-up (measured 2026-10-24, `dev/perf/README.md`):
   trim history rows to their used length when they scroll off (about -25% at 126 columns, -50%
   or more in wide windows). Full: compress older history (text plus attribute runs), about
   24-33 MB down to 1.5-2.5 MB per full tab. Both change feathercritty's grid.
+- Cold history compression: built 2026-11-08 (design in `2026-11-08-history-compression-design.md`,
+  numbers in `dev/perf/README.md`): opt-in `history_compression` compresses history blocks older
+  than the newest `uncompressed_history_lines` on one low-priority background worker, and every
+  read of history is byte-identical to compression off.
 - Still open: per-frame cost (one instanced glyph-atlas primitive and damage tracking, as in
   5.2), batching PTY reads under floods, and a smaller font database at startup.
 
@@ -551,6 +555,11 @@ leak (`dev/perf/README.md`, scenario G). And the one-tab idle base reads 2.7 MB 
 it against a paired run). The ~300 MB target is met. Owner decision 2026-10-26: the measured
 number replaces the 2026-10-23 acceptance of the 528 MB worst case; the standing target is 20 tabs
 with full default scrollback at most 200 MB resident (scenario E), measured at 123 MB.
+
+*Measured 2026-11-08 with cold history compression (same machine, `dev/perf/README.md`, scenario I
+and `cold_bench`):* one tab holding 1,000,000 lines of colored log uses 159 MB resident with
+`history_compression` on against 297 MB off, idle CPU 0.00% (median); in compressed history a
+draw-list frame takes about 0.1 ms and a full search or export 1.1-1.2x the time off.
 
 ## 8. Repo and release
 
