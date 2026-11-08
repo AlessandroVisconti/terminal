@@ -3,7 +3,7 @@
 use std::io::{ErrorKind, Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, sync_channel};
 use std::time::Duration;
 
 use fbterm_config::LocalProfile;
@@ -19,6 +19,13 @@ use crate::{
 /// How long the waiter lets the reader drain after the child exits before
 /// announcing `Exited` anyway (a grandchild may still hold the PTY open).
 const DRAIN_GRACE: Duration = Duration::from_millis(500);
+
+/// How many read chunks (up to 64 KiB each) may wait for the parser before the reader blocks,
+/// so a program writing faster than fbterm parses cannot grow memory without bound.
+const READ_QUEUE: usize = 16;
+
+/// The most output the parser feeds in one go (one terminal lock), gathered from the queue.
+const MAX_BATCH: usize = 1024 * 1024;
 
 /// Variables any one of which tells programs which locale (and so which encoding) to use.
 const LOCALE_VARS: [&str; 3] = ["LANG", "LC_ALL", "LC_CTYPE"];
@@ -188,6 +195,12 @@ pub fn spawn_local_into(
         detached.clone(),
         ended.clone(),
     );
+    // Reading and parsing run on separate threads. A read can return as little as about 1 KiB
+    // (macOS caps each pty read there), so parsing every read as it came meant taking the
+    // terminal lock once per KiB under heavy output. The reader only drains the pty into a
+    // bounded queue; the parser takes everything queued and feeds it in one go.
+    let (chunk_tx, chunk_rx) = sync_channel::<Vec<u8>>(READ_QUEUE);
+    let reader_detached = detached.clone();
     std::thread::Builder::new()
         .name(format!("fbterm-pty-reader-{}", id.0))
         .spawn(move || {
@@ -200,7 +213,27 @@ pub fn spawn_local_into(
                     Err(e) if e.kind() == ErrorKind::Interrupted => continue,
                     Err(_) => break,
                 };
-                for reply in feeder.feed(&buf[..n]) {
+                // The parser is gone (closed), or the handle was: stop reading.
+                if chunk_tx.send(buf[..n].to_vec()).is_err()
+                    || reader_detached.load(Ordering::Acquire)
+                {
+                    break;
+                }
+            }
+        })?;
+    std::thread::Builder::new()
+        .name(format!("fbterm-pty-parser-{}", id.0))
+        .spawn(move || {
+            // Ends when the reader stops and the queue is empty.
+            while let Ok(first) = chunk_rx.recv() {
+                let mut batch = first;
+                while batch.len() < MAX_BATCH {
+                    match chunk_rx.try_recv() {
+                        Ok(more) => batch.extend_from_slice(&more),
+                        Err(_) => break,
+                    }
+                }
+                for reply in feeder.feed(&batch) {
                     let _ = reader_tx.send(Command::Input(reply));
                 }
                 // Closed: whoever still holds the PTY no longer reaches the terminal.
