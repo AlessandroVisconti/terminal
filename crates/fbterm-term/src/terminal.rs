@@ -278,6 +278,12 @@ impl Terminal {
         self.term.install_history_job(done)
     }
 
+    /// Run and install every pending history job now, under the caller's lock (tests and
+    /// measurements; the app leaves them to [`crate::history_worker`]).
+    pub fn run_history_jobs(&mut self) {
+        self.term.run_history_jobs();
+    }
+
     /// Lines of scrollback the normal screen holds (while the alternate screen is up, the
     /// normal screen's, which is kept aside).
     pub fn history_len(&self) -> usize {

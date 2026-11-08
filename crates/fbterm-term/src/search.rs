@@ -979,4 +979,216 @@ mod tests {
         assert_eq!(&s.text[s.highlight.clone()], "needle");
         assert_eq!(s.text.chars().count(), SNIPPET_LEN + 2);
     }
+
+    // Compression-on variants: the same output with every history row the test wrote in a
+    // compressed block (`cold_tests::pair`); every result must equal the one with compression
+    // off.
+
+    fn shared(t: Terminal) -> SharedTerminal {
+        Arc::new(Mutex::new(t))
+    }
+
+    /// `search` without the generation, which counts feeds and setting changes, not content.
+    fn find(t: &SharedTerminal, r: &SearchRequest) -> SearchOutcome {
+        SearchOutcome {
+            generation: 0,
+            ..search(t, r, &AtomicBool::new(false))
+        }
+    }
+
+    /// Searches the pair with `r` (paging with `resume` until done); asserts that both give
+    /// the same pages and returns them.
+    fn cold_search(
+        cols: u16,
+        rows: u16,
+        before: &[u8],
+        after: &[u8],
+        r: &SearchRequest,
+    ) -> Vec<SearchOutcome> {
+        let (off, on) = crate::cold_tests::pair(cols, rows, before, after);
+        let pages = |t: Terminal| {
+            let t = shared(t);
+            let mut r = r.clone();
+            let mut pages = Vec::new();
+            loop {
+                let o = find(&t, &r);
+                r.below = o.resume;
+                pages.push(o);
+                if r.below.is_none() {
+                    return pages;
+                }
+            }
+        };
+        let (a, b) = (pages(off), pages(on));
+        assert_eq!(a, b, "differs with compression on");
+        b
+    }
+
+    #[test]
+    fn finds_matches_in_scrollback_newest_first_compressed() {
+        let mut bytes = Vec::new();
+        for i in 0..50 {
+            bytes.extend(format!("line {i}\r\n").bytes());
+        }
+        let out = cold_search(20, 5, &bytes, b"", &req("line 1", false));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].hits.len(), 11);
+        assert_eq!(out[0].hits[0].snippet.as_ref().unwrap().text, "line 19");
+        assert_eq!(
+            out[0].hits.last().unwrap().snippet.as_ref().unwrap().text,
+            "line 1"
+        );
+    }
+
+    #[test]
+    fn stable_points_survive_scrolling_compressed() {
+        let r = req("needle", false);
+        let (off, on) = crate::cold_tests::pair(20, 5, b"needle\r\n", b"");
+        let (off, on) = (shared(off), shared(on));
+        let before = find(&on, &r);
+        assert_eq!(before, find(&off, &r));
+        for t in [&off, &on] {
+            for i in 0..30 {
+                t.lock().feed(format!("other {i}\r\n").as_bytes());
+            }
+        }
+        on.lock().run_history_jobs();
+        let after = find(&on, &r);
+        assert_eq!(after, find(&off, &r));
+        assert_eq!(before.hits[0].range, after.hits[0].range);
+        let t = on.lock();
+        let line = t.grid_line(after.hits[0].range.start.line).unwrap();
+        assert_eq!(t.term().grid().cell(Point::new(line, Column(0))).c, 'n');
+    }
+
+    #[test]
+    fn stable_lines_survive_row_resizes_compressed() {
+        let mut bytes = Vec::new();
+        for i in 0..50 {
+            bytes.extend(format!("line {i}\r\n").bytes());
+        }
+        let (mut off, mut on) = crate::cold_tests::pair(20, 10, &bytes, b"");
+        let top = on.stable_line(on.term().grid().topmost_line());
+        assert_eq!(text_at(&on, top).as_deref(), Some("line 0"));
+        for rows in [20, 5, 30, 10, 40] {
+            resize_rows(&mut off, rows);
+            resize_rows(&mut on, rows);
+            on.run_history_jobs();
+            for k in [0, 10, 49] {
+                assert_eq!(text_at(&off, top + k), text_at(&on, top + k), "rows {rows}");
+                assert_eq!(
+                    text_at(&on, top + k).as_deref(),
+                    Some(format!("line {k}").as_str()),
+                    "rows {rows}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn matches_span_soft_wraps_but_not_line_breaks_compressed() {
+        let out = cold_search(
+            10,
+            5,
+            b"0123456789abc\r\nxyz\r\nabc\r\n",
+            b"",
+            &req("89ab", false),
+        );
+        assert_eq!(out[0].hits.len(), 1);
+        let m = out[0].hits[0].range;
+        assert_eq!(
+            (m.start.col, m.end.line - m.start.line, m.end.col),
+            (8, 1, 1)
+        );
+        let out = cold_search(10, 5, b"xyz\r\nabc\r\n", b"", &req("zab", false));
+        assert!(out[0].hits.is_empty());
+    }
+
+    #[test]
+    fn wide_characters_cover_both_cells_compressed() {
+        let out = cold_search(20, 5, "ab界c\r\n".as_bytes(), b"", &req("界c", false));
+        let m = out[0].hits[0].range;
+        assert_eq!((m.start.col, m.end.col), (2, 4));
+        let out = cold_search(20, 5, "ab界\r\n".as_bytes(), b"", &req("界", false));
+        assert_eq!(out[0].hits[0].range.end.col, 3);
+    }
+
+    #[test]
+    fn a_joined_emoji_is_one_match_over_its_two_cells_compressed() {
+        let out = cold_search(
+            20,
+            5,
+            "\x1b[?2027hab👨\u{200D}👩\u{200D}👧c\r\n".as_bytes(),
+            b"",
+            &req("👨\u{200D}👩\u{200D}👧", false),
+        );
+        assert_eq!(out[0].hits.len(), 1);
+        let m = out[0].hits[0].range;
+        assert_eq!((m.start.col, m.end.col), (2, 3));
+    }
+
+    #[test]
+    fn stops_at_the_limit_and_resumes_above_compressed() {
+        let mut bytes = Vec::new();
+        for i in 0..3000 {
+            bytes.extend(format!("hit {i}\r\n").bytes());
+        }
+        let out = cold_search(20, 5, &bytes, b"", &req("hit", false));
+        let counts: Vec<usize> = out.iter().map(|o| o.hits.len()).collect();
+        assert_eq!(counts, [MATCH_CAP, MATCH_CAP, 1000]);
+        assert_eq!(
+            out[2].hits.last().unwrap().snippet.as_ref().unwrap().text,
+            "hit 0"
+        );
+        // The find-in-all-tabs request: 51 matches with snippets.
+        let r = SearchRequest {
+            limit: 51,
+            ..req(r"hit \d+5$", true)
+        };
+        let out = cold_search(20, 5, &bytes, b"", &r);
+        // Lines 15, 25, ..., 2995 (\d+ needs a digit before the 5).
+        assert_eq!(out.iter().map(|o| o.hits.len()).sum::<usize>(), 299);
+    }
+
+    #[test]
+    fn a_chunk_out_of_time_stops_at_a_line_and_the_next_continues_compressed() {
+        let mut bytes = Vec::new();
+        for i in 0..2000 {
+            let pad = if i % 3 == 0 { "-----------" } else { "" };
+            bytes.extend(format!("hit{pad} {i}\r\n").bytes());
+        }
+        let (off, on) = crate::cold_tests::pair(10, 5, &bytes, b"");
+        let (off, on) = (shared(off), shared(on));
+        let r = req("hit", false);
+        let normal = find(&off, &r);
+        let sliced = search_with_budget(&on, &r, &AtomicBool::new(false), Duration::ZERO);
+        assert_eq!(normal, find(&on, &r));
+        assert_eq!(normal.hits, sliced.hits);
+        assert_eq!(normal.resume, sliced.resume);
+    }
+
+    #[test]
+    fn visible_matches_and_reveal_compressed() {
+        let mut bytes = Vec::new();
+        for i in 0..10 {
+            bytes.extend(format!("before {i}\r\n").bytes());
+        }
+        bytes.extend(b"target\r\n");
+        let (off, on) = crate::cold_tests::pair(20, 5, &bytes, b"");
+        let p = pattern("target", false);
+        let r = req("target", false);
+        let run = |t: Terminal| {
+            let t = shared(t);
+            let out = find(&t, &r);
+            let mut t = t.lock();
+            assert!(t.visible_matches(&p).is_empty());
+            assert!(t.reveal(&out.hits[0].range, None));
+            let shown = t.visible_matches(&p);
+            t.scroll_to_top();
+            (out, shown, t.visible_matches(&p), t.view_bottom())
+        };
+        let (a, b) = (run(off), run(on));
+        assert_eq!(a, b, "differs with compression on");
+        assert_eq!(b.1, vec![b.0.hits[0].range]);
+    }
 }

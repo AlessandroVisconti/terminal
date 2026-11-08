@@ -720,4 +720,181 @@ mod tests {
         assert_eq!(text(&t, ExportFormat::Plain), "");
         assert_eq!(text(&t, ExportFormat::Ansi), "");
     }
+
+    // Compression-on variants: the same output with every history row the test wrote in a
+    // compressed block (`cold_tests::pair`), exported byte for byte as with compression off.
+
+    fn shared(t: Terminal) -> SharedTerminal {
+        std::sync::Arc::new(parking_lot::Mutex::new(t))
+    }
+
+    /// Every format exported from the pair; asserts that compression changes no byte and
+    /// returns the plain and colored text.
+    fn cold_exports(cols: u16, rows: u16, before: &[u8], after: &[u8]) -> (String, String) {
+        let (off, on) = crate::cold_tests::pair(cols, rows, before, after);
+        let (off, on) = (shared(off), shared(on));
+        for f in ExportFormat::ALL {
+            let (mut a, mut b) = (Vec::new(), Vec::new());
+            let sa = export(&off, f, &mut a).unwrap();
+            let sb = export(&on, f, &mut b).unwrap();
+            assert_eq!(sa.alt_screen, sb.alt_screen, "{f:?}");
+            assert!(a == b, "{f:?} differs with compression on");
+        }
+        (
+            text(&off, ExportFormat::Plain),
+            text(&off, ExportFormat::Ansi),
+        )
+    }
+
+    #[test]
+    fn plain_joins_wrapped_rows_and_trims_trailing_spaces_compressed() {
+        let (plain, _) = cold_exports(10, 5, b"abcdefghijKLM  \r\nshort   \r\n\r\nend\r\n", b"");
+        assert!(
+            plain.starts_with("abcdefghijKLM\nshort\n\nend\n~~ "),
+            "{plain}"
+        );
+    }
+
+    #[test]
+    fn spaces_at_a_soft_wrap_are_kept_compressed() {
+        let (plain, _) = cold_exports(5, 4, b"abc  def\r\n", b"");
+        assert!(plain.starts_with("abc  def\n~~ "));
+    }
+
+    #[test]
+    fn history_comes_first_in_order_compressed() {
+        let mut bytes = Vec::new();
+        for i in 0..50 {
+            bytes.extend(format!("line {i}\r\n").bytes());
+        }
+        let (plain, _) = cold_exports(20, 5, &bytes, b"");
+        let lines: Vec<&str> = plain.lines().take(51).collect();
+        let want: Vec<String> = (0..50).map(|i| format!("line {i}")).collect();
+        assert_eq!(lines[..50], want[..]);
+        assert!(lines[50].starts_with("~~ "));
+    }
+
+    #[test]
+    fn wide_and_combining_characters_are_written_once_and_whole_compressed() {
+        let (plain, _) = cold_exports(10, 3, "日本 e\u{301}x\r\n".as_bytes(), b"");
+        assert!(plain.starts_with("日本 e\u{301}x\n~~ "));
+        let (plain, _) = cold_exports(5, 3, "abcd日\r\n".as_bytes(), b"");
+        assert!(plain.starts_with("abcd日\n~~ "));
+    }
+
+    #[test]
+    fn grapheme_clusters_are_written_whole_compressed() {
+        let line = "🇮🇹 👍🏽 👨\u{200D}👩\u{200D}👧 ❤\u{FE0F}";
+        let (plain, _) = cold_exports(20, 3, format!("\x1b[?2027h{line}\r\n").as_bytes(), b"");
+        assert!(plain.starts_with(&format!("{line}\n~~ ")));
+    }
+
+    #[test]
+    fn ansi_keeps_colors_and_attributes_and_resets_at_line_ends_compressed() {
+        let (_, ansi) = cold_exports(
+            40,
+            4,
+            b"\x1b[1;31mred\x1b[0m plain \x1b[38;5;208mo\x1b[48;2;1;2;3mx\x1b[0m\r\n\x1b[3;4;7;9;2mstyled\x1b[0m   \r\n",
+            b"",
+        );
+        let lines: Vec<&str> = ansi.lines().collect();
+        assert_eq!(
+            lines[0],
+            "\x1b[0;1;31mred\x1b[0m plain \x1b[0;38;5;208mo\x1b[0;38;5;208;48;2;1;2;3mx\x1b[0m"
+        );
+        assert_eq!(lines[1], "\x1b[0;2;3;7;9;4mstyled\x1b[0m");
+        let (_, ansi) = cold_exports(20, 2, b"\x1b[92mg\x1b[103my\x1b[0m\r\n", b"");
+        assert!(ansi.starts_with("\x1b[0;92mg\x1b[0;92;103my\x1b[0m\n~~ "));
+    }
+
+    #[test]
+    fn ansi_keeps_trailing_blanks_that_show_compressed() {
+        let (plain, ansi) = cold_exports(20, 2, b"a\x1b[44m  \x1b[0m   \r\n", b"");
+        assert!(ansi.starts_with("a\x1b[0;44m  \x1b[0m\n~~ "));
+        assert!(plain.starts_with("a\n~~ "));
+    }
+
+    #[test]
+    fn the_alt_screen_exports_the_normal_screens_history_compressed() {
+        let normal = b"normal 1\r\nnormal 2\r\n";
+        let (plain, _) = cold_exports(20, 4, normal, b"\x1b[?1049hFULL SCREEN APP");
+        assert!(plain.starts_with("normal 1\nnormal 2\n~~ "));
+        assert!(!plain.contains("FULL SCREEN APP"));
+        let (on, _) = crate::cold_tests::pair(20, 4, normal, b"\x1b[?1049hFULL SCREEN APP");
+        let summary = export(&shared(on), ExportFormat::Plain, &mut Vec::new()).unwrap();
+        assert!(summary.alt_screen);
+        let (plain, _) = cold_exports(20, 4, b"normal 1\r\n", b"\x1b[?1049hAPP\x1b[?1049l");
+        assert!(plain.starts_with("normal 1\n~~ "));
+        assert!(!plain.contains("APP"));
+    }
+
+    #[test]
+    fn output_between_chunks_neither_repeats_nor_skips_lines_compressed() {
+        let mut bytes = Vec::new();
+        for i in 0..40 {
+            bytes.extend(format!("old {i}\r\n").bytes());
+        }
+        let (off, on) = crate::cold_tests::pair(20, 5, &bytes, b"");
+        let run = |t: Terminal| {
+            let t = shared(t);
+            let mut n = 0;
+            let mut more = || {
+                let mut b = Vec::new();
+                for _ in 0..3 {
+                    b.extend(format!("new {n}\r\n").bytes());
+                    n += 1;
+                }
+                t.lock().feed(&b);
+            };
+            let mut out = Vec::new();
+            export_chunked(&t, ExportFormat::Ansi, &mut out, 7, &mut more).unwrap();
+            String::from_utf8(out).unwrap()
+        };
+        let (a, b) = (run(off), run(on));
+        assert!(a == b, "differs with compression on");
+        let old: Vec<&str> = b.lines().filter(|l| l.starts_with("old")).collect();
+        let want: Vec<String> = (0..40).map(|i| format!("old {i}")).collect();
+        assert_eq!(old, want);
+    }
+
+    #[test]
+    fn export_survives_history_clear_midway_compressed() {
+        let mut bytes = Vec::new();
+        for i in 0..5000 {
+            bytes.extend(format!("line {i}\r\n").bytes());
+        }
+        let (off, on) = crate::cold_tests::pair(20, 5, &bytes, b"");
+        let run = |t: Terminal| {
+            let t = shared(t);
+            let mut calls = 0;
+            let mut clear = || {
+                calls += 1;
+                if calls == 1 {
+                    t.lock().feed(b"\x1b[3J");
+                }
+            };
+            let mut out = Vec::new();
+            export_chunked(&t, ExportFormat::Plain, &mut out, 1000, &mut clear).unwrap();
+            String::from_utf8(out).unwrap()
+        };
+        let (a, b) = (run(off), run(on));
+        assert!(a == b, "differs with compression on");
+        let first: Vec<String> = b.lines().take(1000).map(str::to_owned).collect();
+        let want: Vec<String> = (0..1000).map(|i| format!("line {i}")).collect();
+        assert_eq!(first, want);
+    }
+
+    #[test]
+    fn chunks_join_wrapped_lines_and_keep_styles_across_their_boundaries_compressed() {
+        let before = b"\x1b[31mabcdefghij\x1b[0mxy   \r\nz\r\n";
+        let (_, whole) = cold_exports(5, 6, before, b"");
+        let (_, on) = crate::cold_tests::pair(5, 6, before, b"");
+        let mut out = Vec::new();
+        export_chunked(&shared(on), ExportFormat::Ansi, &mut out, 1, &mut || {}).unwrap();
+        assert!(
+            String::from_utf8(out).unwrap() == whole,
+            "1-row chunks differ"
+        );
+        assert!(whole.starts_with("\x1b[0;31mabcdefghij\x1b[0mxy\nz\n~~ "));
+    }
 }
