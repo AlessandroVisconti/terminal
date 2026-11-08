@@ -261,6 +261,31 @@ impl Terminal {
         self.config.kitty_keyboard
     }
 
+    /// Start with grapheme clusters on (DEC private mode 2027) after a reset or a restart. This
+    /// only sets the default: the mode a running program has is never flipped. Like
+    /// [`Terminal::set_kitty_keyboard`], the title the emulator re-announces is discarded.
+    pub fn set_grapheme_clusters(&mut self, on: bool) {
+        if self.config.grapheme_clusters == on {
+            return;
+        }
+        self.config.grapheme_clusters = on;
+        let seen = self.shared.lock().events.len();
+        self.term.set_options(self.config.clone());
+        self.drop_reannounced_title(seen);
+        self.generation += 1;
+    }
+
+    /// The grapheme clusters default (the setting), not the live mode.
+    pub fn grapheme_clusters(&self) -> bool {
+        self.config.grapheme_clusters
+    }
+
+    /// Put mode 2027 back to the default, for a new session taking over this terminal.
+    pub fn reset_grapheme_clusters(&mut self) {
+        self.term.reset_grapheme_cluster_mode();
+        self.generation += 1;
+    }
+
     /// Counter bumped by every change that can alter what is drawn.
     pub fn generation(&self) -> u64 {
         self.generation
@@ -620,6 +645,20 @@ mod tests {
             t.mode(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn grapheme_setting_sets_default_not_live_mode() {
+        let mut t = Terminal::new(size(80, 24), 100);
+        assert!(!t.grapheme_clusters());
+        t.set_grapheme_clusters(true);
+        assert!(t.grapheme_clusters());
+        assert!(
+            !t.mode().contains(TermMode::GRAPHEME_CLUSTER),
+            "never flips a live mode"
+        );
+        t.reset_grapheme_clusters();
+        assert!(t.mode().contains(TermMode::GRAPHEME_CLUSTER));
     }
 
     #[test]

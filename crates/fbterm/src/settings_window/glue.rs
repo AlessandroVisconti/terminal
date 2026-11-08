@@ -361,6 +361,18 @@ impl App {
                 }
             }
         }
+        if new.grapheme_clusters != self.settings.grapheme_clusters {
+            let panes = self
+                .windows
+                .values()
+                .flat_map(|w| &w.tabs)
+                .flat_map(|t| &t.panes);
+            for pane in panes {
+                if let Some(term) = pane.terminal() {
+                    term.lock().set_grapheme_clusters(new.grapheme_clusters);
+                }
+            }
+        }
         let task = if new.scrollback_lines != self.settings.scrollback_lines {
             self.apply_scrollback(new.scrollback_lines, source)
         } else {

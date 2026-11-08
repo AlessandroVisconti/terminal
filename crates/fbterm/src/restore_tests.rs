@@ -382,6 +382,67 @@ fn settings_reload_applies_or_keeps_the_previous_and_says_why() {
 }
 
 #[test]
+fn grapheme_setting_reaches_new_terminals() {
+    let a = profile("a");
+    let paths = paths_with(std::slice::from_ref(&a));
+    let (mut app, _) = App::build(paths, true);
+    app.state_saving_enabled = false;
+    let grid = fbterm_term::GridSize {
+        cols: 80,
+        rows: 24,
+        cell_width: 8.0,
+        cell_height: 16.0,
+    };
+    let on = |app: &App| {
+        app.new_terminal(grid)
+            .lock()
+            .mode()
+            .contains(fbterm_term::TermMode::GRAPHEME_CLUSTER)
+    };
+    assert!(!on(&app));
+    app.settings.grapheme_clusters = true;
+    assert!(on(&app));
+}
+
+#[test]
+fn restart_restores_grapheme_default() {
+    let a = profile("a");
+    let paths = paths_with(std::slice::from_ref(&a));
+    SavedState {
+        windows: vec![saved(&[&a], 0)],
+        ..Default::default()
+    }
+    .save(&paths.state())
+    .unwrap();
+    let (mut app, _) = App::build(paths, true);
+    app.state_saving_enabled = false;
+    let (wid, id, term) = {
+        let (wid, w) = app.windows.iter().next().unwrap();
+        let pane = &w.tabs[0].panes[0];
+        (
+            *wid,
+            pane.id,
+            pane.terminal()
+                .cloned()
+                .expect("started tab has a terminal"),
+        )
+    };
+    term.lock().feed(b"\x1b[?2027h");
+    assert!(
+        term.lock()
+            .mode()
+            .contains(fbterm_term::TermMode::GRAPHEME_CLUSTER)
+    );
+    let _ = app.start(wid, id);
+    assert!(
+        !term
+            .lock()
+            .mode()
+            .contains(fbterm_term::TermMode::GRAPHEME_CLUSTER)
+    );
+}
+
+#[test]
 fn kitty_keyboard_setting_reaches_open_and_new_terminals() {
     let a = profile("a");
     let paths = paths_with(std::slice::from_ref(&a));

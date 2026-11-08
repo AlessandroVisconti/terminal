@@ -124,6 +124,8 @@ impl App {
     pub(crate) fn new_terminal(&self, grid: GridSize) -> SharedTerminal {
         let mut term = Terminal::new(grid, self.settings.scrollback_lines);
         term.set_kitty_keyboard(self.settings.kitty_keyboard);
+        term.set_grapheme_clusters(self.settings.grapheme_clusters);
+        term.reset_grapheme_clusters();
         self.style.scheme.apply_to(&mut term);
         Arc::new(Mutex::new(term))
     }
@@ -164,7 +166,12 @@ impl App {
         pane.connecting = None;
         let (terminal, fresh) = match previous {
             Some(t) => {
-                t.lock().feed(tabs::RESTART_RESET);
+                {
+                    let mut term = t.lock();
+                    term.feed(tabs::RESTART_RESET);
+                    // A new program never inherits mode 2027 from the one before.
+                    term.reset_grapheme_clusters();
+                }
                 (t, false)
             }
             None => (fresh_terminal, true),

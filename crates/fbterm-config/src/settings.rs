@@ -171,6 +171,10 @@ pub struct Settings {
     /// Let programs turn on the kitty keyboard protocol (off: requests are ignored and keys keep
     /// their legacy encoding).
     pub kitty_keyboard: bool,
+    /// Start every new terminal with grapheme clusters on (DEC private mode 2027): joined emoji,
+    /// flags and skin tones in one cell. Programs can turn it on and off themselves; a change
+    /// applies to new terminals and after a reset or restart, never to a running program.
+    pub grapheme_clusters: bool,
     /// Opacity of the terminal's default background and the window chrome around it, from
     /// `0.05` (nearly clear) to `1.0` (opaque). Text, the cursor, the selection and cells with their own
     /// background stay opaque.
@@ -210,6 +214,7 @@ impl Default for Settings {
             theme: ThemeMode::Dark,
             color_scheme: "graphite".into(),
             kitty_keyboard: false,
+            grapheme_clusters: false,
             background_opacity: 1.0,
             background_blur: false,
             window_decorations: WindowDecorations::Fbterm,
@@ -427,6 +432,10 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 
 # Let programs turn on the kitty keyboard protocol (true or false).
 #kitty_keyboard = false
+
+# Keep joined emoji, flags and skin tones in one cell in new tabs (true or false). Programs can
+# turn this on themselves.
+#grapheme_clusters = false
 
 # Opacity of the terminal background and tab bar, from 0.05 (nearly clear) to 1.0 (opaque).
 #background_opacity = 1.0

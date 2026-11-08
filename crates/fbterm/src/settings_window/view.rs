@@ -503,6 +503,21 @@ fn terminal<'a>(
                 SettingsMsg::Kitty,
             ),
         ),
+        setting(
+            t,
+            "Grapheme clusters",
+            Some(
+                "Keeps joined emoji and flags in one cell in new tabs. Programs can turn this on themselves.",
+            ),
+            false,
+            switch(
+                t,
+                state.values.grapheme_clusters,
+                editable,
+                false,
+                SettingsMsg::Clusters,
+            ),
+        ),
         setting(t, "Redraw rate", Some(state.rate_hint()), false, rate),
     ]
 }

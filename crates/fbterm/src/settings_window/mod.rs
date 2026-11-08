@@ -70,6 +70,8 @@ pub enum SettingsMsg {
     RetriesText(String),
     RetriesSubmit,
     Kitty(bool),
+    /// `Grapheme clusters`.
+    Clusters(bool),
     MaxFps(MaxFps),
     /// `Check for updates automatically`.
     CheckUpdates(bool),
@@ -474,6 +476,7 @@ impl SettingsState {
             SettingsMsg::TabBar(v) => self.change(SettingChange::TabBar(v), false),
             SettingsMsg::TabGroups(v) => self.change(SettingChange::TabGroups(v), false),
             SettingsMsg::Kitty(v) => self.change(SettingChange::KittyKeyboard(v), false),
+            SettingsMsg::Clusters(v) => self.change(SettingChange::GraphemeClusters(v), false),
             SettingsMsg::MaxFps(v) => self.change(SettingChange::MaxFps(v), false),
             SettingsMsg::CheckUpdates(v) => self.change(SettingChange::CheckUpdates(v), false),
             SettingsMsg::Record(action)

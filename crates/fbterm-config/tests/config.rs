@@ -326,6 +326,15 @@ fn partial_settings_file_uses_defaults() {
 }
 
 #[test]
+fn grapheme_clusters_setting_defaults_off_and_parses() {
+    let path = tmp("settings.toml");
+    std::fs::write(&path, "theme = \"light\"\n").unwrap();
+    assert!(!Settings::load_or_default(&path).grapheme_clusters);
+    std::fs::write(&path, "grapheme_clusters = true\n").unwrap();
+    assert!(Settings::load_or_default(&path).grapheme_clusters);
+}
+
+#[test]
 fn kitty_keyboard_setting_parses() {
     let path = tmp("settings.toml");
     std::fs::write(&path, "kitty_keyboard = true\n").unwrap();
