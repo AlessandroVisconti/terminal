@@ -100,6 +100,8 @@ pub enum Page {
     Settings,
     /// The first-launch questions (`crate::welcome`).
     Welcome,
+    /// The color schemes, their editor and the gallery (`crate::schemes_window`).
+    Schemes,
 }
 
 impl Page {
@@ -108,6 +110,7 @@ impl Page {
             Self::Profiles => "Profiles",
             Self::Settings => "Settings",
             Self::Welcome => "Welcome",
+            Self::Schemes => "Color schemes",
         }
     }
 }

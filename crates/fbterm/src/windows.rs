@@ -181,9 +181,9 @@ impl App {
         }
     }
 
-    /// What a closed page tab leaves behind: the editor's drafts go, Settings applies a value
-    /// still typed (as Enter would) and writes what is still waiting, the Welcome tab answers
-    /// its open questions with the defaults.
+    /// What a closed page tab leaves behind: the editor's and Color schemes' drafts go,
+    /// Settings applies a value still typed (as Enter would) and writes what is still waiting,
+    /// the Welcome tab answers its open questions with the defaults.
     pub(crate) fn page_closed(&mut self, page: Page) -> Task<Message> {
         match page {
             Page::Profiles => {
@@ -197,6 +197,10 @@ impl App {
                 typed
             }
             Page::Welcome => self.welcome_closed(),
+            Page::Schemes => {
+                self.schemes_win = None;
+                Task::none()
+            }
         }
     }
 
@@ -380,7 +384,6 @@ impl App {
             .windows
             .keys()
             .copied()
-            .chain(self.schemes_window())
             .chain(self.archive_window())
             .collect();
         self.closing.extend(ids.iter().copied());
@@ -414,7 +417,7 @@ impl App {
         if self.settings_window() == Some(id) {
             self.write_pending_settings();
         }
-        if self.schemes_window() == Some(id) || self.archive_window() == Some(id) {
+        if self.archive_window() == Some(id) {
             self.close_window(id)
         } else if self.windows.len() > 1 {
             if self.ask_before_closing_window(id) {

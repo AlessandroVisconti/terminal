@@ -28,7 +28,8 @@ use crate::theme::{Tokens, UI_FONT};
 use crate::tooltip::{DemoTip, tip, tooltip_text};
 use crate::tunnels_panel::TunnelsMsg;
 use crate::ui::{
-    ICON_FOLDER, ICON_PLUS, ICON_SETTINGS, ICON_TERMINAL, ICON_TUNNELS, ICON_USERS, ICON_X, icon,
+    ICON_FOLDER, ICON_PALETTE, ICON_PLUS, ICON_SETTINGS, ICON_TERMINAL, ICON_TUNNELS, ICON_USERS,
+    ICON_X, icon,
 };
 use crate::windows::Carry;
 
@@ -79,40 +80,6 @@ fn vault_layer<'a>(
 
 fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
     let t = app.tokens;
-    if let Some((sid, state)) = &app.schemes_win
-        && *sid == id
-    {
-        let mut content = column![];
-        if Chrome::current().draws_title_bar() {
-            content = content.push(crate::ui::window_header(
-                t,
-                id,
-                app.maximized.contains(&id),
-                app.physical_scale(id),
-            ));
-        }
-        let content = content.push(crate::schemes_window::view::view(
-            t,
-            state,
-            &app.style,
-            &app.schemes,
-            app.physical_scale(id),
-        ));
-        return Element::new(Shortcuts {
-            content: content.into(),
-            window: id,
-            mode: if state.confirm.is_some() {
-                Mode::SchemesConfirm
-            } else if state.import.is_some() {
-                Mode::SchemesImport
-            } else if state.pending_update.is_some() {
-                Mode::SchemesUpdate
-            } else {
-                Mode::Schemes
-            },
-            bindings: &app.bindings,
-        });
-    }
     if let Some((aid, state)) = &app.archive_win
         && *aid == id
     {
@@ -364,7 +331,8 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
                 .settings_win
                 .as_ref()
                 .is_some_and(|(_, s)| s.recording.is_some());
-            key_mode(page, recording, panel_mode, find.is_some())
+            let schemes = app.schemes_win.as_ref().map(|(_, s)| s);
+            key_mode(page, recording, schemes, panel_mode, find.is_some())
         },
         bindings: &app.bindings,
     });
@@ -415,6 +383,8 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
 fn page_min_width(page: Page) -> f32 {
     match page {
         Page::Settings | Page::Welcome => 520.0,
+        // The width the Color schemes window had as its minimum.
+        Page::Schemes => 760.0,
         // Sidebar 260 plus the footer's buttons and an "Unsaved changes" note.
         _ => 770.0,
     }
@@ -469,6 +439,16 @@ fn page_view(app: &App, id: window::Id, page: Page) -> Element<'_, Message> {
             None => text("").into(),
         },
         Page::Welcome => crate::welcome::view::view(t, &app.settings),
+        Page::Schemes => match &app.schemes_win {
+            Some((_, state)) => crate::schemes_window::view::view(
+                t,
+                state,
+                &app.style,
+                &app.schemes,
+                app.physical_scale(id),
+            ),
+            None => text("").into(),
+        },
     }
 }
 
@@ -1497,6 +1477,7 @@ pub(crate) fn page_icon(page: Page) -> &'static str {
         Page::Settings => ICON_SETTINGS,
         Page::Profiles => ICON_USERS,
         Page::Welcome => ICON_TERMINAL,
+        Page::Schemes => ICON_PALETTE,
     }
 }
 
@@ -2158,14 +2139,31 @@ pub fn save_png(path: &Path, shot: &Screenshot) -> Result<(), String> {
 }
 
 /// How the window's keys are handled (outside modals): a page tab's own mode, except that a
-/// panel docked beside it has the keyboard while it is focused.
-fn key_mode(page: Option<Page>, recording: bool, panel: Option<Mode>, find: bool) -> Mode {
+/// panel docked beside it has the keyboard while it is focused. Recording a shortcut in
+/// Settings, and a question the Color schemes tab asks, keep the keys from the panel.
+fn key_mode(
+    page: Option<Page>,
+    recording: bool,
+    schemes: Option<&crate::schemes_window::SchemesState>,
+    panel: Option<Mode>,
+    find: bool,
+) -> Mode {
+    let question = match (page, schemes) {
+        (Some(Page::Schemes), Some(s)) if s.confirm.is_some() => Some(Mode::SchemesConfirm),
+        (Some(Page::Schemes), Some(s)) if s.import.is_some() => Some(Mode::SchemesImport),
+        (Some(Page::Schemes), Some(s)) if s.pending_update.is_some() => Some(Mode::SchemesUpdate),
+        _ => None,
+    };
+    if let Some(mode) = question {
+        return mode;
+    }
     match (page, panel) {
         (Some(Page::Settings), _) if recording => Mode::Recording,
         (_, Some(panel)) => panel,
         (Some(Page::Profiles), _) => Mode::Editor,
         (Some(Page::Settings), _) => Mode::Settings,
         (Some(Page::Welcome), _) => Mode::Welcome,
+        (Some(Page::Schemes), _) => Mode::Schemes,
         (None, _) if find => Mode::Find,
         (None, _) => Mode::Normal,
     }
@@ -2178,8 +2176,55 @@ mod tests {
     #[test]
     fn the_welcome_tab_has_its_own_keys() {
         assert!(matches!(
-            key_mode(Some(Page::Welcome), false, None, false),
+            key_mode(Some(Page::Welcome), false, None, None, false),
             Mode::Welcome
+        ));
+    }
+
+    #[test]
+    fn the_schemes_tab_has_its_keys_and_its_questions_keep_them() {
+        let dir = std::env::temp_dir().join(format!(
+            "fbterm-schemes-keys-{}",
+            fbterm_config::ProfileId::new()
+        ));
+        let (set, _) = fbterm_config::schemes::SchemeSet::load(&dir);
+        let mut s = crate::schemes_window::SchemesState::new(&set, Some("graphite"), Vec::new());
+        let page = Some(Page::Schemes);
+        let panel = Some(Mode::TunnelsPanel);
+        assert!(matches!(
+            key_mode(page, false, Some(&s), None, false),
+            Mode::Schemes
+        ));
+        assert!(matches!(
+            key_mode(page, false, Some(&s), panel, false),
+            Mode::TunnelsPanel
+        ));
+        s.pending_update = Some("meadow".into());
+        assert!(matches!(
+            key_mode(page, false, Some(&s), panel, false),
+            Mode::SchemesUpdate
+        ));
+        s.import = Some(crate::schemes_window::ImportAsk {
+            scheme: set.all()[0].clone(),
+            existing: "X".into(),
+        });
+        assert!(matches!(
+            key_mode(page, false, Some(&s), None, false),
+            Mode::SchemesImport
+        ));
+        s.confirm = Some(crate::schemes_window::DeleteAsk {
+            id: "x".into(),
+            name: "X".into(),
+            profiles: 0,
+        });
+        assert!(matches!(
+            key_mode(page, false, Some(&s), None, false),
+            Mode::SchemesConfirm
+        ));
+        // Another page tab active: the Color schemes question is not its keys'.
+        assert!(matches!(
+            key_mode(Some(Page::Settings), false, Some(&s), None, false),
+            Mode::Settings
         ));
     }
 
@@ -2188,25 +2233,31 @@ mod tests {
         let panel = Some(Mode::TunnelsPanel);
         for page in [Page::Settings, Page::Profiles, Page::Welcome] {
             assert!(matches!(
-                key_mode(Some(page), false, panel, false),
+                key_mode(Some(page), false, None, panel, false),
                 Mode::TunnelsPanel
             ));
         }
         assert!(matches!(
-            key_mode(Some(Page::Settings), false, None, false),
+            key_mode(Some(Page::Settings), false, None, None, false),
             Mode::Settings
         ));
         assert!(matches!(
-            key_mode(Some(Page::Profiles), false, None, false),
+            key_mode(Some(Page::Profiles), false, None, None, false),
             Mode::Editor
         ));
         // Recording a shortcut still wins.
         assert!(matches!(
-            key_mode(Some(Page::Settings), true, panel, false),
+            key_mode(Some(Page::Settings), true, None, panel, false),
             Mode::Recording
         ));
-        assert!(matches!(key_mode(None, false, None, true), Mode::Find));
-        assert!(matches!(key_mode(None, false, None, false), Mode::Normal));
+        assert!(matches!(
+            key_mode(None, false, None, None, true),
+            Mode::Find
+        ));
+        assert!(matches!(
+            key_mode(None, false, None, None, false),
+            Mode::Normal
+        ));
     }
 
     const OUTER: Rectangle = Rectangle {

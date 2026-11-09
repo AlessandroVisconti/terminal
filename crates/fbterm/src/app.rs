@@ -369,7 +369,7 @@ pub struct App {
     pub(crate) exit_waiting: bool,
     /// The Settings tab, when open.
     pub settings_win: Option<(window::Id, SettingsState)>,
-    /// The Color schemes window, when open.
+    /// The Color schemes tab, when open, with the window hosting it.
     pub schemes_win: Option<(window::Id, SchemesState)>,
     /// The export and import window, when open.
     pub archive_win: Option<(window::Id, ArchiveState)>,
@@ -917,9 +917,6 @@ impl App {
     }
 
     pub fn title(&self, id: window::Id) -> String {
-        if self.schemes_window() == Some(id) {
-            return "Color schemes · fbterm".into();
-        }
         if self.archive_window() == Some(id) {
             return self.archive_title().into();
         }
@@ -1304,9 +1301,6 @@ impl App {
                     // The window is going: nothing of what the page leaves behind needs a task.
                     let _ = self.page_closed(page);
                 }
-                if self.schemes_window() == Some(id) {
-                    self.schemes_win = None;
-                }
                 // Dropping the state wipes typed passwords and an opened archive.
                 if self.archive_window() == Some(id) {
                     self.archive_win = None;
@@ -1384,7 +1378,6 @@ impl App {
                 if self.windows.is_empty()
                     && self.editor.is_none()
                     && self.settings_win.is_none()
-                    && self.schemes_win.is_none()
                     && self.archive_win.is_none()
                 {
                     self.exit_when_idle()
@@ -1572,7 +1565,7 @@ impl App {
         let target = match self.screenshot_window {
             ShotWindow::Editor => self.editor_window(),
             ShotWindow::Settings => self.settings_window(),
-            ShotWindow::Schemes => self.schemes_window(),
+            ShotWindow::Schemes => self.page_tab(crate::tabs::Page::Schemes).map(|(w, _)| w),
             ShotWindow::Archive => self.archive_window(),
             ShotWindow::Terminal => self.windows.keys().next().copied(),
         };

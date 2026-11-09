@@ -34,6 +34,7 @@ pub const ICON_COPY: &str = "\u{e09e}";
 pub const ICON_SHIELD_ALERT: &str = "\u{e1fe}";
 pub const ICON_LOCK: &str = "\u{e10b}";
 pub const ICON_SETTINGS: &str = "\u{e154}";
+pub const ICON_PALETTE: &str = "\u{e1dd}"; // palette
 pub const ICON_RESET: &str = "\u{e148}"; // rotate-ccw
 pub const ICON_WARNING: &str = "\u{e193}"; // triangle-alert
 pub const ICON_GRIP: &str = "\u{e0ea}"; // grip-horizontal
