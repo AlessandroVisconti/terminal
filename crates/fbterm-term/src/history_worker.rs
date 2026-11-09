@@ -46,13 +46,22 @@ struct Queue {
     poisoned: Vec<Weak<Mutex<Terminal>>>,
 }
 
-/// Ends a turn when dropped, also when a job panicked: clears `busy` and wakes waiters, so
-/// they never wait on a turn that is gone.
-struct TurnGuard<'a>(&'a Worker);
+/// Ends a turn when dropped, also when it panicked: clears `busy` and wakes waiters, so they
+/// never wait on a turn that is gone. A turn that unwinds (a panic outside a job's own guard,
+/// such as in taking or installing jobs, which ends the thread) poisons its terminal first, so
+/// the restarted thread never runs it again.
+struct TurnGuard<'a> {
+    worker: &'a Worker,
+    /// The terminal of the turn.
+    term: Weak<Mutex<Terminal>>,
+}
 
 impl Drop for TurnGuard<'_> {
     fn drop(&mut self) {
-        self.0.finish_turn();
+        if std::thread::panicking() {
+            self.worker.poison(&self.term);
+        }
+        self.worker.finish_turn();
     }
 }
 
@@ -123,7 +132,10 @@ impl Worker {
             let Some(entry) = self.take(&mut self.queue.lock()) else {
                 return;
             };
-            let _guard = TurnGuard(self);
+            let _guard = TurnGuard {
+                worker: self,
+                term: entry.term.clone(),
+            };
             self.turn(entry);
         }
     }
@@ -150,11 +162,31 @@ impl Worker {
         true
     }
 
-    /// Pop the next entry, marking a turn in progress in the same hold.
+    /// Pop the next entry that is not poisoned, marking a turn in progress in the same hold.
     fn take(&self, queue: &mut Queue) -> Option<Entry> {
-        let entry = queue.entries.pop_front()?;
-        queue.busy = true;
-        Some(entry)
+        loop {
+            let entry = queue.entries.pop_front()?;
+            let ptr = entry.term.as_ptr();
+            if !queue.poisoned.iter().any(|p| p.as_ptr() == ptr) {
+                queue.busy = true;
+                return Some(entry);
+            }
+        }
+    }
+
+    /// Never run `term` again in this session: list it (once) and drop its queued entries,
+    /// such as one a feed queued while its panicking turn ran. A closed terminal needs nothing.
+    fn poison(&self, term: &Weak<Mutex<Terminal>>) {
+        if term.strong_count() == 0 {
+            return;
+        }
+        let ptr = term.as_ptr();
+        let mut queue = self.queue.lock();
+        queue.entries.retain(|e| e.term.as_ptr() != ptr);
+        queue.poisoned.retain(|p| p.strong_count() > 0);
+        if !queue.poisoned.iter().any(|p| p.as_ptr() == ptr) {
+            queue.poisoned.push(term.clone());
+        }
     }
 
     /// A turn ended (any requeue already happened): wake waiters if nothing is left.
@@ -178,7 +210,10 @@ impl Worker {
                     self.wake.wait(&mut queue);
                 }
             };
-            let _guard = TurnGuard(self);
+            let _guard = TurnGuard {
+                worker: self,
+                term: entry.term.clone(),
+            };
             self.turn(entry);
         }
     }
@@ -231,11 +266,7 @@ impl Worker {
         };
         let Ok(done) = done else {
             tracing::error!("a history compression job panicked; compression is off for its tab");
-            {
-                let mut queue = self.queue.lock();
-                queue.poisoned.retain(|p| p.strong_count() > 0);
-                queue.poisoned.push(Arc::downgrade(&term));
-            }
+            self.poison(&entry.term);
             let off = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 term.lock().set_history_compression(None);
             }));
@@ -342,8 +373,9 @@ fn global() -> &'static Worker {
 
 impl Worker {
     /// Start the worker's thread unless it runs. The thread's loop never returns, but a panic
-    /// outside a job's guard (taking or installing jobs) ends it: a guard then clears the flag,
-    /// so the next enqueue starts a new thread and the queued terminals are served again.
+    /// outside a job's guard (taking or installing jobs) ends it: its turn's terminal is
+    /// poisoned ([`TurnGuard`]), and a guard clears the flag and starts a new thread at once if
+    /// other terminals are queued (else the next enqueue does).
     pub fn start(&'static self) {
         // A plain load first: this runs after every feed that leaves jobs.
         if self.running.load(Ordering::Relaxed) || self.running.swap(true, Ordering::SeqCst) {
@@ -352,7 +384,7 @@ impl Worker {
         let spawned = std::thread::Builder::new()
             .name("fbterm-history-worker".into())
             .spawn(move || {
-                let _exit = ThreadExit(&self.running);
+                let _exit = ThreadExit(self);
                 lower_priority();
                 self.run()
             });
@@ -367,13 +399,17 @@ impl Worker {
     }
 }
 
-/// Clears the worker's `running` flag when its thread ends, which is only ever by a panic.
-struct ThreadExit<'a>(&'a AtomicBool);
+/// Clears the worker's `running` flag when its thread ends, which is only ever by a panic, and
+/// starts a new thread when terminals are still queued, so none waits for its next feed.
+struct ThreadExit(&'static Worker);
 
-impl Drop for ThreadExit<'_> {
+impl Drop for ThreadExit {
     fn drop(&mut self) {
-        tracing::error!("the history compression worker stopped; it restarts with the next output");
-        self.0.store(false, Ordering::SeqCst);
+        tracing::error!("the history compression worker stopped; it restarts for queued work");
+        self.0.running.store(false, Ordering::SeqCst);
+        if !self.0.queue.lock().entries.is_empty() {
+            self.0.start();
+        }
     }
 }
 
@@ -542,7 +578,10 @@ mod tests {
         // The backstop: `TurnGuard` clears `busy` when a turn unwinds for any reason.
         let worker = Worker::new();
         worker.queue.lock().busy = true;
-        drop(TurnGuard(&worker));
+        drop(TurnGuard {
+            worker: &worker,
+            term: Weak::new(),
+        });
         worker.wait_idle();
     }
 
@@ -559,28 +598,60 @@ mod tests {
         assert!(worker.installs.lock().is_empty());
     }
 
-    /// A panic outside a job's `catch_unwind` (here before the batch runs) ends the thread; the
-    /// next enqueue starts it again, and the queued work is done.
+    /// A panic outside a job's `catch_unwind` (here before the batch runs) ends the thread. The
+    /// terminal of that turn is skipped from then on, so a deterministic panic cannot restart
+    /// the thread and panic again on each feed; a terminal queued meanwhile is still served,
+    /// the thread starting again by itself because work is left.
     #[test]
-    fn a_dead_worker_thread_starts_again() {
+    fn a_dead_worker_thread_starts_again_without_the_terminal_it_died_on() {
         let worker: &'static Worker = Box::leak(Box::new(Worker::new()));
-        *worker.before_run.lock() = Some(Box::new(|| panic!("test: the worker thread dies")));
         let first = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        let other = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        let queued = other.clone();
+        *worker.before_run.lock() = Some(Box::new(move || {
+            // A feed of another tab lands during the turn that dies.
+            worker.enqueue(&queued);
+            panic!("test: the worker thread dies");
+        }));
         worker.start();
         worker.enqueue(&first);
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while worker.running.load(Ordering::SeqCst) {
-            assert!(Instant::now() < deadline, "the thread did not end");
-            std::thread::sleep(Duration::from_millis(5));
+        assert!(
+            worker.wait_idle_for(Duration::from_secs(30)),
+            "the entry queued during the dying turn was stranded"
+        );
+        assert!(!other.lock().has_history_jobs());
+        // The terminal the thread died on is never queued again.
+        assert!(first.lock().has_history_jobs());
+        worker.start();
+        worker.enqueue(&first);
+        assert!(worker.queue.lock().entries.is_empty());
+        assert_eq!(worker.queue.lock().poisoned.len(), 1);
+    }
+
+    /// A feed during the turn whose job panics queues the terminal again before the panic is
+    /// known: that entry is dropped with the poisoning, and the terminal is listed once.
+    #[test]
+    fn an_entry_queued_during_a_panicking_turn_does_not_run() {
+        let worker: &'static Worker = Box::leak(Box::new(Worker::new()));
+        let bad = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        {
+            // One cold block, so turning compression off leaves a decompression job, and more
+            // blocks still to compress, so the worker's turn has jobs to panic on.
+            let mut t = bad.lock();
+            for job in t.next_history_jobs(1) {
+                assert!(t.install_history_job(HistoryJob::run(job)));
+            }
         }
-        // The turn that died let go of its entry; the terminal is queued again by its next feed.
-        let later = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
-        worker.start();
-        worker.enqueue(&first);
-        worker.enqueue(&later);
-        assert!(worker.wait_idle_for(Duration::from_secs(30)), "nothing ran");
-        assert!(!first.lock().has_history_jobs());
-        assert!(!later.lock().has_history_jobs());
+        let fed = bad.clone();
+        *worker.before_run.lock() = Some(Box::new(move || worker.enqueue(&fed)));
+        worker.panic_next.store(true, Ordering::SeqCst);
+        worker.enqueue(&bad);
+        worker.run_until_idle();
+        assert_eq!(bad.lock().history_compression(), None);
+        assert!(bad.lock().has_history_jobs(), "decompression jobs left");
+        assert!(worker.installs.lock().is_empty(), "the second entry ran");
+        assert!(worker.queue.lock().entries.is_empty());
+        assert_eq!(worker.queue.lock().poisoned.len(), 1);
     }
 
     /// A terminal whose job panicked is skipped for the rest of the session: with compression
