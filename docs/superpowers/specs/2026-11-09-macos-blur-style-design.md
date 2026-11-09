@@ -83,3 +83,24 @@ without rebuilding; the builder lists the candidate materials worth trying in th
 
 Where the per-window blur view handle is kept for live re-tuning; the exact helper names; whether
 alpha is needed at all once appearance and material are right.
+
+## 8. Owner's clarification (2026-11-09)
+
+The real complaint: with the system blur view, the `background_opacity` setting makes very little
+visible difference, because the view paints its own material fill (tint) over the blurred backdrop
+regardless of how transparent the terminal background is. The old blur had no fill, so the
+terminal background at its opacity was the only tint and the opacity setting clearly changed the
+look. **Classic's goal is therefore: a blur with no material fill of its own, so the opacity setting
+drives the look as it did before 0.8.3, with the current corners.** Approach, in order:
+
+1. Keep the blur view, and hide its fill/tint sublayers, keeping only the backdrop (blur) layer:
+   walk the view's layer tree with public CALayer API, identify the backdrop layer by its blur
+   filter, and hide the others; re-apply after the view relayouts or changes appearance. If the
+   tree does not have the expected shape (a future macOS), leave the view untouched (fall back to
+   step 2) and log once.
+2. Fallback: the material whose layer tree carries the least fill.
+
+Measure instead of guessing: a debug-only dump of each material's layer tree (layer class, opacity,
+background color, filters, compositing filter) under both appearances, run once by the builder;
+record the findings in `dev/blur/README.md` and choose from them. The owner judges the final look
+on a real desktop.
