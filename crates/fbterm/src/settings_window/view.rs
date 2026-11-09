@@ -3,9 +3,7 @@
 
 use fbterm_config::keys::{Action, ActionGroup, Bindings, FixedShortcut, fixed_shortcuts, risk};
 use fbterm_config::settings::{FONT_SIZE_RANGE, OPACITY_RANGE};
-use fbterm_config::{
-    MacosBlurStyle, SecretStorage, Settings, TabBar, ThemeMode, WindowDecorations,
-};
+use fbterm_config::{MacosBlurStyle, SecretStorage, Settings, TabBar, WindowDecorations};
 use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, slider, text, text_input, toggler,
 };
@@ -243,22 +241,6 @@ fn appearance<'a>(
     opaque_windows: bool,
 ) -> Vec<Element<'a, Message>> {
     let v = &state.values;
-    let theme = row![
-        segment(
-            t,
-            "Dark",
-            v.theme == ThemeMode::Dark,
-            editable.then(|| msg(SettingsMsg::Theme(ThemeMode::Dark))),
-        ),
-        segment(
-            t,
-            "Light",
-            v.theme == ThemeMode::Light,
-            editable.then(|| msg(SettingsMsg::Theme(ThemeMode::Light))),
-        ),
-    ]
-    .spacing(2);
-    let theme = container(theme).padding(2).style(move |_| well(t));
     let fonts = pick_list(state.fonts.as_slice(), state.selected_font(), |f| {
         msg(SettingsMsg::Font(f))
     })
@@ -363,7 +345,6 @@ fn appearance<'a>(
         );
     }
     let mut rows = vec![
-        setting(t, "Theme", None, false, theme),
         setting(t, "Font family", None, false, fonts),
         setting(t, "Color scheme", None, false, scheme),
         setting(t, "Font size", None, false, size),
@@ -454,7 +435,7 @@ fn appearance<'a>(
     rows
 }
 
-/// The label of the `use_theme_fonts` row; the Color schemes window's checkbox says the same.
+/// The label of the `use_theme_fonts` row; the Color schemes tab's checkbox says the same.
 pub const THEME_FONTS_LABEL: &str = "Use each theme's suggested font";
 /// The line under it.
 pub const THEME_FONTS_HINT: &str =
@@ -1453,7 +1434,7 @@ pub(crate) fn toggler_style(t: &Tokens, status: toggler::Status, inert: bool) ->
         // Muted like a read-only slider: on reads as the muted text color, off as the border.
         (true, false) if inert => t.text_muted,
         (false, false) if inert => t.border,
-        (true, false) if hovered => t.accent_edge,
+        (true, false) if hovered => t.accent_hover,
         (true, false) => t.accent,
         (false, false) if hovered => t.text_muted,
         (false, false) => t.border,
@@ -1468,7 +1449,7 @@ pub(crate) fn toggler_style(t: &Tokens, status: toggler::Status, inert: bool) ->
             // On, muted: the knob must not vanish into the muted track.
             t.app
         } else {
-            Color::WHITE
+            t.on_accent
         }),
         foreground_border_width: 0.0,
         foreground_border_color: Color::TRANSPARENT,
@@ -1509,5 +1490,33 @@ pub(crate) fn menu_style(t: &Tokens) -> iced::overlay::menu::Style {
         selected_text_color: t.text,
         selected_background: Background::Color(t.accent_soft),
         shadow: iced::Shadow::default(),
+    }
+}
+
+#[cfg(test)]
+mod toggler_tests {
+    use super::*;
+    use crate::tab_look::contrast;
+
+    #[test]
+    fn an_on_knob_stays_visible_on_the_accent_track() {
+        for t in [
+            crate::theme::graphite_tokens(),
+            crate::theme::pale_accent_tokens(),
+        ] {
+            for status in [
+                toggler::Status::Active { is_toggled: true },
+                toggler::Status::Hovered { is_toggled: true },
+            ] {
+                let s = toggler_style(t, status, false);
+                let (Background::Color(track), Background::Color(knob)) =
+                    (s.background, s.foreground)
+                else {
+                    panic!("color backgrounds");
+                };
+                let k = contrast(knob, track);
+                assert!(k >= 4.5, "{status:?} {k}");
+            }
+        }
     }
 }

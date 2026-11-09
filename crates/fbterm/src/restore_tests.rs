@@ -363,10 +363,6 @@ fn settings_reload_applies_or_keeps_the_previous_and_says_why() {
     let _ = app.update(Message::ConfigChanged(changed));
     assert_eq!(app.settings.font_size, 18.0);
     assert_eq!(app.style.font_size, 18.0);
-    assert_eq!(
-        app.tokens,
-        crate::theme::tokens(fbterm_config::ThemeMode::Light)
-    );
     assert_eq!(app.settings.scrollback_lines, 50);
 
     std::fs::write(paths.settings(), "font_size = \"big\"\n").unwrap();
@@ -1168,7 +1164,7 @@ fn merged_layout_survives_save_and_reload() {
 
 #[test]
 fn every_window_reports_its_own_os_scale() {
-    // The editor, Settings and Color schemes windows draw hairlines from their physical
+    // The editor, Settings and Color schemes tabs draw hairlines from their physical
     // scale too, so the OS scale is kept for any open window, not only terminal ones, and
     // dropped when the window closes.
     let paths = paths_with(&[profile("a")]);

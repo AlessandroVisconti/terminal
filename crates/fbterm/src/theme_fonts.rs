@@ -13,9 +13,9 @@
 //! reads: monospaced faces, plus faces of any suggested family whether or not they carry the
 //! fixed-pitch flag (suggestions are monospace by the catalog's rule), the bundled face always
 //! counting. That database reads the system fonts once, at startup. So on a user action
-//! (showing the Color schemes window or its gallery, a catalog arriving, turning
-//! `use_theme_fonts` on), and only when some suggested family is still missing, the system
-//! fonts are scanned again on the blocking pool. Of each missing suggested family the scan
+//! (showing the Color schemes tab, focusing its window, showing its gallery, a catalog
+//! arriving, turning `use_theme_fonts` on), and only when some suggested family is still
+//! missing, the system fonts are scanned again on the blocking pool. Of each missing suggested family the scan
 //! finds, only the files of the faces a terminal draws with (the closest regular, bold, italic
 //! and bold italic) are added to the renderer, memory-mapped by its font database like the
 //! fonts it read at startup (`db_mut().load_font_file`, which also clears cosmic-text's match
@@ -417,6 +417,14 @@ impl App {
             monospace: self.fonts_monospace,
         };
         move || scan(&want)
+    }
+
+    /// The Color schemes tab was shown (selected, opened, or its window focused): read the
+    /// installed fonts again and look for suggested fonts installed since. A scan already
+    /// running queues one follow-up (see `scan_fonts`), so a font installed meanwhile is found.
+    pub(crate) fn schemes_shown(&mut self) -> Task<Message> {
+        self.refresh_installed_fonts();
+        self.scan_fonts()
     }
 
     /// On a user action: scan the system fonts on the blocking pool for suggested families

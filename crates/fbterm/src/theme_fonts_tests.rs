@@ -1,5 +1,5 @@
 //! Suggested fonts for themes: how a pane's font resolves with `use_theme_fonts`, the
-//! suggestion line of the Color schemes window and its gallery, and the Settings row, against
+//! suggestion line of the Color schemes tab and its gallery, and the Settings row, against
 //! a temporary config directory and a fake installed-font list. Nothing here opens a browser.
 
 use std::sync::Arc;
@@ -254,7 +254,7 @@ fn checkbox_and_settings_row_write_the_same_setting() {
     let file = std::fs::read_to_string(paths.settings()).unwrap();
     assert!(file.contains("use_theme_fonts = true"), "{file}");
 
-    // The Settings row writes the same key, and the Color schemes window follows.
+    // The Settings row writes the same key, and the Color schemes tab follows.
     let _ = app.update(Message::Settings(SettingsMsg::Open));
     let _ = app.update(Message::Settings(SettingsMsg::UseThemeFonts(false)));
     assert!(!app.settings.use_theme_fonts);
@@ -307,7 +307,7 @@ fn use_font_needs_the_font_installed_and_saves_font_family() {
     send(&mut app, SchemesMsg::UseFont("Sample Mono".into()));
     assert_eq!(app.settings.font_family, "Geist Mono");
 
-    // Installed while fbterm runs: the next showing of the window scans and loads it.
+    // Installed while fbterm runs: the next showing of the tab scans and loads it.
     let fake = fake_fonts(&mut app, &[], &["Sample Mono"]);
     send(&mut app, SchemesMsg::Open);
     finish_scan(&mut app);
@@ -650,7 +650,7 @@ fn a_font_installed_while_running_is_loaded_on_the_next_showing() {
     app.refresh_installed_fonts();
     assert_eq!(style(&app, wid, ids[0]).font, family("Geist Mono"));
 
-    // The user installs the font, then shows the Color schemes window.
+    // The user installs the font, then shows the Color schemes tab.
     fake.system.lock().push("Sample Mono".into());
     let task = app.update(Message::Schemes(SchemesMsg::Open));
     drop(task);
@@ -669,6 +669,89 @@ fn a_font_installed_while_running_is_loaded_on_the_next_showing() {
     finish_scan(&mut app);
     assert_eq!(*fake.scans.lock(), 2);
     assert_eq!(*fake.loaded.lock(), strings(&["Sample Mono"]));
+}
+
+/// Select the first tab of the window (not the Color schemes page).
+fn select_first_tab(app: &mut App, wid: iced::window::Id) {
+    app.windows.get_mut(&wid).unwrap().select(0);
+}
+
+#[test]
+fn selecting_the_schemes_tab_scans() {
+    let ocean = suggesting("Ocean", 0x102030, "Sample Mono");
+    let (mut app, _, wid, _) = app_with(&[profile("a")], "", std::slice::from_ref(&ocean));
+    let fake = fake_fonts(&mut app, &[], &[]);
+    send(&mut app, SchemesMsg::Open);
+    assert!(app.fonts_scanning);
+    finish_scan(&mut app);
+    assert_eq!(*fake.scans.lock(), 1);
+    select_first_tab(&mut app, wid);
+    fake.system.lock().push("Sample Mono".into());
+    send(&mut app, SchemesMsg::Open);
+    assert!(app.fonts_scanning);
+    finish_scan(&mut app);
+    assert_eq!(*fake.scans.lock(), 2);
+    let line = win(&app)
+        .font_line(win(&app).draft(&ocean.id).unwrap())
+        .unwrap();
+    assert_ne!(line.state, FontState::NotInstalled);
+}
+
+#[test]
+fn focusing_the_window_with_the_tab_active_scans() {
+    let ocean = suggesting("Ocean", 0x102030, "Sample Mono");
+    let (mut app, _, wid, _) = app_with(&[profile("a")], "", std::slice::from_ref(&ocean));
+    let fake = fake_fonts(&mut app, &[], &[]);
+    send(&mut app, SchemesMsg::Open);
+    finish_scan(&mut app);
+    assert_eq!(*fake.scans.lock(), 1);
+    let _ = app.update(Message::WindowFocused(wid));
+    assert!(app.fonts_scanning, "focus with the tab active scans");
+    finish_scan(&mut app);
+    assert_eq!(*fake.scans.lock(), 2);
+    select_first_tab(&mut app, wid);
+    let _ = app.update(Message::WindowFocused(wid));
+    assert!(!app.fonts_scanning, "another tab active: no scan");
+    assert_eq!(*fake.scans.lock(), 2);
+}
+
+#[test]
+fn focusing_during_a_scan_queues_one_more() {
+    let ocean = suggesting("Ocean", 0x102030, "Sample Mono");
+    let (mut app, _, wid, _) = app_with(&[profile("a")], "", std::slice::from_ref(&ocean));
+    let fake = fake_fonts(&mut app, &[], &[]);
+    send(&mut app, SchemesMsg::Open);
+    assert!(app.fonts_scanning);
+    // The user installs the font while the scan runs, then focuses the window.
+    fake.system.lock().push("Sample Mono".into());
+    let _ = app.update(Message::WindowFocused(wid));
+    assert!(app.fonts_rescan, "one more scan is queued");
+    // The running scan ends (it read the system before the install) and the follow-up runs.
+    let stale = Vec::new();
+    let _ = app.update(Message::FontsScanned(Arc::new(stale)));
+    assert!(app.fonts_scanning, "the follow-up scan started");
+    finish_scan(&mut app);
+    assert!(!app.fonts_scanning);
+    let line = win(&app)
+        .font_line(win(&app).draft(&ocean.id).unwrap())
+        .unwrap();
+    assert_ne!(line.state, FontState::NotInstalled);
+}
+
+#[test]
+fn nothing_missing_means_no_scan_on_show() {
+    let (mut app, _, wid, _) = app_with(&[profile("a")], "", &[]);
+    let fake = fake_fonts(
+        &mut app,
+        &["Geist Mono", "JetBrains Mono", "IBM Plex Mono"],
+        &[],
+    );
+    send(&mut app, SchemesMsg::Open);
+    select_first_tab(&mut app, wid);
+    send(&mut app, SchemesMsg::Open);
+    let _ = app.update(Message::WindowFocused(wid));
+    assert!(!app.fonts_scanning);
+    assert_eq!(*fake.scans.lock(), 0);
 }
 
 #[test]
@@ -782,7 +865,7 @@ fn showing_the_gallery_scans() {
     let fake = fake_fonts(&mut app, &[], &["JetBrains Mono"]);
     send(&mut app, SchemesMsg::Open);
     finish_scan(&mut app);
-    // Installed after the window opened: showing the gallery finds it.
+    // Installed after the tab opened: showing the gallery finds it.
     fake.system.lock().push("IBM Plex Mono".into());
     send(&mut app, SchemesMsg::ShowGallery(true));
     assert!(app.fonts_scanning);

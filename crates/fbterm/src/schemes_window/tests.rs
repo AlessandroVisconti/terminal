@@ -1,4 +1,4 @@
-//! The Color schemes window: its state rules, and against a temporary config directory, what
+//! The Color schemes tab: its state rules, and against a temporary config directory, what
 //! Save, Duplicate, Rename and Delete do to files, profiles, settings and open panes.
 
 use fbterm_config::schemes::{Scheme, SchemeSet, read_file};
@@ -12,6 +12,7 @@ use crate::schemes_tests::{
     answers, app_with, builtin, generation, pane, rgb, style, user_scheme, with_scheme,
 };
 use crate::settings_window::SettingsMsg;
+use crate::tabs::Page;
 
 fn state_with(schemes: &[Scheme], select: &str) -> SchemesState {
     let dir = std::env::temp_dir().join(format!(
@@ -323,33 +324,53 @@ fn contrast_hint_shows_for_low_contrast() {
     assert_eq!(s.contrast_hint(), Some(CONTRAST_HINT));
 }
 
+/// The window and index of the Color schemes tab, if one is open.
+fn schemes_tab(app: &App) -> Option<(iced::window::Id, usize)> {
+    app.page_tab(Page::Schemes)
+}
+
+/// How many Color schemes tabs are open across the app.
+fn schemes_tabs(app: &App) -> usize {
+    app.windows
+        .values()
+        .flat_map(|w| w.tabs.iter())
+        .filter(|t| t.page == Some(Page::Schemes))
+        .count()
+}
+
 #[test]
-fn window_opens_from_settings_palette_and_editor() {
+fn color_schemes_opens_as_a_page_tab() {
     let a = fbterm_config_profile("a");
     let (mut app, _, wid, _) = app_with(&[a], "", &[]);
-    let close = |app: &mut App| {
-        let id = app.schemes_window().unwrap();
-        send(app, SchemesMsg::Close);
-        let _ = app.update(Message::WindowClosed(id));
-        assert!(app.schemes_window().is_none());
-    };
-    // Settings' `Edit schemes…`, on the global scheme.
-    let _ = app.update(Message::Settings(SettingsMsg::Open));
-    let _ = app.update(Message::Settings(SettingsMsg::EditSchemes));
-    let id = app.schemes_window().expect("opened from Settings");
-    assert_eq!(app.title(id), "Color schemes · fbterm");
+    send(&mut app, SchemesMsg::Open);
+    let (w, i) = schemes_tab(&app).expect("the Color schemes tab");
+    assert_eq!(w, wid, "in the focused window");
+    assert_eq!(app.windows[&wid].active, i, "and selected");
+    assert_eq!(app.schemes_window(), Some(wid), "hosted by that window");
+    assert_eq!(app.windows[&wid].tabs[i].title(), "Color schemes");
+    assert_eq!(app.title(wid), "Color schemes · fbterm");
     assert_eq!(win(&app).selected, "graphite");
-    close(&mut app);
-    // The palette's `Color schemes` action.
+    // Another tab selected, then Open again: no second tab, the one there is selected.
+    app.windows.get_mut(&wid).unwrap().select(0);
+    send(&mut app, SchemesMsg::Open);
+    assert_eq!(schemes_tabs(&app), 1);
+    assert_eq!(app.windows[&wid].active, i);
+}
+
+#[test]
+fn routes_open_the_tab_with_the_named_scheme() {
+    let a = fbterm_config_profile("a");
+    let (mut app, _, wid, _) = app_with(&[a], "", &[]);
+    // The palette's `Color schemes` action, on the global scheme.
     let listed = crate::palette::items(&app.profiles, Vec::new()).into_iter().any(|i| {
         matches!(i, crate::palette::PaletteItem::Action { action: Action::EditSchemes, ref label } if label == "Color schemes")
     });
     assert!(listed);
     assert_eq!(Action::EditSchemes.title(), "Color schemes");
     let _ = app.update(Message::Shortcut(wid, Action::EditSchemes));
-    assert!(app.schemes_window().is_some(), "opened from the palette");
-    close(&mut app);
-    // The profile editor's `Edit schemes…`, on the selected profile's scheme.
+    assert!(schemes_tab(&app).is_some(), "opened from the palette");
+    assert_eq!(win(&app).selected, "graphite");
+    // Already open on another scheme: the profile editor's button selects the profile's.
     let _ = app.update(Message::Editor(EditorMsg::Open));
     let pid = app.profiles.profiles[0].id;
     let _ = app.update(Message::Editor(EditorMsg::Select(pid)));
@@ -357,16 +378,92 @@ fn window_opens_from_settings_palette_and_editor() {
         "ember".into(),
     ))));
     let _ = app.update(Message::Editor(EditorMsg::EditSchemes));
-    assert!(app.schemes_window().is_some(), "opened from the editor");
+    let (w, i) = schemes_tab(&app).expect("still open");
+    assert_eq!(app.windows[&w].active, i, "selected from the editor");
     assert_eq!(win(&app).selected, "ember");
-    // Asking again brings it forward with that scheme selected; it is still one window.
-    let first = app.schemes_window();
+    // Settings' button selects the global scheme, in the same tab.
+    let _ = app.update(Message::Settings(SettingsMsg::Open));
     let _ = app.update(Message::Settings(SettingsMsg::EditSchemes));
-    assert_eq!(app.schemes_window(), first);
+    let (w, i) = schemes_tab(&app).expect("still open");
+    assert_eq!(app.windows[&w].active, i, "selected from Settings");
     assert_eq!(win(&app).selected, "graphite");
-    // The app keeps running while only this window is open.
+    assert_eq!(schemes_tabs(&app), 1);
+    // Closed, then opened from the editor: a new tab on the profile's scheme.
+    send(&mut app, SchemesMsg::Close);
+    assert!(app.schemes_win.is_none());
+    let _ = app.update(Message::Editor(EditorMsg::EditSchemes));
+    assert!(schemes_tab(&app).is_some(), "opened from the editor");
+    assert_eq!(win(&app).selected, "ember");
+}
+
+#[test]
+fn closing_the_tab_drops_drafts_and_state() {
+    let a = fbterm_config_profile("a");
+    let mine = user_scheme("Mine", 0x101010);
+    let (mut app, _, wid, _) = app_with(&[a], "", std::slice::from_ref(&mine));
+    let before = std::fs::read(file(&app, &mine.id)).unwrap();
+    open(&mut app, &mine.id);
+    send(
+        &mut app,
+        SchemesMsg::Color(Entry::Background, rgb(0x123456)),
+    );
+    assert!(win(&app).is_dirty(&mine.id));
+    let tabs = app.windows[&wid].tabs.len();
+    send(&mut app, SchemesMsg::Close);
+    assert!(schemes_tab(&app).is_none(), "the tab is gone");
+    assert_eq!(app.windows[&wid].tabs.len(), tabs - 1);
+    assert!(app.schemes_win.is_none());
+    assert_eq!(std::fs::read(file(&app, &mine.id)).unwrap(), before);
+    // Opened again: the draft is gone.
+    open(&mut app, &mine.id);
+    assert!(!win(&app).is_dirty(&mine.id));
+}
+
+#[test]
+fn closing_the_host_window_clears_the_schemes_tab() {
+    let a = fbterm_config_profile("a");
+    let (mut app, _, wid, _) = app_with(std::slice::from_ref(&a), "", &[]);
+    let other = iced::window::Id::unique();
+    let mut w = crate::tabs::WindowState::new();
+    w.push(crate::tabs::Tab::single(crate::tabs::Pane::for_profile(&a)));
+    app.windows.insert(other, w);
+    let _ = app.update(Message::WindowFocused(wid));
+    send(&mut app, SchemesMsg::Open);
+    assert_eq!(app.schemes_window(), Some(wid));
+    let _ = app.update(Message::CloseRequested(wid));
     let _ = app.update(Message::WindowClosed(wid));
-    assert!(app.schemes_window().is_some());
+    assert!(app.schemes_win.is_none());
+    send(&mut app, SchemesMsg::Open);
+    let (w, _) = schemes_tab(&app).expect("a fresh tab");
+    assert_eq!(w, other, "in the remaining window");
+    assert_eq!(app.schemes_window(), Some(other));
+}
+
+#[test]
+fn schemes_tab_is_not_restored() {
+    use crate::restore_tests::{paths_with, profile, saved};
+    let a = profile("a");
+    let paths = paths_with(std::slice::from_ref(&a));
+    fbterm_config::SavedState {
+        windows: vec![saved(&[&a], 0)],
+        ..Default::default()
+    }
+    .save(&paths.state())
+    .unwrap();
+    let (mut app, _) = App::build(paths.clone(), true);
+    send(&mut app, SchemesMsg::Open);
+    assert!(schemes_tab(&app).is_some());
+    app.save_state();
+    let state = fbterm_config::SavedState::load_or_default(&paths.state());
+    assert_eq!(state.windows.len(), 1);
+    assert_eq!(
+        state.windows[0].tabs.len(),
+        1,
+        "only the profile tab is saved"
+    );
+    let (app, _) = App::build(paths, true);
+    assert!(schemes_tab(&app).is_none(), "restored without it");
+    assert!(app.schemes_win.is_none());
 }
 
 #[test]

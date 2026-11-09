@@ -12,7 +12,7 @@ use fbterm_config::settings::{
     TUNNEL_RETRIES_RANGE,
 };
 use fbterm_config::{
-    ConfigError, MacosBlurStyle, MaxFps, SecretStorage, SettingChange, Settings, TabBar, ThemeMode,
+    ConfigError, MacosBlurStyle, MaxFps, SecretStorage, SettingChange, Settings, TabBar,
     UNCOMPRESSED_DEFAULT, UNCOMPRESSED_FLOOR, WindowDecorations,
 };
 
@@ -36,7 +36,7 @@ pub enum SettingsMsg {
     Close,
     OpenFile,
     RevealFolder,
-    /// Open the Color schemes window.
+    /// Open the Color schemes tab.
     EditSchemes,
     /// The font family list was opened: look for fonts installed since.
     FontsOpened,
@@ -44,7 +44,6 @@ pub enum SettingsMsg {
     Flush(u64),
     /// A slider was let go: write now.
     Release,
-    Theme(ThemeMode),
     Font(FontChoice),
     /// The id of the chosen global color scheme.
     ColorScheme(String),
@@ -82,7 +81,7 @@ pub enum SettingsMsg {
     Clusters(bool),
     /// `Ligatures`.
     Ligatures(bool),
-    /// `Use each theme's suggested font`, the same setting as the Color schemes window's
+    /// `Use each theme's suggested font`, the same setting as the Color schemes tab's
     /// checkbox.
     UseThemeFonts(bool),
     MaxFps(MaxFps),
@@ -512,7 +511,6 @@ impl SettingsState {
                     Write::Not
                 },
             },
-            SettingsMsg::Theme(v) => self.change(SettingChange::Theme(v), false),
             SettingsMsg::Font(f) => self.change(SettingChange::FontFamily(f.family), false),
             SettingsMsg::ColorScheme(id) => self.change(SettingChange::ColorScheme(id), false),
             SettingsMsg::Blur(v) => self.change(SettingChange::BackgroundBlur(v), false),

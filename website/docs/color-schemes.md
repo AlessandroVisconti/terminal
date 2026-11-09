@@ -4,16 +4,16 @@ title: Color schemes
 sidebar_label: Color schemes
 ---
 
-A color scheme sets the colors of a terminal session: the text and background, the cursor, the selection and the 16 ANSI colors that programs use. A scheme can also name a font family and size. Schemes change only what is inside your sessions; the tab bar, dialogs, Settings and the palette keep the app theme.
+A color scheme sets the colors of a terminal session: the text and background, the cursor, the selection and the 16 ANSI colors that programs use. A scheme can also name a font family and size. The global scheme colors the whole app, the tab bar, dialogs, Settings and the palette included; a profile's own scheme colors only that profile's sessions.
 
-![The Color schemes window with a custom scheme selected: a live preview, the colors and the buttons below](/img/color-schemes.png)
+![The Color schemes tab with a custom scheme selected: a live preview, the colors and the buttons below](/img/color-schemes.png)
 
 ## Global scheme and profile override
 
 Every session uses the global scheme unless its profile picks another one.
 
-- **Global.** In Settings, the **Color scheme** row chooses the scheme for every session. It is the `color_scheme` key of [`settings.toml`](files#settingstoml). The default is Graphite, a dark scheme, whichever app theme you use, so nothing changes until you pick another.
-- **Per profile.** In the profile editor, the **Color scheme** field starts at **Use global scheme**. Choosing a scheme there sets the `color_scheme` field of the [profile](profiles#fields-common-to-every-profile). Use it to make a production host look different from the rest.
+- **Global.** In Settings, the **Color scheme** row chooses the scheme for every session and for the app around them: the tab bar, Settings, the palette, dialogs and editors take its background, text and accent. It is the `color_scheme` key of [`settings.toml`](files#settingstoml). The default is Graphite, a dark scheme, so nothing changes until you pick another. For a light window, choose Graphite Light. The old `theme` setting is gone: while `settings.toml` still has it, fbterm reports it each time it reads the file, until fbterm next writes the file (for example when you change something in Settings), which drops the key. You can also delete the line yourself.
+- **Per profile.** In the profile editor, the **Color scheme** field starts at **Use global scheme**. Choosing a scheme there sets the `color_scheme` field of the [profile](profiles#fields-common-to-every-profile). Use it to make a production host look different from the rest. A profile's scheme colors only its sessions; the rest of the app keeps the global scheme.
 
 In a split tab each pane uses the scheme of its own profile. A tab or pane that is already open changes at once when you change a setting, a profile or a scheme.
 
@@ -28,9 +28,9 @@ In a split tab each pane uses the scheme of its own profile. A tab or pane that 
 
 Built-in schemes cannot be changed or deleted; duplicate one to start your own. Each meets a readability bar: text against the background at a contrast ratio of at least 7, the ANSI colors 1 to 6 and 9 to 14 against the background at least 4.5, and the selection against the text at least 4.5.
 
-## The Color schemes window
+## The Color schemes tab
 
-Open it with **Edit schemes…** next to the **Color scheme** row in Settings (or in the profile editor), or with **Color schemes** in the palette. The window is called **Color schemes · fbterm**. The list on the left holds the built-in schemes and yours; the right side shows the selected scheme with a live preview of a prompt, output in every color, a selection and the cursor.
+Color schemes is a tab in a terminal window's tab bar, like Settings and Profiles: there is one in the app, and opening it again selects it. Open it with **Edit schemes…** next to the **Color scheme** row in Settings (or in the profile editor), or with **Color schemes** in the palette. It is closed like any tab (`Cmd+W`) and is not restored at relaunch. The list on the left holds the built-in schemes and yours; the right side shows the selected scheme with a live preview of a prompt, output in every color, a selection and the cursor.
 
 - **Edit colors.** Click a swatch to show its R, G and B sliders, or type a `#rrggbb` value. The preview follows every change.
 - **Font.** Under **Font**, choose a **Family** (or **Use global font**) and a **Size**.
@@ -44,7 +44,7 @@ For your own schemes, if the text against the background, any of the ANSI colors
 
 ## The theme gallery
 
-Next to the editor, the Color schemes window has an **Editor | Gallery** switch. The gallery lists ready-made schemes made by others, so you can try a look without building it by hand.
+Next to the editor, the Color schemes tab has an **Editor | Gallery** switch. The gallery lists ready-made schemes made by others, so you can try a look without building it by hand.
 
 - **Browsing.** Rows are sorted by name. The search box matches the name, the project and the author, and **All**, **Dark** and **Light** narrow the list. Each row shows a preview, its credit (project, author and license) and a **Project page** link.
 - **Install.** **Install** saves the theme as a scheme of yours, a file named `gallery-<id>.toml` in the `schemes/` folder, and the button then reads **Installed**. It appears in Settings and the profile editor like any other scheme, and you can duplicate or edit it.
@@ -53,7 +53,7 @@ Next to the editor, the Color schemes window has an **Editor | Gallery** switch.
 
 ### What the gallery contacts
 
-The gallery reads one file, `https://raw.githubusercontent.com/featherbitplatform/terminal-themes/main/catalog.toml`, and only when you open the gallery while no catalog has loaded yet in this session (the first time, and again after an error, when you return to the Gallery tab or reopen the window), or when you press **Refresh** or **Retry**. Once a catalog has loaded, it is shown again from memory until you quit. Nothing is fetched at startup or in the background, no check repeats, and nothing is cached on disk. Programs running in your sessions can never trigger it. If you are offline, the gallery shows one error line with **Retry**; your installed themes keep working.
+The gallery reads one file, `https://raw.githubusercontent.com/featherbitplatform/terminal-themes/main/catalog.toml`, and only when you open the gallery while no catalog has loaded yet in this session (the first time, and again after an error, when you return to the Gallery tab or reopen the Color schemes tab), or when you press **Refresh** or **Retry**. Once a catalog has loaded, it is shown again from memory until you quit. Nothing is fetched at startup or in the background, no check repeats, and nothing is cached on disk. Programs running in your sessions can never trigger it. If you are offline, the gallery shows one error line with **Retry**; your installed themes keep working.
 
 The themes come from [terminal-themes](https://github.com/featherbitplatform/terminal-themes), each under a permissive license with credit to its author. The full credits, and how to propose a new theme by pull request, are in that repository.
 
@@ -65,17 +65,17 @@ A scheme that names a font gives its sessions that family and size instead of th
 
 A scheme can suggest a font that suits it, with a link to the font's official download page. The built-in schemes and every theme in the gallery carry one. A suggestion changes nothing by itself: fbterm never ships, downloads or installs fonts.
 
-In the Color schemes window, the selected scheme (and each gallery row) shows **Suggested font** with the family and:
+In the Color schemes tab, the selected scheme (and each gallery row) shows **Suggested font** with the family and:
 
 - **Download** opens the font's page in your browser; the button shows the site it leads to, such as `Download (github.com)` (a long host name shows its end, the part that names the site's owner). Download and install the font there, the way your system installs fonts.
 - **Use font** makes it the global **Font family** in Settings. It is available once the font is installed; the suggestion itself is not written into the scheme, so an installed gallery theme keeps receiving updates.
 - **In use** when the scheme's sessions already use that font, or **Not installed** when your system does not have it. A scheme that sets its own font (under **Font**) keeps it for its sessions, and the line says so.
 
-The check looks at the fonts fbterm can draw with. A suggested font you install while fbterm runs is picked up the next time you open the Color schemes window or its gallery (or turn on the checkbox below): fbterm looks through the system's fonts again for the suggested families it is missing and adds just those, without a restart.
+The check looks at the fonts fbterm can draw with. A suggested font you install while fbterm runs is picked up the next time you show the Color schemes tab or its gallery, or focus its window (or turn on the checkbox below): fbterm looks through the system's fonts again for the suggested families it is missing and adds just those, without a restart.
 
 ### Use each theme's suggested font
 
-With **Use each theme's suggested font** checked (in the Color schemes window, or the row of the same name in Settings, both the `use_theme_fonts` setting in [`settings.toml`](files#settingstoml)), choosing another scheme, globally or for a profile, also switches its sessions to that scheme's suggested font. The font a session uses is then:
+With **Use each theme's suggested font** checked (in the Color schemes tab, or the row of the same name in Settings, both the `use_theme_fonts` setting in [`settings.toml`](files#settingstoml)), choosing another scheme, globally or for a profile, also switches its sessions to that scheme's suggested font. The font a session uses is then:
 
 1. the scheme's own font, if it sets one;
 2. else the scheme's suggested font, if it is installed;

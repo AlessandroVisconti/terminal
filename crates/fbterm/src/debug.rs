@@ -186,11 +186,11 @@ impl App {
         )
     }
 
-    /// `FBTERM_OPEN_SCHEMES=1` (debug aid): open the Color schemes window at startup; any other
-    /// value selects the scheme of that name. With `FBTERM_DEMO_GALLERY=1`, the window shows
-    /// its gallery with a sample catalog (one theme to install, one installed, one with an
-    /// update, one withdrawn, and a worst-case row with a very long name and credit), never
-    /// fetched. With a non-empty `FBTERM_CONFIG_DIR` as well, the installed ones are written to
+    /// `FBTERM_OPEN_SCHEMES=1` (debug aid): open the Color schemes tab in the first window at
+    /// startup; any other value selects the scheme of that name. With `FBTERM_DEMO_GALLERY=1`,
+    /// the tab shows its gallery with a sample catalog (one theme to install, one installed, one
+    /// with an update, one withdrawn, and a worst-case row with a very long name and credit),
+    /// never fetched. With a non-empty `FBTERM_CONFIG_DIR` as well, the installed ones are written to
     /// that folder's `schemes/` first; without it nothing is written and every row offers
     /// Install. `FBTERM_DEMO_GALLERY=question` also asks about updating the sample theme
     /// `Meadow` as edited on this machine (with `FBTERM_CONFIG_DIR`, its installed copy is

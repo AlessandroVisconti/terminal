@@ -68,17 +68,17 @@ pub(crate) enum Mode {
     Settings,
     /// The Welcome tab: like the Settings tab, plus Settings itself.
     Welcome,
-    /// The Color schemes window: Cmd+W closes it, Cmd+S saves, Settings, the profile editor and
-    /// Quit work; other shortcuts do nothing.
+    /// The Color schemes tab: Cmd+W closes it, Cmd+S saves, Settings, the profile editor, Quit,
+    /// tab navigation, New tab, New window and the palette work; other shortcuts do nothing.
     Schemes,
-    /// The Color schemes window asking whether to delete a scheme: Enter deletes, Escape
+    /// The Color schemes tab asking whether to delete a scheme: Enter deletes, Escape
     /// cancels, and no other key reaches a field behind the question or acts as a shortcut.
     SchemesConfirm,
-    /// The Color schemes window asking what to do with an imported scheme whose id is taken:
+    /// The Color schemes tab asking what to do with an imported scheme whose id is taken:
     /// Enter keeps both, Escape cancels, and no other key reaches a field behind the question
     /// or acts as a shortcut.
     SchemesImport,
-    /// The Color schemes window asking what to do about updating a theme edited here: Enter
+    /// The Color schemes tab asking what to do about updating a theme edited here: Enter
     /// installs it as a copy, Escape cancels, and no other key reaches a field behind the
     /// question or acts as a shortcut.
     SchemesUpdate,
@@ -292,9 +292,16 @@ fn press_message(
             }
             shortcut.map(|action| match action {
                 Action::CloseTab if !repeat => Some(Message::Schemes(SchemesMsg::Close)),
+                Action::NextTab | Action::PrevTab => Some(Message::Shortcut(w, action)),
+                Action::SelectTab(_) | Action::NewTab | Action::NewWindow | Action::Palette
+                    if !repeat =>
+                {
+                    Some(Message::Shortcut(w, action))
+                }
                 Action::Quit
                 | Action::Settings
                 | Action::EditProfiles
+                | Action::EditSchemes
                 | Action::Tunnels
                 | Action::VerticalTabs
                     if !repeat =>
@@ -1191,7 +1198,8 @@ mod tests {
     }
 
     #[test]
-    fn the_schemes_window_closes_saves_and_reaches_the_others() {
+    fn the_schemes_tab_closes_saves_and_reaches_the_others() {
+        // Cmd+W closes the tab.
         assert!(matches!(
             press(Mode::Schemes, "w", false),
             Some(Some(Message::Schemes(SchemesMsg::Close)))
@@ -1200,7 +1208,35 @@ mod tests {
             press(Mode::Schemes, ",", true),
             Some(Some(Message::Shortcut(_, Action::EditProfiles)))
         ));
-        assert!(matches!(press(Mode::Schemes, "t", false), Some(None)));
+        // The shortcut that opens the tab reselects it.
+        let mut overrides = fbterm_config::keys::Overrides::new();
+        overrides.insert(
+            Action::EditSchemes,
+            Some(parse_chord(if cfg!(target_os = "macos") {
+                "cmd+shift+j"
+            } else {
+                "ctrl+shift+j"
+            })),
+        );
+        let (key, mods) = chord("j", true);
+        assert!(matches!(
+            key_message(
+                &Bindings::current(&overrides),
+                Mode::Schemes,
+                window::Id::unique(),
+                &key,
+                mods,
+                false,
+                None
+            ),
+            Some(Some(Message::Shortcut(_, Action::EditSchemes)))
+        ));
+        // A tab like the others: tab shortcuts work there.
+        assert!(matches!(
+            press(Mode::Schemes, "t", false),
+            Some(Some(Message::Shortcut(_, Action::NewTab)))
+        ));
+        // Cmd+S saves the edited scheme.
         let s = keyboard::Key::Character("s".into());
         assert!(matches!(
             key_message(
@@ -1248,7 +1284,7 @@ mod tests {
             press(Mode::Welcome, "t", false),
             Some(Some(Message::Shortcut(_, Action::NewTab)))
         ));
-        // And from the windows without tabs (Color schemes, export and import).
+        // And from the Color schemes tab and the export and import window.
         assert!(matches!(
             press(Mode::Schemes, "b", true),
             Some(Some(Message::Shortcut(_, Action::VerticalTabs)))

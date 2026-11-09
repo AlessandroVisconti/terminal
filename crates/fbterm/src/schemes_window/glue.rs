@@ -1,4 +1,4 @@
-//! The app side of the Color schemes window: opening it, and the actions that touch files and
+//! The app side of the Color schemes tab: opening it, and the actions that touch files and
 //! open sessions (save, duplicate, delete, import, export).
 
 use std::path::PathBuf;
@@ -12,6 +12,7 @@ use iced::{Task, window};
 
 use super::{DeleteAsk, ImportAsk, ImportChoice, SchemesMsg, SchemesState};
 use crate::app::{App, Message, SettingsSource};
+use crate::tabs::Page;
 
 /// What the global setting falls back to when its scheme is deleted.
 const FALLBACK: &str = "graphite";
@@ -21,36 +22,27 @@ impl App {
         self.schemes_win.as_ref().map(|(id, _)| *id)
     }
 
-    /// Open the Color schemes window with `select` selected (else the global scheme), or bring
-    /// it to the front and select `select` there.
+    /// Open the Color schemes tab with `select` selected (else the global scheme), or select
+    /// the tab where it is open and `select` there.
     pub(crate) fn open_schemes(&mut self, select: Option<String>) -> Task<Message> {
         let select = select.unwrap_or_else(|| self.settings.color_scheme.clone());
-        // The window shows (a user action): read the installed fonts again, and look for
-        // suggested fonts installed since fbterm started (see `crate::theme_fonts`).
-        self.refresh_installed_fonts();
-        let scan = self.scan_fonts();
-        if let Some((id, state)) = &mut self.schemes_win {
+        let (id, shown) = self.show_page(Page::Schemes);
+        if let Some((_, state)) = &mut self.schemes_win {
             state.update(SchemesMsg::Select(select));
-            return Task::batch([window::gain_focus(*id), scan]);
+            return shown;
         }
-        let (id, open) = crate::chrome::open_window(window::Settings {
-            size: iced::Size::new(980.0, 780.0),
-            min_size: Some(iced::Size::new(760.0, 520.0)),
-            exit_on_close_request: false,
-            ..window::Settings::default()
-        });
         let mut state =
             SchemesState::new(&self.schemes, Some(&select), self.installed_fonts.clone());
         state.sync_settings(&self.settings);
         if self.gallery_loading {
-            // The fetch started before the window closed is still running.
+            // The fetch started before the tab closed is still running.
             state.gallery = super::GalleryLoad::Loading;
         } else if let Some(catalog) = &self.gallery_catalog {
             // The catalog of this run: shown again without a fetch.
             state.gallery = super::GalleryLoad::Loaded(catalog.clone());
         }
         self.schemes_win = Some((id, state));
-        Task::batch([open.discard(), scan])
+        shown
     }
 
     pub(crate) fn schemes_msg(&mut self, msg: SchemesMsg) -> Task<Message> {
@@ -68,10 +60,7 @@ impl App {
         };
         match msg {
             SchemesMsg::Open => self.open_schemes(None),
-            SchemesMsg::Close => match self.schemes_window() {
-                Some(id) => self.close_window(id),
-                None => Task::none(),
-            },
+            SchemesMsg::Close => self.close_page(Page::Schemes),
             SchemesMsg::Save => self.save_scheme(),
             SchemesMsg::Duplicate => self.duplicate_scheme(),
             SchemesMsg::Delete => {

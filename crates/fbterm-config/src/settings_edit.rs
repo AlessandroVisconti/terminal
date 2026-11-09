@@ -7,8 +7,8 @@ use toml_edit::{DocumentMut, Item, Value};
 
 use crate::keys::{Action, Overrides};
 use crate::settings::{
-    DEFAULT_MAX_FPS, MacosBlurStyle, MaxFps, SecretStorage, Settings, TabBar, ThemeMode,
-    UNCOMPRESSED_FLOOR, WindowDecorations,
+    DEFAULT_MAX_FPS, MacosBlurStyle, MaxFps, SecretStorage, Settings, TabBar, UNCOMPRESSED_FLOOR,
+    WindowDecorations,
 };
 use crate::store::{ConfigError, atomic_write, line_of};
 
@@ -24,7 +24,6 @@ pub enum SettingChange {
     /// as written while compression is off).
     HistoryCompression(bool),
     UncompressedHistoryLines(usize),
-    Theme(ThemeMode),
     ColorScheme(String),
     KittyKeyboard(bool),
     GraphemeClusters(bool),
@@ -59,7 +58,6 @@ impl SettingChange {
             Self::ScrollbackLines(_) => "scrollback_lines",
             Self::HistoryCompression(_) => "history_compression",
             Self::UncompressedHistoryLines(_) => "uncompressed_history_lines",
-            Self::Theme(_) => "theme",
             Self::ColorScheme(_) => "color_scheme",
             Self::KittyKeyboard(_) => "kitty_keyboard",
             Self::GraphemeClusters(_) => "grapheme_clusters",
@@ -98,7 +96,6 @@ impl SettingChange {
                 }
             }
             Self::UncompressedHistoryLines(v) => settings.uncompressed_history_lines = Some(*v),
-            Self::Theme(v) => settings.theme = *v,
             Self::ColorScheme(v) => settings.color_scheme.clone_from(v),
             Self::KittyKeyboard(v) => settings.kitty_keyboard = *v,
             Self::GraphemeClusters(v) => settings.grapheme_clusters = *v,
@@ -128,8 +125,6 @@ impl SettingChange {
             Self::ScrollbackLines(v) | Self::UncompressedHistoryLines(v) => {
                 Value::from(i64::try_from(*v).unwrap_or(i64::MAX))
             }
-            Self::Theme(ThemeMode::Dark) => Value::from("dark"),
-            Self::Theme(ThemeMode::Light) => Value::from("light"),
             Self::KittyKeyboard(v)
             | Self::GraphemeClusters(v)
             | Self::Ligatures(v)
@@ -237,6 +232,8 @@ fn edit_one(text: &str, change: &SettingChange) -> Result<String, (Option<usize>
         let line = e.span().map(|s| line_of(text, s.start));
         (line, e.message().to_string())
     })?;
+    // The obsolete top-level `theme` key goes with the next write (keys in tables stay).
+    doc.remove("theme");
     if let SettingChange::Keys(wanted) = change {
         // Compare with the entries as written (before load drops conflicting or reserved
         // ones), so an entry the app ignored is not left behind to apply on the next load.
@@ -458,7 +455,6 @@ mod tests {
             SettingChange::ScrollbackLines(25_000),
             SettingChange::HistoryCompression(true),
             SettingChange::UncompressedHistoryLines(5_000),
-            SettingChange::Theme(ThemeMode::Light),
             SettingChange::KittyKeyboard(true),
             SettingChange::GraphemeClusters(true),
             SettingChange::Ligatures(false),
@@ -501,10 +497,10 @@ mod tests {
             )
         );
         // Without the template's `#[keys]`, the table is added after a blank line.
-        let after = edit_text("theme = \"dark\"", &keys(&[(Action::Quit, "ctrl+shift+k")]));
+        let after = edit_text("ligatures = true", &keys(&[(Action::Quit, "ctrl+shift+k")]));
         assert_eq!(
             after.unwrap(),
-            "theme = \"dark\"\n\n[keys]\nquit = \"ctrl+shift+k\"\n"
+            "ligatures = true\n\n[keys]\nquit = \"ctrl+shift+k\"\n"
         );
         let after = edit_text(
             SETTINGS_TEMPLATE,
@@ -534,7 +530,7 @@ mod tests {
 
     #[test]
     fn key_edits_keep_comments_and_untouched_entries() {
-        let before = "theme = \"dark\"\n\
+        let before = "ligatures = true\n\
                       \n\
                       # My shortcuts.\n\
                       [keys]\n\
@@ -554,7 +550,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             after,
-            "theme = \"dark\"\n\
+            "ligatures = true\n\
              \n\
              # My shortcuts.\n\
              [keys]\n\
@@ -568,7 +564,7 @@ mod tests {
         let after = edit_text(&after, &keys(&[])).unwrap();
         assert_eq!(
             after,
-            "theme = \"dark\"\n\
+            "ligatures = true\n\
              \n\
              # My shortcuts.\n\
              [keys]\n\
@@ -647,7 +643,7 @@ mod tests {
     #[test]
     fn an_existing_key_keeps_its_place_and_comments() {
         let before = "# My settings.\n\
-                      theme = \"dark\"   # night owl\n\
+                      ligatures = true   # night owl\n\
                       \n\
                       # Bigger text.\n\
                       font_size = 14.0\n\
@@ -656,17 +652,17 @@ mod tests {
         assert_eq!(
             after,
             "# My settings.\n\
-             theme = \"dark\"   # night owl\n\
+             ligatures = true   # night owl\n\
              \n\
              # Bigger text.\n\
              font_size = 16.0\n\
              kitty_keyboard = false\n"
         );
-        let after = edit_text(before, &SettingChange::Theme(ThemeMode::Light)).unwrap();
+        let after = edit_text(before, &SettingChange::Ligatures(false)).unwrap();
         assert_eq!(
             after,
             "# My settings.\n\
-             theme = \"light\"   # night owl\n\
+             ligatures = false   # night owl\n\
              \n\
              # Bigger text.\n\
              font_size = 14.0\n\
@@ -695,10 +691,10 @@ mod tests {
 
     #[test]
     fn a_missing_key_joins_the_top_level_keys() {
-        let after = edit_text("theme = \"light\"\n", &SettingChange::FontSize(15.0)).unwrap();
-        assert_eq!(after, "theme = \"light\"\nfont_size = 15.0\n");
+        let after = edit_text("ligatures = true\n", &SettingChange::FontSize(15.0)).unwrap();
+        assert_eq!(after, "ligatures = true\nfont_size = 15.0\n");
         // A commented key after a table header is not where a top-level key can go.
-        let text = "theme = \"light\"\n\n[extra]\n#font_size = 13.0\n";
+        let text = "ligatures = true\n\n[extra]\n#font_size = 13.0\n";
         let after = edit_text(text, &SettingChange::FontSize(15.0)).unwrap();
         assert_eq!(
             toml::from_str::<Settings>(&after).unwrap().font_size,
@@ -715,7 +711,7 @@ mod tests {
         let s: Settings = toml::from_str(&after).unwrap();
         assert_eq!(s.font_size, 15.0, "{after}");
         assert_eq!(s.font_family, "#font_size = 13.0\n");
-        let text = "theme = \"dark\"\nextra = [\n#font_size = 13.0\n1]\n";
+        let text = "ligatures = true\nextra = [\n#font_size = 13.0\n1]\n";
         let after = edit_text(text, &SettingChange::FontSize(15.0)).unwrap();
         assert_eq!(toml::from_str::<Settings>(&after).unwrap().font_size, 15.0);
     }
@@ -728,11 +724,11 @@ mod tests {
         let dotfiles = dir.join("dotfiles");
         std::fs::create_dir_all(&dotfiles).unwrap();
         let real = dotfiles.join("settings.toml");
-        std::fs::write(&real, "# mine\ntheme = \"dark\"\n").unwrap();
+        std::fs::write(&real, "# mine\nligatures = true\n").unwrap();
         std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
         let link = dir.join("settings.toml");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        Settings::write_field(&link, &SettingChange::Theme(ThemeMode::Light)).unwrap();
+        Settings::write_field(&link, &SettingChange::Ligatures(false)).unwrap();
         assert!(
             std::fs::symlink_metadata(&link)
                 .unwrap()
@@ -741,7 +737,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(&real).unwrap(),
-            "# mine\ntheme = \"light\"\n"
+            "# mine\nligatures = false\n"
         );
         let mode = std::fs::metadata(&real).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
@@ -750,11 +746,11 @@ mod tests {
 
     #[test]
     fn line_endings_and_a_missing_final_newline_are_respected() {
-        let text = "# a\r\n#font_size = 13.0\r\ntheme = \"dark\"\r\n";
+        let text = "# a\r\n#font_size = 13.0\r\nligatures = true\r\n";
         let after = edit_text(text, &SettingChange::FontSize(15.0)).unwrap();
         assert_eq!(
             after,
-            "# a\r\n#font_size = 13.0\r\nfont_size = 15.0\r\ntheme = \"dark\"\r\n"
+            "# a\r\n#font_size = 13.0\r\nfont_size = 15.0\r\nligatures = true\r\n"
         );
         let after = edit_text("#font_size = 13.0", &SettingChange::FontSize(15.0)).unwrap();
         assert_eq!(after, "#font_size = 13.0\nfont_size = 15.0\n");
@@ -763,7 +759,7 @@ mod tests {
     #[test]
     fn a_broken_file_is_refused() {
         let (line, _) = edit_text(
-            "theme = \"dark\"\nfont_size = = 3\n",
+            "ligatures = true\nfont_size = = 3\n",
             &SettingChange::FontSize(15.0),
         )
         .unwrap_err();
@@ -941,7 +937,7 @@ mod tests {
     #[test]
     fn lowering_scrollback_beside_an_invalid_key_writes_nothing() {
         for text in [
-            "theme = \"purple\"\nscrollback_lines = 20000\nuncompressed_history_lines = 8000\n",
+            "tab_bar = \"purple\"\nscrollback_lines = 20000\nuncompressed_history_lines = 8000\n",
             "scrollback_lines = 20000\nuncompressed_history_lines = \"lots\"\n",
         ] {
             let (line, _) = edit_text(text, &SettingChange::ScrollbackLines(5_000)).unwrap_err();

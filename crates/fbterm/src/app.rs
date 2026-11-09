@@ -191,7 +191,7 @@ pub enum Message {
     },
     Editor(EditorMsg),
     Settings(SettingsMsg),
-    /// The Color schemes window.
+    /// The Color schemes tab.
     Schemes(SchemesMsg),
     /// A window's tunnels panel.
     Tunnels(TunnelsMsg),
@@ -369,7 +369,7 @@ pub struct App {
     pub(crate) exit_waiting: bool,
     /// The Settings tab, when open.
     pub settings_win: Option<(window::Id, SettingsState)>,
-    /// The Color schemes window, when open.
+    /// The Color schemes tab, when open, with the window hosting it.
     pub schemes_win: Option<(window::Id, SchemesState)>,
     /// The export and import window, when open.
     pub archive_win: Option<(window::Id, ArchiveState)>,
@@ -731,8 +731,9 @@ impl App {
             tunnels_panels: TunnelsPanels::new(saved.tunnels_panel_width),
             tunnel_retries,
             bindings: Bindings::current(&settings.keys.map),
-            theme: theme::graphite_theme(settings.theme),
-            tokens: theme::tokens(settings.theme),
+            // Replaced by `retheme` below, once the scheme set and settings are in.
+            theme: theme::chrome_theme(&theme::DARK),
+            tokens: &theme::DARK,
             settings,
             profiles,
             notices,
@@ -845,6 +846,7 @@ impl App {
             ask_welcome: !cfg!(test),
             demo_update: debug_env("FBTERM_DEMO_UPDATE").map(|v| v.to_string_lossy().into_owned()),
         };
+        app.retheme();
         app.update_output_rate();
         if app.settings.use_theme_fonts {
             app.refresh_installed_fonts();
@@ -922,9 +924,6 @@ impl App {
     }
 
     pub fn title(&self, id: window::Id) -> String {
-        if self.schemes_window() == Some(id) {
-            return "Color schemes · fbterm".into();
-        }
         if self.archive_window() == Some(id) {
             return self.archive_title().into();
         }
@@ -1309,9 +1308,6 @@ impl App {
                     // The window is going: nothing of what the page leaves behind needs a task.
                     let _ = self.page_closed(page);
                 }
-                if self.schemes_window() == Some(id) {
-                    self.schemes_win = None;
-                }
                 // Dropping the state wipes typed passwords and an opened archive.
                 if self.archive_window() == Some(id) {
                     self.archive_win = None;
@@ -1389,7 +1385,6 @@ impl App {
                 if self.windows.is_empty()
                     && self.editor.is_none()
                     && self.settings_win.is_none()
-                    && self.schemes_win.is_none()
                     && self.archive_win.is_none()
                 {
                     self.exit_when_idle()
@@ -1435,7 +1430,7 @@ impl App {
             }
             Message::WindowScale(id, s) => {
                 tracing::info!(window = ?id, scale = s, "window scale");
-                // Kept for every open window: the editor, Settings and Color schemes windows
+                // Kept for every open window: the editor, Settings and Color schemes tabs
                 // draw their hairlines from it too (`physical_scale`).
                 let open = self.open_windows.contains(&id) || self.windows.contains_key(&id);
                 if open && s.is_finite() && s > 0.0 {
@@ -1577,7 +1572,7 @@ impl App {
         let target = match self.screenshot_window {
             ShotWindow::Editor => self.editor_window(),
             ShotWindow::Settings => self.settings_window(),
-            ShotWindow::Schemes => self.schemes_window(),
+            ShotWindow::Schemes => self.page_tab(crate::tabs::Page::Schemes).map(|(w, _)| w),
             ShotWindow::Archive => self.archive_window(),
             ShotWindow::Terminal => self.windows.keys().next().copied(),
         };

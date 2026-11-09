@@ -1,4 +1,4 @@
-//! The theme gallery of the Color schemes window: fetching the catalog (only when the user
+//! The theme gallery of the Color schemes tab: fetching the catalog (only when the user
 //! opens the gallery or asks for a refresh), and installing and updating its themes as
 //! `gallery-<id>` scheme files. The catalog is untrusted input, parsed by
 //! `fbterm_config::catalog`; the last good one is kept on the app for the rest of the run,
@@ -19,7 +19,7 @@ use crate::app::{App, Message};
 /// The start of the line shown when the catalog could not be loaded.
 pub const LOAD_FAILED: &str = "Couldn't load the theme gallery";
 
-/// Where the gallery stands in the Color schemes window.
+/// Where the gallery stands in the Color schemes tab.
 #[derive(Debug, Clone, Default)]
 pub enum GalleryLoad {
     /// Never opened in this run.
@@ -203,7 +203,7 @@ fn failure_line(reason: &str) -> String {
     format!("{LOAD_FAILED}: {reason}")
 }
 
-/// The window's state for a fetched catalog: loaded, or the line to show (also for a catalog
+/// The tab's state for a fetched catalog: loaded, or the line to show (also for a catalog
 /// whose every theme was skipped).
 fn load_result(result: Result<Vec<u8>, String>) -> GalleryLoad {
     let bytes = match result {
@@ -249,7 +249,7 @@ impl App {
     }
 
     /// Fetch the catalog on the blocking pool, unless a fetch is under way (in this or an
-    /// earlier Color schemes window); the result comes back as
+    /// earlier Color schemes tab); the result comes back as
     /// [`SchemesMsg::GalleryFetched`] with this fetch's generation. A question about an
     /// edited theme is dropped: its catalog is about to change.
     fn fetch_gallery(&mut self) -> Task<Message> {
@@ -347,7 +347,7 @@ impl App {
 
     /// Install or Update theme `id`: written in place when nothing would be lost, asked
     /// about when the installed scheme was edited (or its file has no gallery block or does
-    /// not load, or the window holds unsaved edits of it), and nothing at all when the theme
+    /// not load, or the tab holds unsaved edits of it), and nothing at all when the theme
     /// is installed already or withdrawn.
     fn install_theme(&mut self, id: &str) -> Task<Message> {
         let Some(theme) = self.catalog_theme(id) else {

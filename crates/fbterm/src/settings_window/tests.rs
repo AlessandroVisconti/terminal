@@ -12,13 +12,13 @@ fn state() -> SettingsState {
 #[test]
 fn a_click_applies_and_writes_at_once() {
     let mut s = state();
-    let e = s.update(SettingsMsg::Theme(ThemeMode::Light));
-    assert_eq!(e.apply, Some(SettingChange::Theme(ThemeMode::Light)));
+    let e = s.update(SettingsMsg::Kitty(true));
+    assert_eq!(e.apply, Some(SettingChange::KittyKeyboard(true)));
     assert_eq!(e.write, Write::Now);
-    assert_eq!(s.values.theme, ThemeMode::Light);
-    assert_eq!(s.take_pending(), [SettingChange::Theme(ThemeMode::Light)]);
+    assert!(s.values.kitty_keyboard);
+    assert_eq!(s.take_pending(), [SettingChange::KittyKeyboard(true)]);
     // Choosing what is already chosen changes nothing.
-    let e = s.update(SettingsMsg::Theme(ThemeMode::Light));
+    let e = s.update(SettingsMsg::Kitty(true));
     assert_eq!(e, Effect::NONE);
 }
 
@@ -192,13 +192,13 @@ fn unwritten_changes_go_back_in_line_unless_newer_ones_wait() {
     let mut s = state();
     s.update(SettingsMsg::Kitty(true));
     let failed = s.take_pending();
-    s.update(SettingsMsg::Theme(ThemeMode::Light));
+    s.update(SettingsMsg::Ligatures(false));
     s.requeue(failed);
     assert_eq!(
         s.take_pending(),
         [
             SettingChange::KittyKeyboard(true),
-            SettingChange::Theme(ThemeMode::Light)
+            SettingChange::Ligatures(false)
         ]
     );
     s.update(SettingsMsg::Kitty(false));
@@ -319,7 +319,7 @@ fn the_windows_build_is_read_from_the_registry_output() {
 #[test]
 fn an_unsupported_blur_switch_cannot_be_toggled() {
     use crate::app::Message;
-    let t = crate::theme::tokens(ThemeMode::Dark);
+    let t = crate::theme::graphite_tokens();
     // Lay the blur row out, click the switch at its right end: what does it publish and say?
     let run = |supported: bool| {
         press_right_end(
@@ -448,7 +448,7 @@ fn choosing_a_blur_style_applies_and_saves_it() {
 fn the_blur_style_row_offers_both_styles_and_is_inert_without_blur() {
     use crate::app::Message;
     use fbterm_config::MacosBlurStyle;
-    let t = crate::theme::tokens(ThemeMode::Dark);
+    let t = crate::theme::graphite_tokens();
     const NOTE: &str = "Native uses the macOS look. Classic is fbterm's earlier, clearer blur.";
     // The right segment is `Classic`: press inside it, clear of the card's padding.
     let inset = 16.0 + 2.0 + 12.0;
@@ -992,7 +992,7 @@ fn a_fixed_shortcut_row_shows_its_chord_and_cannot_be_recorded() {
             self.0.push(text.to_owned());
         }
     }
-    let t = crate::theme::tokens(ThemeMode::Dark);
+    let t = crate::theme::graphite_tokens();
     let renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
         iced::Font::DEFAULT,
         Pixels(16.0),

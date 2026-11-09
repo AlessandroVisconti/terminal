@@ -114,6 +114,11 @@ fn header<'a>(t: &'static Tokens, group: &'a Group) -> Element<'a, Message> {
         .into()
 }
 
+/// The text and background of the matched part of a hit's snippet.
+fn match_colors(t: &Tokens) -> (Color, Color) {
+    (t.on_accent, t.accent)
+}
+
 fn hit_row<'a>(
     t: &'static Tokens,
     window: iced::window::Id,
@@ -132,15 +137,13 @@ fn hit_row<'a>(
     let line: Element<'a, Message> = match &group.hits[h].snippet {
         Some(s) => {
             let (a, b) = (s.highlight.start, s.highlight.end);
+            let (fg, bg) = match_colors(t);
             rich_text([
                 span(&s.text[..a]).color(t.text_secondary),
-                span(&s.text[a..b])
-                    .color(Color::WHITE)
-                    .background(t.accent)
-                    .border(Border {
-                        radius: 3.0.into(),
-                        ..Border::default()
-                    }),
+                span(&s.text[a..b]).color(fg).background(bg).border(Border {
+                    radius: 3.0.into(),
+                    ..Border::default()
+                }),
                 span(&s.text[b..]).color(t.text_secondary),
             ])
             .on_link_click(iced::never)
@@ -307,4 +310,22 @@ pub fn view<'a>(
             ..container::Style::default()
         });
     mouse_area(backdrop).on_press(msg(FindAllMsg::Close)).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tab_look::contrast;
+
+    #[test]
+    fn the_match_reads_on_the_accent() {
+        for t in [
+            crate::theme::graphite_tokens(),
+            crate::theme::pale_accent_tokens(),
+        ] {
+            let (fg, bg) = match_colors(t);
+            assert_eq!(bg, t.accent);
+            assert!(contrast(fg, bg) >= 4.5, "{}", contrast(fg, bg));
+        }
+    }
 }

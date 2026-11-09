@@ -1,4 +1,4 @@
-//! The theme gallery in the Color schemes window, against a temporary config directory and a
+//! The theme gallery in the Color schemes tab, against a temporary config directory and a
 //! fake fetch: when the catalog is fetched, how failures read, and what Install and Update do
 //! to scheme files and open panes. Nothing here touches the network.
 
@@ -186,10 +186,7 @@ fn opening_gallery_fetches_once() {
     assert!(matches!(win(&app).gallery, GalleryLoad::Loaded(_)));
     // Closed and opened again in the same run: the catalog is still there, unfetched.
     let _ = send(&mut app, SchemesMsg::Close);
-    let id = app.schemes_window();
-    if let Some(id) = id {
-        let _ = app.update(Message::WindowClosed(id));
-    }
+    assert!(app.schemes_win.is_none());
     let _ = send(&mut app, SchemesMsg::Open);
     assert_eq!(send(&mut app, SchemesMsg::ShowGallery(true)).units(), 0);
     assert!(matches!(win(&app).gallery, GalleryLoad::Loaded(_)));
@@ -563,9 +560,8 @@ fn credit_link_only_https() {
     );
 }
 
-fn close_window(app: &mut App) {
-    let id = app.schemes_window().expect("schemes window open");
-    let _ = app.update(Message::WindowClosed(id));
+fn close_tab(app: &mut App) {
+    let _ = send(app, SchemesMsg::Close);
     assert!(app.schemes_win.is_none());
 }
 
@@ -584,7 +580,7 @@ fn reopen_during_loading_and_stale_results() {
     assert_eq!(send(&mut app, SchemesMsg::ShowGallery(true)).units(), 1);
     let first = app.gallery_generation;
     // Closed and opened again while the fetch runs: still Loading, no second fetch.
-    close_window(&mut app);
+    close_tab(&mut app);
     let _ = send(&mut app, SchemesMsg::Open);
     assert!(matches!(win(&app).gallery, GalleryLoad::Loading));
     assert_eq!(send(&mut app, SchemesMsg::ShowGallery(true)).units(), 0);

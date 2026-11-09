@@ -34,7 +34,7 @@ pub enum Action {
     DuplicateProfile,
     /// The Settings tab: Cmd+, on macOS, Ctrl+, elsewhere.
     Settings,
-    /// The Color schemes window (no chord by default).
+    /// The Color schemes tab (no chord by default).
     EditSchemes,
     /// The tunnels panel of the window it is used in (no chord by default).
     Tunnels,
@@ -781,7 +781,7 @@ pub fn fixed_shortcuts(mac: bool) -> Vec<FixedShortcut> {
             ..row("Scroll to bottom", key(ChordKey::End, true, false))
         },
         FixedShortcut {
-            note: Some("In the profile editor and the Color schemes window."),
+            note: Some("In the profile editor and the Color schemes tab."),
             ..row("Save", save)
         },
     ];
