@@ -567,12 +567,14 @@ fn suggestion<'a>(t: &'static Tokens, line: FontLine, compact: bool) -> Element<
             ),
             None => "Download".to_owned(),
         };
+        // A host whose owner labels alone are long is shown whole: the label wraps inside
+        // the room the line has, never cut, since its end names the owner.
         actions = actions.push(
             button(
                 text(label)
                     .font(UI_FONT)
                     .size(12)
-                    .wrapping(text::Wrapping::None),
+                    .wrapping(text::Wrapping::WordOrGlyph),
             )
             .on_press(msg(SchemesMsg::DownloadFont(url)))
             .padding(Padding::from([2.0, 6.0]))
@@ -598,7 +600,9 @@ fn suggestion<'a>(t: &'static Tokens, line: FontLine, compact: bool) -> Element<
         .style(move |_, status| ui::secondary(t, status)),
     );
     let mut col = if compact {
-        column![name, actions]
+        // A long Download label sends the next items to a new line instead of squeezing
+        // `Use font` until its label spills out.
+        column![name, actions.wrap().vertical_spacing(6)]
     } else {
         column![row![name, actions].spacing(8).align_y(Alignment::Center)]
     };

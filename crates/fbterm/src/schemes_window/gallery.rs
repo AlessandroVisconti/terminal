@@ -507,7 +507,8 @@ fn demo_theme(
 
 /// The `FBTERM_DEMO_GALLERY` scene: a catalog of sample themes and the installed schemes
 /// that give one row of each kind (Install, Installed, Update, and a withdrawn theme still
-/// installed), plus a worst-case row with a very long name, credit and font family. Each
+/// installed), plus a worst-case row with a very long name, credit, font family and font page
+/// host (owner labels too long to cut, so `Download` shows it whole). Each
 /// theme suggests a font: Geist Mono (bundled, so installed) and families that may be
 /// missing, so both states show.
 pub fn demo_catalog() -> (Catalog, Vec<Scheme>) {
@@ -586,7 +587,7 @@ pub fn demo_catalog() -> (Catalog, Vec<Scheme>) {
                     author.trim_end_matches([',', ' ']),
                     (
                         &family,
-                        "https://fonts.a-rather-long-sample-mirror-name.example.org/sample-font",
+                        "https://the-sample-font-foundry-with-a-long-name.github.io/sample-font",
                     ),
                 ),
                 slate,
