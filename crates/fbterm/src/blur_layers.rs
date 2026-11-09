@@ -93,6 +93,27 @@ pub fn plan_clear(root: Option<&LayerNode>) -> ClearPlan {
     }
 }
 
+/// What a classic blur view does with a plan.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClearStep {
+    /// Leave the layers as they are: not built yet, or the view already fell back.
+    Nothing,
+    /// Hide these layers.
+    Hide(Vec<Vec<usize>>),
+    /// Switch to the fallback material, say so once, and leave its layers as drawn.
+    FallBack,
+}
+
+/// The step for `plan` in a view that has (`fell_back`) or has not fallen back already.
+pub fn clear_step(fell_back: bool, plan: ClearPlan) -> ClearStep {
+    match plan {
+        _ if fell_back => ClearStep::Nothing,
+        ClearPlan::NotBuilt => ClearStep::Nothing,
+        ClearPlan::Unexpected => ClearStep::FallBack,
+        ClearPlan::Hide(paths) => ClearStep::Hide(paths),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,6 +234,21 @@ mod tests {
             plan_clear(Some(&measured(&["gaussianBlur"]))),
             ClearPlan::Hide(vec![vec![0, 1], vec![0, 2], vec![0, 3]])
         );
+        // What the view does with a plan: hide, fall back once, or wait. After a fallback it
+        // leaves its layers alone, whatever later hooks find.
+        let hide = ClearPlan::Hide(vec![vec![0, 1]]);
+        assert_eq!(
+            clear_step(false, hide.clone()),
+            ClearStep::Hide(vec![vec![0, 1]])
+        );
+        assert_eq!(
+            clear_step(false, ClearPlan::Unexpected),
+            ClearStep::FallBack
+        );
+        assert_eq!(clear_step(false, ClearPlan::NotBuilt), ClearStep::Nothing);
+        for plan in [hide, ClearPlan::Unexpected, ClearPlan::NotBuilt] {
+            assert_eq!(clear_step(true, plan), ClearStep::Nothing);
+        }
         // What the log line shows of such a tree.
         assert_eq!(two.summary(), "Root[A(gaussianBlur) B(gaussianBlur)]");
     }
@@ -226,7 +262,7 @@ pub(crate) mod mac {
     use objc2_app_kit::NSVisualEffectView;
     use objc2_foundation::{NSArray, NSString};
 
-    use super::{ClearPlan, LayerNode};
+    use super::{ClearPlan, ClearStep, LayerNode};
 
     fn text(object: Option<&AnyObject>) -> String {
         object.map_or_else(
@@ -316,35 +352,70 @@ pub(crate) mod mac {
         }
     }
 
-    /// Hide every layer of `view` but its blurring backdrop (see [`super::plan_clear`]),
-    /// and say what was found; nothing changes unless the plan is to hide.
-    pub(crate) fn clear_fill(view: &NSVisualEffectView) -> ClearPlan {
+    /// The plan for `view`'s layers now (see [`super::plan_clear`]).
+    fn plan(view: &NSVisualEffectView) -> (Option<Retained<AnyObject>>, ClearPlan) {
         let root = root_layer(view);
         let plan = super::plan_clear(root.as_deref().map(describe).as_ref());
-        if let (Some(root), ClearPlan::Hide(paths)) = (&root, &plan) {
-            for path in paths {
-                let mut layer = root.clone();
-                for &i in path {
-                    match sublayers(&layer).into_iter().nth(i) {
-                        Some(next) => layer = next,
-                        None => return ClearPlan::Unexpected,
-                    }
-                }
-                // SAFETY: `setHidden:` is CALayer's; main thread.
-                let () = unsafe { msg_send![&*layer, setHidden: true] };
+        (root, plan)
+    }
+
+    /// Hide the layers at `paths` under `root`, in one Core Animation transaction with
+    /// implicit actions off, so a re-hide never fades the fill in and out. False if a path
+    /// no longer leads to a layer.
+    fn hide(root: &Retained<AnyObject>, paths: &[Vec<usize>]) -> bool {
+        let class = AnyClass::get(c"CATransaction");
+        if let Some(class) = class {
+            // SAFETY: `+[CATransaction begin]` and `+setDisableActions:` take what is passed;
+            // main thread. Every `begin` here is matched by the `commit` below.
+            unsafe {
+                let () = msg_send![class, begin];
+                let () = msg_send![class, setDisableActions: true];
             }
         }
-        plan
+        let mut whole = true;
+        'paths: for path in paths {
+            let mut layer = root.clone();
+            for &i in path {
+                match sublayers(&layer).into_iter().nth(i) {
+                    Some(next) => layer = next,
+                    None => {
+                        whole = false;
+                        continue 'paths;
+                    }
+                }
+            }
+            // SAFETY: `setHidden:` is CALayer's; main thread.
+            let () = unsafe { msg_send![&*layer, setHidden: true] };
+        }
+        if let Some(class) = class {
+            // SAFETY: matches the `begin` above.
+            let () = unsafe { msg_send![class, commit] };
+        }
+        whole
+    }
+
+    /// Log once per run that the classic blur fell back, naming the layers found.
+    fn log_fallback(root: Option<&AnyObject>) {
+        static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            let layers = root.map(|r| describe(r).summary()).unwrap_or_default();
+            tracing::info!(
+                layers = %layers,
+                "the classic blur cannot hide this system's blur fill; using the lightest material"
+            );
+        }
     }
 
     objc2::define_class!(
         // SAFETY: NSVisualEffectView may be subclassed; the overrides only call `super` and
-        // then hide layers, and the class has no ivars and no `Drop`.
+        // then hide layers; the one ivar is a plain `Cell<bool>`, and there is no `Drop`.
         #[unsafe(super(NSVisualEffectView, NSView, NSResponder, NSObject))]
         #[thread_kind = MainThreadOnly]
         #[name = "FbtermClearBlurView"]
+        #[ivars = Cell<bool>]
         /// The classic style's blur view: the system's blur view that hides its own fill
-        /// again after every change that rebuilds or restyles its layers.
+        /// again after every change that rebuilds or restyles its layers. Its ivar is set once
+        /// it fell back to the fallback material, which it then leaves as drawn.
         pub(crate) struct ClearBlurView;
 
         impl ClearBlurView {
@@ -352,59 +423,94 @@ pub(crate) mod mac {
             fn layout(&self) {
                 // SAFETY: the superclass implements `layout`.
                 let () = unsafe { msg_send![super(self), layout] };
-                clear_fill(self);
+                self.clear();
             }
 
             #[unsafe(method(updateLayer))]
             fn update_layer(&self) {
                 // SAFETY: NSView implements `updateLayer`.
                 let () = unsafe { msg_send![super(self), updateLayer] };
-                clear_fill(self);
+                self.clear();
             }
 
             #[unsafe(method(viewDidChangeEffectiveAppearance))]
             fn appearance_changed(&self) {
                 // SAFETY: NSView implements `viewDidChangeEffectiveAppearance`.
                 let () = unsafe { msg_send![super(self), viewDidChangeEffectiveAppearance] };
-                clear_fill(self);
+                self.clear();
             }
 
             #[unsafe(method(viewDidChangeBackingProperties))]
             fn backing_changed(&self) {
                 // SAFETY: NSView implements `viewDidChangeBackingProperties`.
                 let () = unsafe { msg_send![super(self), viewDidChangeBackingProperties] };
-                clear_fill(self);
+                self.clear();
             }
 
             #[unsafe(method(viewDidMoveToWindow))]
             fn moved_to_window(&self) {
                 // SAFETY: NSView implements `viewDidMoveToWindow`.
                 let () = unsafe { msg_send![super(self), viewDidMoveToWindow] };
-                clear_fill(self);
+                self.clear();
             }
         }
     );
 
     impl ClearBlurView {
-        /// A new classic blur view of `frame`, as a plain blur view handle.
+        /// A new classic blur view of `frame`.
         pub(crate) fn create(
             mtm: objc2::MainThreadMarker,
             frame: objc2_foundation::NSRect,
-        ) -> Retained<NSVisualEffectView> {
-            let this = mtm.alloc::<Self>().set_ivars(());
+        ) -> Retained<Self> {
+            let this = mtm.alloc::<Self>().set_ivars(Cell::new(false));
             // SAFETY: `initWithFrame:` is NSView's designated initializer.
-            let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: frame] };
-            Retained::into_super(this)
+            unsafe { msg_send![super(this), initWithFrame: frame] }
         }
 
-        /// Whether `view` is a classic blur view.
-        pub(crate) fn is(view: &NSVisualEffectView) -> bool {
-            view.isKindOfClass(<Self as objc2::ClassType>::class())
+        /// Hide the fill, or fall back once (fallback material, one log line), or wait for
+        /// the layers to be built (see [`super::clear_step`]). Every hook and every tune runs
+        /// this one path.
+        pub(crate) fn clear(&self) {
+            if self.ivars().get() {
+                return;
+            }
+            let (root, plan) = plan(self);
+            match super::clear_step(false, plan) {
+                ClearStep::Nothing => {}
+                ClearStep::Hide(paths) => {
+                    if let Some(root) = &root
+                        && !hide(root, &paths)
+                    {
+                        self.fall_back(Some(&**root));
+                    }
+                }
+                ClearStep::FallBack => self.fall_back(root.as_deref()),
+            }
+        }
+
+        /// A new look was just set (material, appearance): try hiding its fill afresh, even
+        /// after an earlier fallback.
+        pub(crate) fn retry(&self) {
+            self.ivars().set(false);
+            self.clear();
+        }
+
+        fn fall_back(&self, root: Option<&AnyObject>) {
+            use objc2_app_kit::NSVisualEffectMaterial;
+            // Set first: the material change below lays the view out again, whose hook then
+            // returns at once.
+            self.ivars().set(true);
+            log_fallback(root);
+            let fallback = NSVisualEffectMaterial(crate::chrome::BlurLook::CLASSIC_FALLBACK.0);
+            if self.material() != fallback {
+                self.setMaterial(fallback);
+            }
         }
     }
 
-    use objc2::MainThreadOnly;
+    use std::cell::Cell;
+
     use objc2::runtime::NSObject;
-    use objc2::runtime::NSObjectProtocol;
+    use objc2::{DefinedClass, MainThreadOnly};
     use objc2_app_kit::{NSResponder, NSView};
 }

@@ -1228,10 +1228,12 @@ fn add_blur_view(window: &dyn window::Window, look: BlurLook) {
     if find_blur_view(window).is_some() {
         return;
     }
-    let blur = if look.clear {
-        crate::blur_layers::mac::ClearBlurView::create(mtm, frame_view.bounds())
-    } else {
-        NSVisualEffectView::initWithFrame(mtm.alloc(), frame_view.bounds())
+    let classic = look
+        .clear
+        .then(|| crate::blur_layers::mac::ClearBlurView::create(mtm, frame_view.bounds()));
+    let blur: objc2::rc::Retained<NSVisualEffectView> = match &classic {
+        Some(view) => objc2::rc::Retained::into_super(view.clone()),
+        None => NSVisualEffectView::initWithFrame(mtm.alloc(), frame_view.bounds()),
     };
     blur.setIdentifier(Some(&NSString::from_str(BLUR_VIEW_ID)));
     blur.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
@@ -1243,14 +1245,14 @@ fn add_blur_view(window: &dyn window::Window, look: BlurLook) {
         NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
     );
     frame_view.addSubview_positioned_relativeTo(&blur, NSWindowOrderingMode::Below, Some(&content));
-    if look.clear {
+    if let Some(classic) = &classic {
         // Build its layers now, so the first check sees the material's tree.
         blur.layoutSubtreeIfNeeded();
         blur.displayIfNeeded();
-        clear_or_fall_back(&blur, look);
+        classic.retry();
     }
     if take_dump_request() {
-        dump_materials(&blur, look);
+        dump_materials(mtm, &frame_view, &blur);
     }
 }
 
@@ -1262,39 +1264,23 @@ fn retune_blur_view(window: &dyn window::Window, look: BlurLook) {
     let Some(view) = find_blur_view(window) else {
         return;
     };
-    if ClearBlurView::is(&view) == look.clear {
-        tune_blur_view(&view, look, true);
-        if look.clear {
-            clear_or_fall_back(&view, look);
+    match (view.downcast::<ClearBlurView>(), look.clear) {
+        // Classic stays classic: new look, then hide its fill afresh (or fall back once).
+        (Ok(classic), true) => {
+            tune_blur_view(&classic, look, true);
+            classic.retry();
         }
-    } else {
-        view.removeFromSuperview();
-        add_blur_view(window, look);
-    }
-}
-
-/// Hide the classic view's fill. Where its layers do not have the expected shape (a future
-/// macOS), leave them as drawn, switch to the fallback material and say so once. Layers not
-/// built yet are left to the view's own hooks, which clear them once built.
-#[cfg(target_os = "macos")]
-fn clear_or_fall_back(view: &objc2_app_kit::NSVisualEffectView, look: BlurLook) {
-    use crate::blur_layers::{ClearPlan, mac};
-    use objc2_app_kit::NSVisualEffectMaterial;
-    static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if mac::clear_fill(view) != ClearPlan::Unexpected {
-        return;
-    }
-    if !LOGGED.swap(true, Ordering::Relaxed) {
-        let classes = mac::root_layer(view)
-            .map(|root| mac::describe(&root).summary())
-            .unwrap_or_default();
-        tracing::info!(
-            layers = %classes,
-            "the classic blur cannot hide this system's blur fill; using the lightest material"
-        );
-    }
-    if look.material != BlurLook::CLASSIC_FALLBACK {
-        view.setMaterial(NSVisualEffectMaterial(BlurLook::CLASSIC_FALLBACK.0));
+        // Native stays native: in place.
+        (Err(plain), false) => tune_blur_view(&plain, look, true),
+        // The kind changes: remove this view and add one of the other kind.
+        (Ok(classic), false) => {
+            classic.removeFromSuperview();
+            add_blur_view(window, look);
+        }
+        (Err(plain), true) => {
+            plain.removeFromSuperview();
+            add_blur_view(window, look);
+        }
     }
 }
 
@@ -1355,18 +1341,26 @@ fn take_dump_request() -> bool {
         && !DONE.swap(true, Ordering::Relaxed)
 }
 
-/// Log the layer tree `view` builds for every material in both appearances (the measurement
-/// behind `dev/blur/README.md`), then give it `look` back and log that tree too (with
-/// classic, the fill hidden). Main thread only.
+/// Log the layer tree an unmodified system blur view builds for every material in both
+/// appearances (the measurement behind `dev/blur/README.md`), on a temporary plain view laid
+/// under `used` and removed afterwards, so nothing of fbterm's hides a layer; then log
+/// `used`'s own tree as it stands. Main thread only.
 #[cfg(target_os = "macos")]
-fn dump_materials(view: &objc2_app_kit::NSVisualEffectView, look: BlurLook) {
+fn dump_materials(
+    mtm: objc2::MainThreadMarker,
+    frame_view: &objc2_app_kit::NSView,
+    used: &objc2_app_kit::NSVisualEffectView,
+) {
     use crate::blur_layers::mac;
-    let settle = || {
+    use objc2_app_kit::{
+        NSVisualEffectBlendingMode, NSVisualEffectState, NSVisualEffectView, NSWindowOrderingMode,
+    };
+    let settle = |view: &NSVisualEffectView| {
         view.layoutSubtreeIfNeeded();
         view.displayIfNeeded();
         mac::flush();
     };
-    let tree = || {
+    let tree = |view: &NSVisualEffectView| {
         let mut out = String::new();
         match mac::root_layer(view) {
             Some(root) => mac::dump(&root, 0, &mut out),
@@ -1374,11 +1368,14 @@ fn dump_materials(view: &objc2_app_kit::NSVisualEffectView, look: BlurLook) {
         }
         out
     };
-    settle();
+    let probe = NSVisualEffectView::initWithFrame(mtm.alloc(), frame_view.bounds());
+    probe.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+    probe.setState(NSVisualEffectState::Active);
+    frame_view.addSubview_positioned_relativeTo(&probe, NSWindowOrderingMode::Below, Some(used));
     for (name, material) in BlurMaterial::NAMED {
         for appearance in [BlurAppearance::Dark, BlurAppearance::Light] {
             tune_blur_view(
-                view,
+                &probe,
                 BlurLook {
                     material: *material,
                     appearance,
@@ -1387,16 +1384,13 @@ fn dump_materials(view: &objc2_app_kit::NSVisualEffectView, look: BlurLook) {
                 },
                 true,
             );
-            settle();
-            tracing::info!("blur layer dump: {name} {appearance:?}\n{}", tree());
+            settle(&probe);
+            tracing::info!("blur layer dump: {name} {appearance:?}\n{}", tree(&probe));
         }
     }
-    tune_blur_view(view, look, true);
-    if look.clear {
-        clear_or_fall_back(view, look);
-    }
-    settle();
-    tracing::info!("blur layer dump: as used {look:?}\n{}", tree());
+    probe.removeFromSuperview();
+    settle(used);
+    tracing::info!("blur layer dump: as used\n{}", tree(used));
 }
 
 /// Ask DWM for the acrylic backdrop behind `window` (Windows 11 22H2 and later; older builds

@@ -8,15 +8,15 @@ use crate::chrome::{self, BlurLook};
 
 impl App {
     /// The blur view look for window `id` now: the `macos_blur_style` setting, in the
-    /// variant of the scheme its active tab's first pane shows (stable while focus moves
-    /// between panes; a page tab's stand-in pane follows the global scheme), with the debug
-    /// override.
+    /// variant of the scheme its active tab's first pane (the layout's top-left tile) shows,
+    /// stable while focus moves between panes (a page tab's stand-in pane follows the global
+    /// scheme), with the debug override.
     pub(crate) fn blur_look_for(&self, id: window::Id) -> BlurLook {
         let scheme = self
             .windows
             .get(&id)
             .and_then(|w| w.active_tab())
-            .and_then(|tab| tab.panes.first())
+            .and_then(|tab| tab.pane(tab.layout.first_pane()))
             .map_or_else(|| self.global_scheme(), |pane| self.scheme_for(pane));
         let dark = fbterm_config::schemes::is_dark(&scheme.colors);
         chrome::blur_look(&self.settings.macos_blur_style, dark, chrome::demo_blur())
@@ -173,6 +173,22 @@ mod tests {
             app.windows.get_mut(&wid).unwrap().tabs[0].focused = focus;
             assert!(app.blur_retunes().is_empty(), "focus moved: no re-tune");
         }
+        // "First" is the top-left tile of the layout, whatever order the tab keeps its
+        // panes in (that list has none).
+        app.windows.get_mut(&wid).unwrap().tabs[0].panes.reverse();
+        assert!(app.blur_retunes().is_empty(), "the left tile still decides");
+        let tab = &mut app.windows.get_mut(&wid).unwrap().tabs[0];
+        let _ = tab.layout.remove(ids[0]);
+        tab.layout.split(ids[1], crate::layout::Side::Right, ids[0]);
+        assert_eq!(
+            tab.layout.panes()[0],
+            ids[1],
+            "the dark pane is top-left now"
+        );
+        assert_eq!(
+            app.blur_retunes(),
+            vec![(wid, classic(BlurAppearance::Dark))]
+        );
     }
 
     #[test]
