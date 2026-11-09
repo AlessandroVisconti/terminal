@@ -8,41 +8,40 @@ use crate::chrome::{self, BlurLook};
 
 impl App {
     /// The blur view look for window `id` now: the `macos_blur_style` setting, in the
-    /// variant of the scheme its active tab's focused pane shows (a page tab's stand-in pane
-    /// follows the global scheme), with the debug override.
+    /// variant of the scheme its active tab's first pane shows (stable while focus moves
+    /// between panes; a page tab's stand-in pane follows the global scheme), with the debug
+    /// override.
     pub(crate) fn blur_look_for(&self, id: window::Id) -> BlurLook {
-        let dark = self
+        let scheme = self
             .windows
             .get(&id)
             .and_then(|w| w.active_tab())
-            .map_or_else(
-                || {
-                    self.schemes
-                        .get(&self.settings.color_scheme)
-                        .is_none_or(|s| fbterm_config::schemes::is_dark(&s.colors))
-                },
-                |tab| fbterm_config::schemes::is_dark(&self.scheme_for(tab.focused_pane()).colors),
-            );
+            .and_then(|tab| tab.panes.first())
+            .map_or_else(|| self.global_scheme(), |pane| self.scheme_for(pane));
+        let dark = fbterm_config::schemes::is_dark(&scheme.colors);
         chrome::blur_look(&self.settings.macos_blur_style, dark, chrome::demo_blur())
     }
 
     /// Windows whose blur view should change, with their new look; records it as applied.
-    /// Entries of windows that are gone are dropped.
+    /// Entries of windows that are gone are dropped. Runs after every message, so it
+    /// allocates only when something changed.
     pub(crate) fn blur_retunes(&mut self) -> Vec<(window::Id, BlurLook)> {
         if self.blur_views.is_empty() {
             return Vec::new();
         }
         let windows = &self.windows;
         self.blur_views.retain(|id, _| windows.contains_key(id));
-        let mut ids: Vec<window::Id> = self.blur_views.keys().copied().collect();
-        ids.sort_unstable();
-        let mut out = Vec::new();
-        for id in ids {
-            let look = self.blur_look_for(id);
-            if self.blur_views.get(&id) != Some(&look) {
-                self.blur_views.insert(id, look);
-                out.push((id, look));
-            }
+        let mut out: Vec<(window::Id, BlurLook)> = self
+            .blur_views
+            .iter()
+            .filter_map(|(&id, &had)| {
+                let look = self.blur_look_for(id);
+                (look != had).then_some((id, look))
+            })
+            .collect();
+        out.sort_unstable_by_key(|(id, _)| *id);
+        for (id, look) in &out {
+            self.blur_views.insert(*id, *look);
         }
         out
     }
@@ -86,9 +85,10 @@ mod tests {
 
     fn classic(appearance: BlurAppearance) -> BlurLook {
         BlurLook {
-            material: BlurMaterial::FULL_SCREEN_UI,
+            material: BlurMaterial::TITLEBAR,
             appearance,
             alpha: 1.0,
+            clear: true,
         }
     }
 
@@ -151,6 +151,28 @@ mod tests {
             app.blur_retunes(),
             vec![(other, classic(BlurAppearance::Dark))]
         );
+    }
+
+    /// In a split whose panes use schemes of both variants, the blur follows the tab's first
+    /// pane, so moving focus between panes never flips the window's backdrop.
+    #[test]
+    fn a_split_follows_its_first_pane_whatever_has_focus() {
+        let dark = with_scheme(&profile("dark"), "graphite");
+        let light = with_scheme(&profile("light"), "graphite-light");
+        let (mut app, _paths, wid, ids) = app_with(
+            &[light, dark],
+            &format!("{BLURRED}macos_blur_style = \"classic\"\n"),
+            &[],
+        );
+        app.blur_views.insert(wid, BlurLook::NATIVE);
+        assert_eq!(
+            app.blur_retunes(),
+            vec![(wid, classic(BlurAppearance::Light))]
+        );
+        for focus in [ids[1], ids[0], ids[1]] {
+            app.windows.get_mut(&wid).unwrap().tabs[0].focused = focus;
+            assert!(app.blur_retunes().is_empty(), "focus moved: no re-tune");
+        }
     }
 
     #[test]

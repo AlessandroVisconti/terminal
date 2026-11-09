@@ -525,8 +525,9 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 # supports it: macOS, Windows 11 and Linux desktops that offer blur.
 #background_blur = false
 
-# How blur looks on macOS: "native" (the system's look) or "classic" (fbterm's earlier,
-# clearer blur). Ignored on other systems.
+# How blur looks on macOS: "native" (the system's look, with its own tint) or "classic"
+# (fbterm's earlier, clearer blur: no tint of its own, so the opacity drives the look).
+# Ignored on other systems.
 #macos_blur_style = "native"  # or "classic"; macOS only
 
 # Window title bar on Linux: "fbterm" draws it in the tab bar, "system" uses the desktop's.

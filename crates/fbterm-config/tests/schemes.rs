@@ -294,10 +294,19 @@ fn dark_and_light_schemes_are_told_apart_by_their_background() {
         b: 0x80,
     };
     assert!(!fbterm_config::schemes::is_dark(&colors));
-    // Every built-in has a variant; at least one of each kind ships.
-    let kinds: Vec<bool> = builtins()
+    // Each built-in's variant, pinned: a palette tweak across the line shows here.
+    let kinds: Vec<(String, bool)> = builtins()
         .iter()
-        .map(|s| fbterm_config::schemes::is_dark(&s.colors))
+        .map(|s| (s.id.clone(), fbterm_config::schemes::is_dark(&s.colors)))
         .collect();
-    assert!(kinds.contains(&true) && kinds.contains(&false), "{kinds:?}");
+    let want: Vec<(String, bool)> = [
+        ("graphite", true),
+        ("graphite-light", false),
+        ("harbor", true),
+        ("ember", true),
+    ]
+    .iter()
+    .map(|(id, dark)| ((*id).to_owned(), *dark))
+    .collect();
+    assert_eq!(kinds, want);
 }
