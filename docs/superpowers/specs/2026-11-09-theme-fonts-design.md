@@ -35,7 +35,19 @@ the font themselves and then picks it in fbterm with one click.
      theme's font would mark it edited and block its updates; a scheme that sets its own font
      still wins for its panes, as today, and the line then says so)**;
    - a state word: `In use` when it is already the font, `Not installed` when missing.
-5. Installed-or-not is checked against the same system font list the Settings font picker uses,
+5. **Owner's decision (2026-11-09): a checkbox lets the user decide whether choosing another theme
+   switches to that theme's font.** Setting `use_theme_fonts` (bool, default `false`
+   **(call)**), shown as a checkbox `Use each theme's suggested font` in the Color schemes window
+   (beside the suggestion line) and as a row in Settings under the font rows, both writing the
+   same setting. When on, the font a pane uses resolves as: the scheme's own `font_family` if it
+   sets one (unchanged rule), else the scheme's suggested font **if it is installed**, else the
+   global `font_family`. So switching theme (globally or per profile) switches the font with it,
+   a missing font falls back silently to the global one (the suggestion line says
+   `Not installed`), and turning the checkbox off restores the global font everywhere; nothing is
+   written into scheme files or into `font_family` **(call: a resolution rule rather than writing
+   the font on each theme change, so it works per profile and is fully reversible)**. Panes whose
+   resolved font changes resize through the existing scheme-font path.
+6. Installed-or-not is checked against the same system font list the Settings font picker uses,
    each time the scheme's details are shown, so a font installed while fbterm runs is found
    without a restart **(call)**.
 
@@ -43,7 +55,8 @@ the font themselves and then picks it in fbterm with one click.
 
 - No bundled fonts, no downloading or installing fonts from fbterm, no network access beyond the
   browser the user opens.
-- Picking a scheme never changes the font by itself; only `Use font` does **(call)**.
+- With `use_theme_fonts` off (the default), picking a scheme never changes the font; only
+  `Use font` does.
 - The suggestion is not part of `install_hash` (adding or changing it never marks a theme edited);
   `terminal-themes` bumps a theme's version when it adds one so Update delivers it.
 - No per-profile fonts (fonts stay a global setting, as today).
@@ -84,6 +97,11 @@ the format in `terminal-themes` README.
 - Config: `[suggested_font]` parses; missing key, non-https url, or wrong types drop the table with a notice
   and keep the scheme; built-ins have suggestions; a round trip through install keeps `[suggested_font]`.
 - Catalog: entries carry the font; older-format compatibility per section 5.
+- Font resolution: with `use_theme_fonts` on, a scheme with an installed suggestion gives its
+  panes that font; a scheme's own `font_family` still wins; a missing suggested font falls back to
+  the global font; off restores the global font; a theme change re-resolves and resizes affected
+  panes once.
+- UI: the checkbox in the Color schemes window and the Settings row write the same setting.
 - UI: the line shows for schemes with a suggestion and not for others; `Use font` disabled when not
   installed, saves `font_family` when enabled; `In use` state; `Download` produces the open-URL
   action with exactly the https url (assert the action, do not open a browser in tests).
