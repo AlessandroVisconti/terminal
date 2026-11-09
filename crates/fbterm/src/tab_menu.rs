@@ -1,5 +1,6 @@
-//! The right-click menu on a tab (bar or sidebar): `Copy password` for a password SSH
-//! profile's tab, and `Close tab`. Only the user's own right-click opens it.
+//! The right-click menu on a tab (bar or sidebar): `Rename tab` for a terminal tab,
+//! `Copy password` for a password SSH profile's tab, and `Close tab`. Only the user's own
+//! right-click opens it.
 
 use std::time::Duration;
 
@@ -189,12 +190,13 @@ impl App {
         let Some(tab) = self.windows.get(&wid).and_then(|w| w.tabs.get(index)) else {
             return Task::none();
         };
-        let (tab, panes) = (tab.id, tab.panes.len());
+        let (tab, panes, rename) = (tab.id, tab.panes.len(), tab.page.is_none());
         let active = self.windows[&wid].active == index;
         let password = self.tab_password_profile(wid, tab).is_some();
         let mut chords = Vec::new();
         if active {
             let shown = [
+                (MenuItem::RenameTab, Action::RenameTab, rename),
                 (MenuItem::CopyPassword, Action::CopyPassword, password),
                 (MenuItem::CloseTab, Action::CloseTab, panes == 1),
             ];
@@ -204,7 +206,7 @@ impl App {
                 }
             }
         }
-        self.context_menu = Some(ContextMenu::for_tab(wid, tab, at, password, chords));
+        self.context_menu = Some(ContextMenu::for_tab(wid, tab, at, rename, password, chords));
         Task::none()
     }
 
@@ -301,9 +303,13 @@ mod tests {
         let m = app.context_menu.clone().unwrap();
         assert_eq!(
             m.items,
-            vec![(MenuItem::CopyPassword, true), (MenuItem::CloseTab, true)]
+            vec![
+                (MenuItem::RenameTab, true),
+                (MenuItem::CopyPassword, true),
+                (MenuItem::CloseTab, true)
+            ]
         );
-        assert_eq!(m.selected, MenuItem::CopyPassword);
+        assert_eq!(m.selected, MenuItem::RenameTab);
         assert_eq!(m.at, at);
         assert_eq!(
             app.windows[&wid].active, 0,
@@ -312,8 +318,9 @@ mod tests {
         let _ = app.open_tab_menu(wid, 1, at);
         assert_eq!(
             app.context_menu.clone().unwrap().items,
-            vec![(MenuItem::CloseTab, true)]
+            vec![(MenuItem::RenameTab, true), (MenuItem::CloseTab, true)]
         );
+        // The Settings page tab: never renamed.
         let _ = app.open_tab_menu(wid, 2, at);
         assert_eq!(
             app.context_menu.clone().unwrap().items,
@@ -408,7 +415,7 @@ mod tests {
         let _ = app.open_tab_menu(wid, 0, Point::ORIGIN);
         assert_eq!(
             app.context_menu.clone().unwrap().items,
-            vec![(MenuItem::CloseTab, true)]
+            vec![(MenuItem::RenameTab, true), (MenuItem::CloseTab, true)]
         );
     }
 

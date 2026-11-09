@@ -260,6 +260,8 @@ pub(crate) struct Sidebar<'b> {
     pub items: &'b [Item],
     /// The group of the tile being carried, if one is: where it may become a tab.
     pub tile_group: Option<&'b Group>,
+    /// The rename under way in this window, if any: its row shows the field.
+    pub renaming: Option<&'b crate::tab_rename::Renaming>,
 }
 
 /// The sidebar: the rows in a scrollable list, with a rule on the right.
@@ -357,6 +359,7 @@ pub(crate) fn view<'a>(s: Sidebar<'_>, tabs: &'a [Tab], active: usize) -> Elemen
         is_row,
         carry: s.carry,
         modal: s.modal,
+        renaming: s.renaming.map(|r| r.tab),
         hole,
         tokens: t,
         scale: s.scale,
@@ -411,11 +414,7 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
             },
             ..container::Style::default()
         });
-    let label = text(tab.title())
-        .font(UI_FONT)
-        .size(LABEL_SIZE)
-        .wrapping(text::Wrapping::None)
-        .color(idle.label);
+    let renaming = s.renaming.filter(|r| r.tab == tab.id);
     let close = button(icon(ICON_X, 12.0, idle.icon))
         .on_press(Message::TabBar(window, TabBarMsg::Close(index)))
         .padding(3)
@@ -443,16 +442,26 @@ fn row_view<'a>(s: &Sidebar<'_>, tab: &'a Tab, index: usize, active: bool) -> El
     );
     // A title cut off at the sidebar's edge shows whole when the pointer rests on it: the tip
     // sits on the label cell alone, so the close button keeps its own single bubble.
-    let label_cell = container(label).width(Length::Fill).clip(true);
-    let label_cell: Element<'a, Message> = match row_tip(
-        s.tips,
-        s.width,
-        tab.title(),
-        tab.page.is_some(),
-        tab.trouble(),
-    ) {
-        Some(title) => tip(t, label_cell, title, false),
-        None => label_cell.into(),
+    let label_cell: Element<'a, Message> = match renaming {
+        Some(r) => crate::tab_rename::field(t, r, LABEL_SIZE),
+        None => {
+            let label = text(tab.shown_title())
+                .font(UI_FONT)
+                .size(LABEL_SIZE)
+                .wrapping(text::Wrapping::None)
+                .color(idle.label);
+            let label_cell = container(label).width(Length::Fill).clip(true);
+            match row_tip(
+                s.tips,
+                s.width,
+                tab.shown_title(),
+                tab.page.is_some(),
+                tab.trouble(),
+            ) {
+                Some(title) => tip(t, label_cell, title, false),
+                None => label_cell.into(),
+            }
+        }
     };
     let mut inner = row![stripe];
     // A page tab has no session to show: it carries its page's icon, as on the bar.
@@ -591,6 +600,8 @@ struct Rows<'a> {
     clamp: bool,
     carry: Option<Carry>,
     modal: bool,
+    /// The tab showing the rename field (see `tab_drag::Strip::renaming`).
+    renaming: Option<TabId>,
     hole: Option<usize>,
     tokens: &'static Tokens,
     scale: f32,
@@ -614,6 +625,7 @@ impl Rows<'_> {
             hole: self.hole,
             axis: Axis::Y,
             scroll: viewport.y - layout.bounds().y,
+            renaming: self.renaming,
         }
     }
 }

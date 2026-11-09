@@ -385,6 +385,28 @@ impl App {
         Task::batch(tasks)
     }
 
+    /// `FBTERM_DEMO_RENAME=<text>` (debug aid): the rename field on the first window's active
+    /// tab, holding that text, once the tabs are up (for screenshots).
+    pub(crate) fn open_debug_rename(&mut self) -> Task<Message> {
+        let Some(text) = debug_env("FBTERM_DEMO_RENAME") else {
+            return Task::none();
+        };
+        let text = text.to_string_lossy().into_owned();
+        Task::perform(
+            async { tokio::time::sleep(std::time::Duration::from_millis(900)).await },
+            move |()| Message::DebugRename(text.clone()),
+        )
+    }
+
+    pub(crate) fn debug_rename(&mut self, text: String) -> Task<Message> {
+        let Some(&wid) = self.windows.keys().next() else {
+            return Task::none();
+        };
+        let start = self.rename_active_tab(wid);
+        let _ = self.rename_msg(crate::tab_rename::RenameMsg::Edit(text));
+        start
+    }
+
     pub(crate) fn debug_find(&mut self, all: bool, query: String) -> Task<Message> {
         let Some(&wid) = self.windows.keys().next() else {
             return Task::none();

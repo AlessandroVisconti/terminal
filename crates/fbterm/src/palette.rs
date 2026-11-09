@@ -258,6 +258,7 @@ fn actions() -> Vec<PaletteItem> {
         (Action::FindAll, "Find in all tabs"),
         (Action::ExportTab, "Export tab to file…"),
         (Action::CopyPassword, "Copy password"),
+        (Action::RenameTab, "Rename tab"),
         (Action::EditProfiles, "Profiles"),
         (Action::DuplicateProfile, "Duplicate profile"),
         (Action::ExportProfiles, "Export profiles\u{2026}"),
@@ -779,6 +780,7 @@ mod tests {
                 "Find in all tabs",
                 "Export tab to file\u{2026}",
                 "Copy password",
+                "Rename tab",
                 "Profiles",
                 "Duplicate profile",
                 "Export profiles\u{2026}",
@@ -936,7 +938,7 @@ mod tests {
         };
         assert_eq!(detail("bastion").as_deref(), Some("root@b.example.com"));
         assert_eq!(detail("web").as_deref(), Some("root@10.0.0.5 via bastion"));
-        assert_eq!(list.iter().filter(|i| i.is_action()).count(), 26);
+        assert_eq!(list.iter().filter(|i| i.is_action()).count(), 27);
     }
 
     #[test]

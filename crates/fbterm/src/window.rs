@@ -176,6 +176,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
         outline_end,
         outline_to_edge: panel.is_none(),
         width: app.sizes.get(&id).map(|&(w, _)| w),
+        renaming: app.renaming.as_ref().filter(|r| r.window == id),
         tabs_in_bar: sidebar.is_none(),
         outline_start: sidebar.unwrap_or(0.0),
     };
@@ -292,6 +293,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
                 scale: app.physical_scale(id),
                 width,
                 tips: carry.is_none() && !modal && !app.sidebar_resizing.contains(&id),
+                renaming: app.renaming.as_ref().filter(|r| r.window == id),
             };
             let beside = row![
                 crate::tab_sidebar::view(side, &win.tabs, win.active),
@@ -313,7 +315,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
             .tabs
             .iter()
             .find(|tab| tab.id == source)
-            .map(|tab| tab.name().to_owned()),
+            .map(|tab| tab.shown_name().to_owned()),
         _ => None,
     };
     let body = Element::new(Carried {
@@ -332,7 +334,14 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
                 .as_ref()
                 .is_some_and(|(_, s)| s.recording.is_some());
             let schemes = app.schemes_win.as_ref().map(|(_, s)| s);
-            key_mode(page, recording, schemes, panel_mode, find.is_some())
+            key_mode(
+                page,
+                recording,
+                schemes,
+                panel_mode,
+                find.is_some(),
+                app.renaming_in(id),
+            )
         },
         bindings: &app.bindings,
     });
@@ -934,6 +943,8 @@ struct TabBar<'b> {
     outline_to_edge: bool,
     /// The window's width, to size the tabs (`None`: full size).
     width: Option<f32>,
+    /// The rename under way in this window, if any: its tab shows the field.
+    renaming: Option<&'b crate::tab_rename::Renaming>,
     /// The tabs sit on the bar (tabs on top); with tabs on the left the bar holds only its
     /// buttons and paints plain.
     tabs_in_bar: bool,
@@ -1134,6 +1145,7 @@ fn tab_bar<'a>(
         ids: tabs.iter().map(|t| t.id).collect(),
         carry: tabs_bar.carry,
         modal,
+        renaming: tabs_bar.renaming.map(|r| r.tab),
         content: bar.into(),
         color: bar_bg,
         hole: (active < tabs.len()).then_some(active),
@@ -1455,6 +1467,8 @@ struct BarBackground<'a> {
     carry: Option<Carry>,
     /// The palette or a dialog covers the window: no tab drags.
     modal: bool,
+    /// The tab showing the rename field (see `tab_drag::Strip::renaming`).
+    renaming: Option<TabId>,
     content: Element<'a, Message>,
     color: Color,
     hole: Option<usize>,
@@ -1559,6 +1573,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
             hole: self.hole,
             axis: Axis::X,
             scroll: 0.0,
+            renaming: self.renaming,
         };
         let rects = tab_rects(layout, self.ids.len());
         // The button pressed at the start of a drag is let go without a click: it sees the
@@ -2013,11 +2028,15 @@ fn tab_button<'a>(
             },
             ..container::Style::default()
         });
-    let label = text(tab.name())
-        .font(UI_FONT)
-        .size(12.5)
-        .wrapping(text::Wrapping::None)
-        .color(idle.label);
+    let label: Element<'a, Message> = match bar.renaming.filter(|r| r.tab == tab.id) {
+        Some(r) => crate::tab_rename::field(t, r, 12.5),
+        None => text(tab.shown_name())
+            .font(UI_FONT)
+            .size(12.5)
+            .wrapping(text::Wrapping::None)
+            .color(idle.label)
+            .into(),
+    };
     let close = button(icon(ICON_X, 12.0, idle.icon))
         .on_press(Message::TabBar(window, TabBarMsg::Close(index)))
         .padding(3)
@@ -2140,14 +2159,20 @@ pub fn save_png(path: &Path, shot: &Screenshot) -> Result<(), String> {
 
 /// How the window's keys are handled (outside modals): a page tab's own mode, except that a
 /// panel docked beside it has the keyboard while it is focused. Recording a shortcut in
-/// Settings, and a question the Color schemes tab asks, keep the keys from the panel.
+/// Settings, and a question the Color schemes tab asks, keep the keys from the panel. A tab's
+/// rename field takes them before all of these.
 fn key_mode(
     page: Option<Page>,
     recording: bool,
     schemes: Option<&crate::schemes_window::SchemesState>,
     panel: Option<Mode>,
     find: bool,
+    renaming: bool,
 ) -> Mode {
+    // A tab's rename field has the keys, whatever the active tab shows.
+    if renaming {
+        return Mode::Rename;
+    }
     let question = match (page, schemes) {
         (Some(Page::Schemes), Some(s)) if s.confirm.is_some() => Some(Mode::SchemesConfirm),
         (Some(Page::Schemes), Some(s)) if s.import.is_some() => Some(Mode::SchemesImport),
@@ -2176,7 +2201,7 @@ mod tests {
     #[test]
     fn the_welcome_tab_has_its_own_keys() {
         assert!(matches!(
-            key_mode(Some(Page::Welcome), false, None, None, false),
+            key_mode(Some(Page::Welcome), false, None, None, false, false),
             Mode::Welcome
         ));
     }
@@ -2192,16 +2217,16 @@ mod tests {
         let page = Some(Page::Schemes);
         let panel = Some(Mode::TunnelsPanel);
         assert!(matches!(
-            key_mode(page, false, Some(&s), None, false),
+            key_mode(page, false, Some(&s), None, false, false),
             Mode::Schemes
         ));
         assert!(matches!(
-            key_mode(page, false, Some(&s), panel, false),
+            key_mode(page, false, Some(&s), panel, false, false),
             Mode::TunnelsPanel
         ));
         s.pending_update = Some("meadow".into());
         assert!(matches!(
-            key_mode(page, false, Some(&s), panel, false),
+            key_mode(page, false, Some(&s), panel, false, false),
             Mode::SchemesUpdate
         ));
         s.import = Some(crate::schemes_window::ImportAsk {
@@ -2209,7 +2234,7 @@ mod tests {
             existing: "X".into(),
         });
         assert!(matches!(
-            key_mode(page, false, Some(&s), None, false),
+            key_mode(page, false, Some(&s), None, false, false),
             Mode::SchemesImport
         ));
         s.confirm = Some(crate::schemes_window::DeleteAsk {
@@ -2218,12 +2243,12 @@ mod tests {
             profiles: 0,
         });
         assert!(matches!(
-            key_mode(page, false, Some(&s), None, false),
+            key_mode(page, false, Some(&s), None, false, false),
             Mode::SchemesConfirm
         ));
         // Another page tab active: the Color schemes question is not its keys'.
         assert!(matches!(
-            key_mode(Some(Page::Settings), false, Some(&s), None, false),
+            key_mode(Some(Page::Settings), false, Some(&s), None, false, false),
             Mode::Settings
         ));
     }
@@ -2233,31 +2258,38 @@ mod tests {
         let panel = Some(Mode::TunnelsPanel);
         for page in [Page::Settings, Page::Profiles, Page::Welcome] {
             assert!(matches!(
-                key_mode(Some(page), false, None, panel, false),
+                key_mode(Some(page), false, None, panel, false, false),
                 Mode::TunnelsPanel
             ));
         }
         assert!(matches!(
-            key_mode(Some(Page::Settings), false, None, None, false),
+            key_mode(Some(Page::Settings), false, None, None, false, false),
             Mode::Settings
         ));
         assert!(matches!(
-            key_mode(Some(Page::Profiles), false, None, None, false),
+            key_mode(Some(Page::Profiles), false, None, None, false, false),
             Mode::Editor
         ));
         // Recording a shortcut still wins.
         assert!(matches!(
-            key_mode(Some(Page::Settings), true, None, panel, false),
+            key_mode(Some(Page::Settings), true, None, panel, false, false),
             Mode::Recording
         ));
         assert!(matches!(
-            key_mode(None, false, None, None, true),
+            key_mode(None, false, None, None, true, false),
             Mode::Find
         ));
         assert!(matches!(
-            key_mode(None, false, None, None, false),
+            key_mode(None, false, None, None, false, false),
             Mode::Normal
         ));
+        // A rename field takes the keys before a panel, a find bar or a page tab's own.
+        for page in [None, Some(Page::Settings)] {
+            assert!(matches!(
+                key_mode(page, true, None, panel, true, true),
+                Mode::Rename
+            ));
+        }
     }
 
     const OUTER: Rectangle = Rectangle {
@@ -2499,6 +2531,7 @@ mod tests {
                 outline_end: Some(500.0),
                 outline_to_edge: false,
                 width: None,
+                renaming: None,
                 tabs_in_bar: true,
                 outline_start: 0.0,
             };

@@ -53,6 +53,8 @@ pub enum TabBarMsg {
         index: usize,
         at: iced::Point,
     },
+    /// A double-click on the tab at `index`: rename it (see [`crate::tab_rename`]).
+    Rename(usize),
     /// The sidebar's list scrolled: its offset and visible height (see `tab_sidebar.rs`).
     Scrolled {
         offset: f32,
@@ -164,6 +166,8 @@ pub enum Message {
     ContextMenu(window::Id, crate::context_menu::MenuMsg),
     /// The tab menu's own: the password copy and its clipboard clear.
     TabMenu(crate::tab_menu::TabMenuMsg),
+    /// Renaming a tab (see [`crate::tab_rename`]).
+    Rename(crate::tab_rename::RenameMsg),
     /// The Welcome tab's.
     Welcome(crate::welcome::WelcomeMsg),
     /// The find bar of a window's active tab.
@@ -189,6 +193,8 @@ pub enum Message {
         all: bool,
         query: String,
     },
+    /// Debug aid: the rename field on the first window's active tab, with this text.
+    DebugRename(String),
     Editor(EditorMsg),
     Settings(SettingsMsg),
     /// The Color schemes tab.
@@ -347,6 +353,8 @@ pub struct App {
     pub palettes: Palettes,
     /// The terminal's right-click menu, when open (one at a time).
     pub(crate) context_menu: Option<crate::context_menu::ContextMenu>,
+    /// The tab being renamed, when one is (one at a time; see [`crate::tab_rename`]).
+    pub(crate) renaming: Option<crate::tab_rename::Renaming>,
     /// The tab or tile being dragged, and in which window.
     pub(crate) carry: Option<(window::Id, crate::windows::Carry)>,
     /// The tab button a carried tab hovers: window, index and the hover's generation.
@@ -767,6 +775,7 @@ impl App {
             last_terminal: None,
             palettes: Palettes::new(),
             context_menu: None,
+            renaming: None,
             carry: None,
             hover: None,
             hover_generation: 0,
@@ -882,6 +891,7 @@ impl App {
         task = task.chain(app.open_debug_archive());
         task = task.chain(app.open_debug_prompt());
         task = task.chain(app.open_debug_find());
+        task = task.chain(app.open_debug_rename());
         task = task.chain(app.open_debug_files());
         let demo_vault = app.open_debug_vault();
         (app, Task::batch([demo_vault, task]))
@@ -928,7 +938,7 @@ impl App {
             return self.archive_title().into();
         }
         match self.windows.get(&id).and_then(WindowState::active_tab) {
-            Some(tab) => format!("{} · fbterm", tab.title()),
+            Some(tab) => format!("{} · fbterm", tab.shown_title()),
             None => "fbterm".into(),
         }
     }
@@ -1088,6 +1098,10 @@ impl App {
             ShotWindow::Archive if self.archive_win.is_none() => return false,
             _ => {}
         }
+        // `FBTERM_DEMO_RENAME`: the field opens after about a second.
+        if debug_env("FBTERM_DEMO_RENAME").is_some() && self.renaming.is_none() {
+            return false;
+        }
         self.windows
             .values()
             .next()
@@ -1101,6 +1115,7 @@ impl App {
         // shows its focused pane's profile.
         self.sync_file_panels();
         self.sync_context_menu();
+        self.sync_renaming();
         self.sync_palette_items();
         self.sync_quit_key();
         self.sync_update_state();
@@ -1258,6 +1273,12 @@ impl App {
                     TabBarMsg::Select(i) => self.with_window(wid, |w| w.select(i)),
                     TabBarMsg::Close(i) => self.close_tab_asking(wid, i),
                     TabBarMsg::Menu { index, at } => self.open_tab_menu(wid, index, at),
+                    TabBarMsg::Rename(index) => {
+                        match self.windows.get(&wid).and_then(|w| w.tabs.get(index)) {
+                            Some(tab) => self.start_rename(wid, tab.id),
+                            None => Task::none(),
+                        }
+                    }
                     TabBarMsg::Scrolled { offset, height } => {
                         self.sidebar_scrolled(wid, offset, height);
                         Task::none()
@@ -1403,6 +1424,7 @@ impl App {
             Message::Palette(wid, msg) => self.palette(wid, msg),
             Message::ContextMenu(wid, msg) => self.context_menu_msg(wid, msg),
             Message::TabMenu(msg) => self.tab_menu_msg(msg),
+            Message::Rename(msg) => self.rename_msg(msg),
             Message::Welcome(msg) => self.welcome_msg(msg),
             Message::Find(wid, msg) => self.find(wid, msg),
             Message::Found { pane, seq, outcome } => self.found(pane, seq, outcome),
@@ -1413,6 +1435,7 @@ impl App {
                 Task::none()
             }
             Message::DebugFind { all, query } => self.debug_find(all, query),
+            Message::DebugRename(text) => self.debug_rename(text),
             Message::Editor(msg) => self.editor_msg(msg),
             Message::Export(msg) => self.export_msg(msg),
             Message::Settings(msg) => self.settings_msg(msg),

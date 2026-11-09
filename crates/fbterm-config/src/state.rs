@@ -43,6 +43,10 @@ pub struct SavedSplitTab {
     /// The focused pane, as an index in reading order.
     #[serde(default)]
     pub focused: usize,
+    /// The name the user gave the tab, if any: a named tab is always written in this form,
+    /// even with one unzoomed pane. Versions before it ignore the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

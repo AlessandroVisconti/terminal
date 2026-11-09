@@ -18,6 +18,7 @@ use crate::prompts::PromptMsg;
 use crate::saved_secrets::VaultMsg;
 use crate::schemes_window::{ImportChoice, SchemesMsg, UpdateChoice};
 use crate::settings_window::SettingsMsg;
+use crate::tab_rename::RenameMsg;
 use crate::tunnels_panel::TunnelsMsg;
 use crate::welcome::WelcomeMsg;
 
@@ -57,6 +58,10 @@ pub(crate) enum Mode {
     TunnelsPanel,
     /// A connection dialog: Escape cancels, Enter submits; other keys go to its field.
     Prompt,
+    /// A tab's rename field (`crate::tab_rename`): Escape keeps the old name, Enter the typed
+    /// one, no shortcut acts; other keys go to the field, never to the terminal (drawn
+    /// unfocused meanwhile).
+    Rename,
     /// A main password dialog (`crate::saved_secrets`): Escape cancels, Enter submits, no
     /// shortcut acts; other keys go to its fields.
     Vault,
@@ -203,6 +208,15 @@ fn press_message(
                 Some(Some(Message::Prompt(PromptMsg::Cancel(w))))
             }
             keyboard::Key::Named(Named::Enter) => Some(Some(Message::Prompt(PromptMsg::Submit(w)))),
+            _ => shortcut.map(|_| None),
+        },
+        Mode::Rename => match key {
+            keyboard::Key::Named(Named::Escape) if !repeat => {
+                Some(Some(Message::Rename(RenameMsg::Cancel)))
+            }
+            keyboard::Key::Named(Named::Enter) if !repeat => {
+                Some(Some(Message::Rename(RenameMsg::Commit)))
+            }
             _ => shortcut.map(|_| None),
         },
         Mode::Vault => match key {
@@ -814,6 +828,28 @@ mod tests {
         assert!(matches!(
             press(Mode::Normal, "w", false),
             Some(Some(Message::Shortcut(_, Action::CloseTab)))
+        ));
+    }
+
+    #[test]
+    fn the_rename_field_takes_escape_and_enter_and_no_shortcut_acts() {
+        use crate::tab_rename::RenameMsg;
+        use keyboard::key::Named;
+        let none = keyboard::Modifiers::empty();
+        assert!(matches!(
+            key(Named::Escape, none, Mode::Rename),
+            Some(Some(Message::Rename(RenameMsg::Cancel)))
+        ));
+        assert!(matches!(
+            key(Named::Enter, none, Mode::Rename),
+            Some(Some(Message::Rename(RenameMsg::Commit)))
+        ));
+        // Bound chords are dropped; plain typing goes on to the field.
+        assert!(matches!(press(Mode::Rename, "w", false), Some(None)));
+        assert!(matches!(press(Mode::Rename, "r", true), Some(None)));
+        assert!(matches!(
+            press(Mode::Normal, "r", true),
+            Some(Some(Message::Shortcut(_, Action::RenameTab)))
         ));
     }
 
