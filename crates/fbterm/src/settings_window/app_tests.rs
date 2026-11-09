@@ -945,3 +945,58 @@ fn quit_writes_a_typed_uncompressed_value() {
         Some(5_000)
     );
 }
+
+/// The text of every screen row of `t`, and its history length (with the alternate screen up,
+/// the alternate screen's).
+fn shown(t: &fbterm_term::SharedTerminal) -> (Vec<String>, usize) {
+    use feathercritty::grid::Dimensions;
+    use feathercritty::index::Line;
+    let t = t.lock();
+    let grid = t.term().grid();
+    let rows = (0..grid.screen_lines() as i32)
+        .map(|l| grid.screen()[Line(l)].into_iter().map(|c| c.c).collect())
+        .collect();
+    (rows, grid.history_size())
+}
+
+/// A tab with the alternate screen up when compression is switched on and off: the worker
+/// compresses (and then decompresses) the normal screen's history behind it, and the
+/// alternate screen keeps its content and stays without history.
+#[test]
+fn compression_leaves_an_alternate_screen_alone() {
+    let (mut app, terms) = app_with_two_tabs(0);
+    let t = &terms[0];
+    {
+        let mut g = t.lock();
+        for i in 0..10_000 {
+            g.feed(format!("normal line {i:05} {}\r\n", "x".repeat(90)).as_bytes());
+        }
+        g.feed(b"\x1b[?1049h");
+        for i in 0..60 {
+            g.feed(format!("alt line {i}\r\n").as_bytes());
+        }
+        assert!(g.mode().contains(fbterm_term::TermMode::ALT_SCREEN));
+    }
+    let before = shown(t);
+    assert_eq!(before.1, 0);
+    assert!(before.0.iter().any(|r| r.starts_with("alt line 59")));
+
+    let worker = fbterm_term::history_worker::Worker::new();
+    for on in [true, false] {
+        apply(&mut app, |s| {
+            s.history_compression = on;
+            s.uncompressed_history_lines = Some(1_000);
+        });
+        assert!(
+            t.lock().has_history_jobs(),
+            "work behind the alternate screen"
+        );
+        worker.enqueue(t);
+        worker.run_until_idle();
+        assert!(fbterm_term::history_worker::wait_idle_for(
+            std::time::Duration::from_secs(10)
+        ));
+        assert!(!t.lock().has_history_jobs());
+        assert_eq!(shown(t), before, "compression {on}");
+    }
+}
