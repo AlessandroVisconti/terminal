@@ -240,7 +240,7 @@ pub fn derive(colors: &SchemeColors) -> Tokens {
         app,
         surface: neutral(SURFACE_STEP),
         raised: neutral(RAISED_STEP),
-        border: neutral(BORDER_STEP),
+        border: ensure(neutral(BORDER_STEP), app, 1.3),
         hover: with_alpha(fg, 0.045),
         text,
         text_secondary,
@@ -394,6 +394,7 @@ mod tests {
         assert!(c(t.text) >= 7.0, "{label} text {}", c(t.text));
         assert!(c(t.text_secondary) >= 4.5, "{label} secondary");
         assert!(c(t.text_muted) >= 4.5, "{label} muted");
+        assert!(c(t.border) >= 1.3, "{label} border {}", c(t.border));
         for (n, bg) in [("accent", t.accent), ("accent_hover", t.accent_hover)] {
             let k = contrast(t.on_accent, bg);
             assert!(k >= 4.5, "{label} on_accent on {n} {k}");
@@ -548,6 +549,14 @@ mod tests {
             assert_eq!(t.accent, color!(0x7c49e3));
             assert_floors("graphite", t);
         }
+    }
+
+    #[test]
+    fn low_contrast_scheme_borders_stay_visible() {
+        let mut c = builtin("graphite").colors;
+        c.background = hex(0x20201f);
+        c.foreground = hex(0x3a3a38);
+        assert_floors("low-contrast", &derive(&c));
     }
 
     #[test]
