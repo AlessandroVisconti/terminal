@@ -34,6 +34,22 @@ fn pending(t: &mut Terminal) -> usize {
     t.next_history_jobs(usize::MAX).len()
 }
 
+/// Run every pending history job of `t` as the worker does (take them, run each off the
+/// terminal, install the result), asserting that every result was installed and that no job is
+/// left. Returns how many ran.
+pub(crate) fn run_jobs(t: &mut Terminal) -> usize {
+    let jobs = t.next_history_jobs(usize::MAX);
+    let n = jobs.len();
+    for job in jobs {
+        let done = feathercritty::term::HistoryJob::run(job);
+        assert!(t.install_history_job(done), "a result was refused");
+    }
+    // The flag stays up after an install until a look for more jobs finds none.
+    assert!(t.next_history_jobs(usize::MAX).is_empty(), "every job ran");
+    assert!(!t.has_history_jobs(), "no job is left");
+    n
+}
+
 /// Two terminals of `cols` x `rows` fed `before`, filler, then `after`: the first with history
 /// compression off, the second with it on ([`KEEP`]) and every history job run. The filler goes
 /// on until two more blocks than `before` filled can be compressed, so every row of `before`,
@@ -52,9 +68,7 @@ pub(crate) fn pair(cols: u16, rows: u16, before: &[u8], after: &[u8]) -> (Termin
     }
     on.feed(after);
     assert!(on.history_len() < SCROLLBACK, "nothing was evicted");
-    assert!(pending(&mut on) > 0, "blocks to compress");
-    on.run_history_jobs();
-    assert!(on.next_history_job().is_none(), "every job ran");
+    assert!(run_jobs(&mut on) > 0, "blocks to compress");
 
     let mut off = Terminal::new(size(cols, rows), SCROLLBACK);
     off.feed(before);

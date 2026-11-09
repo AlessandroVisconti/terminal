@@ -1052,7 +1052,7 @@ mod tests {
                 t.lock().feed(format!("other {i}\r\n").as_bytes());
             }
         }
-        on.lock().run_history_jobs();
+        crate::cold_tests::run_jobs(&mut on.lock());
         let after = find(&on, &r);
         assert_eq!(after, find(&off, &r));
         assert_eq!(before.hits[0].range, after.hits[0].range);
@@ -1073,7 +1073,7 @@ mod tests {
         for rows in [20, 5, 30, 10, 40] {
             resize_rows(&mut off, rows);
             resize_rows(&mut on, rows);
-            on.run_history_jobs();
+            crate::cold_tests::run_jobs(&mut on);
             for k in [0, 10, 49] {
                 assert_eq!(text_at(&off, top + k), text_at(&on, top + k), "rows {rows}");
                 assert_eq!(

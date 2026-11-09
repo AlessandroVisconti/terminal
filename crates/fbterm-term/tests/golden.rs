@@ -522,6 +522,21 @@ fn pending(t: &mut Terminal) -> usize {
     t.next_history_jobs(usize::MAX).len()
 }
 
+/// Run every pending history job of `t` as the worker does (take, run off the terminal,
+/// install), asserting every result was installed and none is left. Returns how many ran.
+fn run_jobs(t: &mut Terminal) -> usize {
+    let jobs = t.next_history_jobs(usize::MAX);
+    let n = jobs.len();
+    for job in jobs {
+        let done = feathercritty::term::HistoryJob::run(job);
+        assert!(t.install_history_job(done), "a result was refused");
+    }
+    // The flag stays up after an install until a look for more jobs finds none.
+    assert!(t.next_history_jobs(usize::MAX).is_empty(), "every job ran");
+    assert!(!t.has_history_jobs(), "no job is left");
+    n
+}
+
 /// The stream, `\e[?1049l` (back to the normal screen, so the filler scrolls into history),
 /// filler until two more blocks can be compressed than after the first copy, then the stream
 /// again: fed to a terminal with compression off and one with it on (jobs run).
@@ -544,8 +559,7 @@ fn cold_pair(bytes: &[u8]) -> (SharedTerminal, SharedTerminal) {
     on.feed(bytes);
     fed.extend_from_slice(bytes);
     assert!(on.history_len() < BIG_HISTORY, "nothing was evicted");
-    on.run_history_jobs();
-    assert!(on.next_history_job().is_none());
+    assert!(run_jobs(&mut on) > 0);
     let mut off = Terminal::new(size(COLS_WIDE), BIG_HISTORY);
     for piece in fed.chunks(997) {
         off.feed(piece);
@@ -569,7 +583,7 @@ fn walk_pair(
             off.lock().resize(size(cols));
             let mut t = on.lock();
             t.resize(size(cols));
-            t.run_history_jobs();
+            run_jobs(&mut t);
         }
         each(state, off, on);
     }
