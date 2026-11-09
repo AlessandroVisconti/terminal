@@ -7,7 +7,7 @@ behind-window blending, always active) is drawn, in `chrome::blur_look`:
 | Style | View | Material | Fill | Appearance |
 |---|---|---|---|---|
 | `native` | the plain system view, set up as 0.8.3 did | under-window-background (21) | the system's | the window's own |
-| `classic` | `FbtermClearBlurView` (`blur_layers.rs`) | titlebar (3) | hidden: only the blurred backdrop stays | dark aqua or aqua from the scheme of the active tab's first pane |
+| `classic` | `FbtermClearBlurView` (`blur_layers.rs`) | titlebar (3) | hidden: only the blurred backdrop stays | dark aqua or aqua from the scheme of the active tab's top-left pane |
 
 Both keep the window's own corners: the view sits inside the frame view, under the window's
 corner mask, and no style asks the window library for its blur (the private window-server call
@@ -20,8 +20,11 @@ own fill over the blur, whatever the terminal background's opacity. The old blur
 the terminal background at its opacity was the only tint. Classic restores that.
 
 `FBTERM_DEMO_BLUR_DUMP=1` (debug builds) logs, once, from the first blurred window: the layer tree
-the view builds for every material in both appearances (class, name, hidden, opacity, background
-color, filters, compositing filter), then the tree as used. Measured on macOS 27.2 (SDK 27.2):
+an unmodified system blur view builds for every material in both appearances (class, name,
+hidden, opacity, background color, filters, compositing filter), measured on a temporary plain
+view laid under the window's own and removed afterwards, so the `hidden` values are the
+system's; then the window's own blur view as used. Measured on macOS 27.2 (SDK 27.2), with the
+same results whether the window's own view is native or classic:
 
 Every blurring material builds the same shape: the view's layer, one layer named after the
 material, and under it four layers:
@@ -57,20 +60,25 @@ opacity changes only what is left above it.
   other layer that is neither it nor one of its ancestors: fill, tone and tint. The view's own
   layer and the material's layer stay. `FbtermClearBlurView` (an `objc2` subclass of the system
   view) hides them again after `layout`, `updateLayer`, `viewDidChangeEffectiveAppearance`,
-  `viewDidChangeBackingProperties` and `viewDidMoveToWindow`, so a resize, an appearance change, a
-  move to another display or a re-tune that rebuilds the layers cannot bring the fill back.
+  `viewDidChangeBackingProperties` and `viewDidMoveToWindow`, and after every re-tune, so a
+  resize, an appearance change, a move to another display or a re-tune that rebuilds the layers
+  cannot bring the fill back. The hiding runs in one `CATransaction` with implicit actions off,
+  so a re-hide never fades.
 - **Titlebar material.** With the fill hidden, what remains is the backdrop alone. Titlebar's
   backdrop (like header-view's) is the only one without a saturation filter, so it is a plain blur,
   the closest to the old one.
-- **Appearance** from the scheme of the active tab's first pane. With the fill hidden it changes
-  nothing visible on titlebar; it matters for the fallback.
-- **Fallback.** If the tree has no blurring layer, or more than one (a future macOS), classic leaves
-  the layers as drawn, switches to hud-window (the lightest fill measured: 40% dark, 48% light, and
-  a tone that barely changes anything) and logs once, naming the classes it found. A view whose
-  layers are not built yet is not a fallback case: its hooks clear it once they are built.
+- **Appearance** from the scheme of the active tab's top-left pane (the layout's first tile, so
+  moving focus never changes it). With the fill hidden it changes nothing visible on titlebar;
+  it matters for the fallback.
+- **Fallback.** If the tree has no blurring layer, or more than one (a future macOS), whether a
+  tune or one of the hooks finds it, classic switches to hud-window (the lightest fill measured:
+  40% dark, 48% light, and a tone that barely changes anything), logs once naming the classes it
+  found, and from then on leaves the view's layers as drawn (the fallback keeps its own fill),
+  until the next re-tune tries again. A view whose layers are not built yet is not a fallback
+  case: its hooks clear it once they are built. The decision is the pure `blur_layers::clear_step`.
 
-Switching between the styles swaps the view (plain for native, classic for classic) in place, so
-native stays exactly the 0.8.3 view.
+Switching between the styles removes the view and adds a new one of the other kind (plain for
+native, classic for classic) in its place, so native stays exactly the 0.8.3 view.
 
 ## Trying other materials
 
