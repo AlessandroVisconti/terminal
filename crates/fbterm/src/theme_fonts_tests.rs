@@ -15,7 +15,7 @@ use crate::schemes_window::gallery::{GalleryIo, GalleryLoad};
 use crate::schemes_window::{FontState, SchemesMsg, SchemesState};
 use crate::settings_window::SettingsMsg;
 use crate::theme_fonts::{
-    FontIo, NewFace, host_label, installed_families, pick_new_faces, url_host,
+    FontIo, NewFace, ScanFor, host_label, installed_families, pick_new_faces, url_host,
 };
 use crate::watch::Changed;
 
@@ -63,19 +63,26 @@ fn fake_fonts(app: &mut App, renderer: &[&str], system: &[&str]) -> FakeFonts {
     let fake = FakeFonts::default();
     *fake.renderer.lock() = strings(renderer);
     *fake.system.lock() = strings(system);
-    let (f1, f2, f3, f4) = (fake.clone(), fake.clone(), fake.clone(), fake.clone());
+    let (f1, f2, f3, f4, f5) = (
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+        fake.clone(),
+    );
     app.font_io = FontIo {
         list: Arc::new(move |_suggested| {
             *f1.lists.lock() += 1;
             f1.renderer.lock().clone()
         }),
-        scan: Arc::new(move |suggested| {
+        // Every fake family is monospaced.
+        scan: Arc::new(move |want: &ScanFor| {
             *f2.scans.lock() += 1;
             let known = f2.renderer.lock().clone();
             f2.system
                 .lock()
                 .iter()
-                .filter(|f| suggested.contains(*f) && !known.contains(f))
+                .filter(|f| (want.monospace || want.families.contains(*f)) && !known.contains(f))
                 .map(|f| NewFace {
                     family: f.clone(),
                     path: std::path::PathBuf::new(),
@@ -89,6 +96,7 @@ fn fake_fonts(app: &mut App, renderer: &[&str], system: &[&str]) -> FakeFonts {
             }
         }),
         loaded: Arc::new(move || *f4.notified.lock() += 1),
+        monospace: Arc::new(move || f5.renderer.lock().clone()),
     };
     fake
 }
@@ -853,4 +861,65 @@ fn turning_theme_fonts_on_scans_and_select_never_does() {
     }
     assert_eq!(*fake.lists.lock(), lists);
     assert_eq!(*fake.scans.lock(), scans);
+}
+
+/// The families the Settings tab's font list offers as installed.
+fn settings_fonts(app: &App) -> Vec<String> {
+    app.settings_win
+        .as_ref()
+        .expect("Settings tab open")
+        .1
+        .fonts
+        .iter()
+        .filter(|f| f.installed)
+        .map(|f| f.family.clone())
+        .collect()
+}
+
+#[test]
+fn a_font_loaded_while_settings_is_open_joins_its_font_list() {
+    let ocean = suggesting("Ocean", 0x10_2030, "Sample Mono");
+    let (mut app, _, _, _) = app_with(&[profile("a")], "", std::slice::from_ref(&ocean));
+    let fake = fake_fonts(&mut app, &["Geist Mono"], &["Geist Mono"]);
+    let _ = app.update(Message::Settings(SettingsMsg::Open));
+    assert!(!settings_fonts(&app).contains(&"Sample Mono".to_owned()));
+
+    // Installed while fbterm runs; the Color schemes window's scan loads it.
+    fake.system.lock().push("Sample Mono".into());
+    send(&mut app, SchemesMsg::Open);
+    finish_scan(&mut app);
+    assert_eq!(*fake.loaded.lock(), strings(&["Sample Mono"]));
+    assert!(
+        settings_fonts(&app).contains(&"Sample Mono".to_owned()),
+        "{:?}",
+        settings_fonts(&app)
+    );
+}
+
+#[test]
+fn opening_the_font_list_scans_for_any_new_monospace_family() {
+    let (mut app, _, _, _) = app_with(&[profile("a")], "", &[]);
+    // Every suggestion installed, so nothing else would scan.
+    let all = ["Geist Mono", "JetBrains Mono", "IBM Plex Mono"];
+    let fake = fake_fonts(&mut app, &all, &all);
+    let _ = app.update(Message::Settings(SettingsMsg::Open));
+    assert!(!app.fonts_scanning);
+
+    // A family no theme suggests, installed while fbterm runs.
+    fake.system.lock().push("Plain Mono".into());
+    let _ = app.update(Message::Settings(SettingsMsg::FontsOpened));
+    assert!(
+        app.fonts_scanning,
+        "opening the list scans on the blocking pool"
+    );
+    finish_scan(&mut app);
+    assert_eq!(*fake.loaded.lock(), strings(&["Plain Mono"]));
+    assert!(settings_fonts(&app).contains(&"Plain Mono".to_owned()));
+    assert_eq!(*fake.notified.lock(), 1, "terminal views re-measure");
+
+    // Opening again finds nothing new and loads nothing twice.
+    let _ = app.update(Message::Settings(SettingsMsg::FontsOpened));
+    finish_scan(&mut app);
+    assert_eq!(*fake.scans.lock(), 2);
+    assert_eq!(*fake.loaded.lock(), strings(&["Plain Mono"]));
 }

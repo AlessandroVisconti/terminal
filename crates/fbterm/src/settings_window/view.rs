@@ -262,6 +262,7 @@ fn appearance<'a>(
     let fonts = pick_list(state.fonts.as_slice(), state.selected_font(), |f| {
         msg(SettingsMsg::Font(f))
     })
+    .on_open(msg(SettingsMsg::FontsOpened))
     .font(MONO)
     .text_size(12.5)
     .padding(Padding::from([6.0, 10.0]))

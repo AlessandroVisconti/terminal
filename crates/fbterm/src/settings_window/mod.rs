@@ -22,7 +22,7 @@ pub(crate) use glue::release_when_worker_idle;
 pub mod view;
 
 pub use fonts::FontChoice;
-pub(crate) use fonts::{BUNDLED as BUNDLED_FONT, choices as font_choices};
+pub(crate) use fonts::{BUNDLED as BUNDLED_FONT, choices as font_choices, installed_monospace};
 pub(crate) use glue::{intern, terminal_style};
 
 /// Quiet period after the last slider or typing change before the file is written.
@@ -38,6 +38,8 @@ pub enum SettingsMsg {
     RevealFolder,
     /// Open the Color schemes window.
     EditSchemes,
+    /// The font family list was opened: look for fonts installed since.
+    FontsOpened,
     /// The quiet period after change number `n` passed.
     Flush(u64),
     /// A slider was let go: write now.
@@ -295,6 +297,11 @@ impl SettingsState {
         state
     }
 
+    /// Offer `installed` as the font list (fonts were loaded while the tab is open).
+    pub fn set_installed(&mut self, installed: Vec<String>) {
+        self.fonts = fonts::choices(installed, &self.values.font_family);
+    }
+
     /// Show `values` (the file changed on disk): every control and typed number follows, and
     /// unwritten changes are dropped (the file wins).
     pub fn sync(&mut self, values: &Settings) {
@@ -469,6 +476,7 @@ impl SettingsState {
             | SettingsMsg::OpenFile
             | SettingsMsg::RevealFolder
             | SettingsMsg::EditSchemes
+            | SettingsMsg::FontsOpened
             | SettingsMsg::SecretStorage(_)
             | SettingsMsg::ResetVault
             | SettingsMsg::DownloadUpdate => Effect::NONE,

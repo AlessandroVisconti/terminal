@@ -493,6 +493,11 @@ pub struct App {
     /// A scan was asked for while one ran (for example a catalog arrived): run one more when
     /// it finishes.
     pub(crate) fonts_rescan: bool,
+    /// The running scan also looks for every monospace family the renderer does not know
+    /// (the Settings font list was opened), not only missing suggestions.
+    pub(crate) fonts_monospace: bool,
+    /// The follow-up scan in `fonts_rescan` was asked for by the Settings font list.
+    pub(crate) fonts_monospace_next: bool,
     /// Whether the Welcome tab may open at this launch: off in unit tests, and off once it
     /// opened (or was found not due) this run. See `crate::welcome`.
     pub(crate) ask_welcome: bool,
@@ -835,6 +840,8 @@ impl App {
             scheme_fonts: HashMap::new(),
             fonts_scanning: false,
             fonts_rescan: false,
+            fonts_monospace: false,
+            fonts_monospace_next: false,
             ask_welcome: !cfg!(test),
             demo_update: debug_env("FBTERM_DEMO_UPDATE").map(|v| v.to_string_lossy().into_owned()),
         };
