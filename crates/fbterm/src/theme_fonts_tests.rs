@@ -14,7 +14,9 @@ use crate::schemes_tests::{app_with, style, user_scheme, with_scheme};
 use crate::schemes_window::gallery::{GalleryIo, GalleryLoad};
 use crate::schemes_window::{FontState, SchemesMsg, SchemesState};
 use crate::settings_window::SettingsMsg;
-use crate::theme_fonts::{FontIo, NewFace, installed_families, pick_new_faces, url_host};
+use crate::theme_fonts::{
+    FontIo, NewFace, host_label, installed_families, pick_new_faces, url_host,
+};
 use crate::watch::Changed;
 
 const SETTINGS_CHANGED: Changed = Changed {
@@ -74,7 +76,7 @@ fn fake_fonts(app: &mut App, renderer: &[&str], system: &[&str]) -> FakeFonts {
                 .filter(|f| suggested.contains(*f) && !known.contains(f))
                 .map(|f| NewFace {
                     family: f.clone(),
-                    data: Vec::new(),
+                    path: std::path::PathBuf::new(),
                 })
                 .collect()
         }),
@@ -476,11 +478,11 @@ fn gallery_rows_carry_the_suggestion_and_install_keeps_it() {
 #[test]
 fn new_faces_are_only_new_suggested_families() {
     let faces = [
-        ("Sample Mono", "/fonts/sample-regular.ttf"),
-        ("Sample Mono", "/fonts/sample-bold.ttf"),
-        ("Sample Mono", "/fonts/sample-regular.ttf"),
-        ("Known Mono", "/fonts/known.ttf"),
-        ("Unrelated Sans", "/fonts/unrelated.ttf"),
+        ("Sample Mono", 400, false, "/fonts/sample-regular.ttf"),
+        ("Sample Mono", 700, false, "/fonts/sample-bold.ttf"),
+        ("Sample Mono", 400, false, "/fonts/sample-regular.ttf"),
+        ("Known Mono", 400, false, "/fonts/known.ttf"),
+        ("Unrelated Sans", 400, false, "/fonts/unrelated.ttf"),
     ];
     let known = ["Known Mono".to_owned()].into_iter().collect();
     let suggested = ["Sample Mono".to_owned(), "Known Mono".to_owned()]
@@ -492,6 +494,41 @@ fn new_faces_are_only_new_suggested_families() {
     );
     // Nothing suggested: nothing to load.
     assert!(pick_new_faces(faces, &known, &Default::default()).is_empty());
+}
+
+/// A large family loads only what a terminal draws with: the closest face to regular, bold,
+/// italic and bold italic, not every weight and width.
+#[test]
+fn only_the_four_terminal_faces_of_a_family_load() {
+    let faces = [
+        ("Big Mono", 100, false, "thin"),
+        ("Big Mono", 300, false, "light"),
+        ("Big Mono", 400, false, "regular"),
+        ("Big Mono", 500, false, "medium"),
+        ("Big Mono", 600, false, "semibold"),
+        ("Big Mono", 700, false, "bold"),
+        ("Big Mono", 800, false, "extrabold"),
+        ("Big Mono", 300, true, "light-italic"),
+        ("Big Mono", 450, true, "book-italic"),
+        ("Big Mono", 800, true, "extrabold-italic"),
+        ("Odd Mono", 350, false, "odd-light"),
+        ("Odd Mono", 650, false, "odd-heavy"),
+    ];
+    let suggested = ["Big Mono".to_owned(), "Odd Mono".to_owned()]
+        .into_iter()
+        .collect();
+    let picked = pick_new_faces(faces, &Default::default(), &suggested);
+    assert_eq!(
+        picked,
+        vec![
+            "regular",
+            "bold",
+            "book-italic",
+            "extrabold-italic",
+            "odd-light",
+            "odd-heavy",
+        ]
+    );
 }
 
 #[test]
@@ -531,10 +568,10 @@ fn download_shows_its_host() {
         url_host("https://a.example:8443/x?y#z").as_deref(),
         Some("a.example")
     );
-    assert_eq!(
-        url_host("https://user@evil.example/").as_deref(),
-        Some("evil.example")
-    );
+    // Anything but a plain host gives no label at all (validation drops such tables).
+    assert_eq!(url_host("https://user@evil.example/"), None);
+    assert_eq!(url_host("https://evil.example\\@github.com/"), None);
+    assert_eq!(url_host("https://gith%75b.com/"), None);
     assert_eq!(url_host("https://a.example").as_deref(), Some("a.example"));
     assert_eq!(url_host("http://a.example/"), None);
 
@@ -613,6 +650,129 @@ fn nothing_missing_means_no_scan() {
     assert_eq!(*fake.scans.lock(), 0);
 }
 
+/// The label shows the whole host, or its end when it is long: the part that says who owns it.
+#[test]
+fn long_hosts_keep_their_end() {
+    assert_eq!(host_label("github.com", 32), "github.com");
+    let long = "github.com.aaaaaaaaaaaaaaaaaaaaaa.evil.example";
+    let label = host_label(long, 32);
+    assert!(label.starts_with('\u{2026}'), "{label}");
+    assert!(label.ends_with("evil.example"), "{label}");
+    assert!(!label.contains("github.com"), "{label}");
+    assert!(label.chars().count() <= 32, "{label}");
+    // Cut at a label boundary when there is one in reach.
+    assert_eq!(
+        host_label("fonts.cdn.example.org", 14),
+        "\u{2026}example.org"
+    );
+}
+
+/// A scheme built in code with a crafted URL (validation would drop it) still never gets a
+/// `Download` button or a host label.
+#[test]
+fn a_crafted_url_gets_no_download() {
+    let mut s = suggesting("Ocean", 0x102030, "Sample Mono");
+    s.suggested_font.as_mut().unwrap().url = "https://evil.example\\@github.com/".into();
+    let fonts = crate::schemes_window::FontContext {
+        installed: &[],
+        global_font: "Geist Mono",
+        use_theme_fonts: false,
+    };
+    let line = fonts.line(&s).unwrap();
+    assert_eq!(line.url, None);
+    assert_eq!(line.host, None);
+    let (mut app, _, _, _) = app_with(&[profile("a")], "", &[]);
+    let opened = record_opens(&mut app);
+    send(
+        &mut app,
+        SchemesMsg::DownloadFont("https://evil.example\\@github.com/".into()),
+    );
+    assert!(opened.lock().is_empty());
+}
+
+/// A pane whose scheme names a missing font by itself was measured with the fallback face; a
+/// load moves the font epoch, so every terminal view measures again (and reports its grid only
+/// when the cell size changed).
+#[test]
+fn a_load_makes_the_views_measure_again() {
+    let (mut app, _, _, _) = app_with(&[profile("a")], "", &[]);
+    let before = fbterm_term::font_epoch();
+    let _ = app.update(Message::FontsScanned(Arc::new(Vec::new())));
+    assert_eq!(
+        fbterm_term::font_epoch(),
+        before,
+        "nothing loaded, nothing to measure"
+    );
+    let _ = app.update(Message::FontsScanned(Arc::new(vec![NewFace {
+        family: "Sample Mono".into(),
+        path: std::path::PathBuf::new(),
+    }])));
+    assert!(fbterm_term::font_epoch() > before);
+}
+
+#[test]
+fn showing_the_gallery_scans() {
+    let (mut app, _, _, _) = app_with(&[profile("a")], "", &[]);
+    let fake = fake_fonts(&mut app, &[], &["JetBrains Mono"]);
+    send(&mut app, SchemesMsg::Open);
+    finish_scan(&mut app);
+    // Installed after the window opened: showing the gallery finds it.
+    fake.system.lock().push("IBM Plex Mono".into());
+    send(&mut app, SchemesMsg::ShowGallery(true));
+    assert!(app.fonts_scanning);
+    finish_scan(&mut app);
+    assert_eq!(
+        *fake.loaded.lock(),
+        strings(&["JetBrains Mono", "IBM Plex Mono"])
+    );
+}
+
+#[test]
+fn a_loaded_catalog_scans_and_one_arriving_mid_scan_queues_one_more() {
+    let (mut app, _, _, _) = app_with(&[profile("a")], "", &[]);
+    let fake = fake_fonts(&mut app, &[], &["Fira Code"]);
+    let bytes = catalog_with_font();
+    app.gallery_io = GalleryIo {
+        fetch: Arc::new(move |_, _| Ok(bytes.clone())),
+        open: Arc::new(|_| {}),
+    };
+    send(&mut app, SchemesMsg::Open);
+    finish_scan(&mut app);
+    assert!(
+        fake.loaded.lock().is_empty(),
+        "no scheme suggests Fira Code yet"
+    );
+
+    // The gallery starts the fetch and a scan; the catalog arrives while the scan runs.
+    send(&mut app, SchemesMsg::ShowGallery(true));
+    assert!(app.fonts_scanning);
+    let running = app.font_scan_job();
+    let result = app.gallery_job()();
+    let generation = app.gallery_generation;
+    send(&mut app, SchemesMsg::GalleryFetched(generation, result));
+    // The running scan finishes, then one follow-up scan covers the catalog's families.
+    let faces = running();
+    assert!(
+        faces.is_empty(),
+        "the running scan did not ask for Fira Code"
+    );
+    let task = app.update(Message::FontsScanned(Arc::new(faces)));
+    drop(task);
+    assert!(app.fonts_scanning, "a follow-up scan started");
+    finish_scan(&mut app);
+    assert!(!app.fonts_scanning);
+    assert_eq!(*fake.loaded.lock(), strings(&["Fira Code"]));
+
+    // A catalog loaded with no scan running scans at once.
+    let _ = app.update(Message::Schemes(SchemesMsg::RefreshGallery));
+    fake.system.lock().push("Later Mono".into());
+    let result = app.gallery_job()();
+    let generation = app.gallery_generation;
+    send(&mut app, SchemesMsg::GalleryFetched(generation, result));
+    assert!(app.fonts_scanning);
+    finish_scan(&mut app);
+}
+
 #[test]
 fn turning_theme_fonts_on_scans_and_select_never_does() {
     let ocean = suggesting("Ocean", 0x102030, "Sample Mono");
@@ -622,7 +782,8 @@ fn turning_theme_fonts_on_scans_and_select_never_does() {
     let task = app.update(Message::Settings(SettingsMsg::Open));
     drop(task);
     let task = app.update(Message::Settings(SettingsMsg::UseThemeFonts(true)));
-    assert!(task.units() >= 1, "turning it on starts a scan");
+    drop(task);
+    assert!(app.fonts_scanning, "turning it on starts a scan");
     finish_scan(&mut app);
     assert_eq!(style(&app, wid, ids[0]).font, family("Sample Mono"));
 

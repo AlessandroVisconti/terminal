@@ -118,10 +118,10 @@ impl App {
     /// (a user click only); anything but an `https://` link is refused. fbterm never
     /// downloads the font itself.
     fn open_font_page(&self, url: &str) {
-        if super::gallery::credit_link_ok(url) {
+        if fbterm_config::schemes::is_plain_https_url(url) {
             (self.gallery_io.open)(url);
         } else {
-            tracing::warn!(%url, "font page not opened: not an https link");
+            tracing::warn!(%url, "font page not opened: not a plain https link");
         }
     }
 

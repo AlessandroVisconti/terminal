@@ -100,6 +100,40 @@ pub fn is_https_url(url: &str) -> bool {
     })
 }
 
+/// An `https://` URL whose authority is a plain host name (letters, digits and `-` in
+/// dot-separated labels) with an optional numeric port: no user part, percent-encoding,
+/// IP-literal brackets or backslash, and nothing but visible ASCII after it. A browser opens
+/// exactly the host such a URL shows, so a label taken from it cannot lie.
+pub fn is_plain_https_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    if url
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
+    {
+        return false;
+    }
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let (host, port) = match authority.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    };
+    let port_ok =
+        port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()));
+    let host_ok = !host.is_empty()
+        && host.len() <= 253
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        });
+    port_ok && host_ok && tail.bytes().all(|b| b.is_ascii_graphic())
+}
+
 /// Why `font` may not be shown or used, if it may not: a blank or overlong field, a character
 /// of [`is_unsafe_char`] anywhere (no field may span lines), a URL that is not `https://`, or
 /// a license off [`FONT_LICENSES`].
@@ -122,8 +156,8 @@ pub fn suggested_font_problem(font: &SuggestedFont) -> Option<String> {
             return Some(format!("{field} has control or invisible characters"));
         }
     }
-    if !is_https_url(&font.url) {
-        return Some("url is not https://".into());
+    if !is_plain_https_url(&font.url) {
+        return Some("url is not a plain https:// link".into());
     }
     if !FONT_LICENSES.contains(&font.license.as_str()) {
         return Some(format!(
@@ -1165,6 +1199,50 @@ mod tests {
         );
         let scheme: Scheme = toml::from_str(&future).unwrap();
         assert_eq!(scheme.suggested_font, Some(sample_font()));
+    }
+
+    /// `Download (<host>)` must name where the link really goes, so the authority must be a
+    /// plain host (and port): nothing a browser reads as a separator or rewrites.
+    #[test]
+    fn suggested_font_url_must_be_a_plain_https_url() {
+        let with_url = |url: &str| SuggestedFont {
+            url: url.into(),
+            ..sample_font()
+        };
+        for bad in [
+            "https://evil.example\\@github.com/",
+            "https://github.com\\evil.example/",
+            "https://evil.example/\\x",
+            "https://user@github.com/IBM/plex",
+            "https://user:pw@github.com/",
+            "https://gith%75b.com/",
+            "https://[::1]/",
+            "https://github.com:/x",
+            "https://github.com:44x/x",
+            "https://.github.com/",
+            "https://github..com/",
+            "https://git hub.com/",
+            "https://github.com/\tx",
+            "https://github.com/x y",
+            "https://ex_ample.com/",
+        ] {
+            assert!(suggested_font_problem(&with_url(bad)).is_some(), "{bad}");
+        }
+        for good in [
+            "https://github.com/IBM/plex",
+            "https://www.jetbrains.com/lp/mono/",
+            "https://vercel.com/font",
+            "https://a.example:8443/x?y=1&z=%20#top",
+            "https://github.com",
+            "https://monaspace.githubnext.com/",
+        ] {
+            assert_eq!(suggested_font_problem(&with_url(good)), None, "{good}");
+        }
+        let text = file_with_font(
+            "family = \"A\"\nurl = \"https://evil.example\\\\@github.com/\"\nlicense = \"OFL-1.1\"",
+        );
+        let scheme: Scheme = toml::from_str(&text).unwrap();
+        assert!(scheme.suggested_font.is_none());
     }
 
     #[test]

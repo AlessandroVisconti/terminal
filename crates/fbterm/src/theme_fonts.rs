@@ -15,11 +15,14 @@
 //! counting. That database reads the system fonts once, at startup. So on a user action
 //! (showing the Color schemes window or its gallery, a catalog arriving, turning
 //! `use_theme_fonts` on), and only when some suggested family is still missing, the system
-//! fonts are scanned again on the blocking pool; the faces of missing suggested families that
-//! the scan finds are read and added to the renderer one by one (`FontSystem::load_font`,
-//! which also clears its match cache). Everything else the system has is left alone, and the
-//! system fonts are never loaded a second time. Never per frame, never in the background.
-//! fbterm never downloads fonts.
+//! fonts are scanned again on the blocking pool. Of each missing suggested family the scan
+//! finds, only the files of the faces a terminal draws with (the closest regular, bold, italic
+//! and bold italic) are added to the renderer, memory-mapped by its font database like the
+//! fonts it read at startup (`db_mut().load_font_file`, which also clears cosmic-text's match
+//! cache). Every terminal view then measures its cell again (`fbterm_term::fonts_loaded`), so
+//! a pane already naming that family stops using the fallback's metrics. Everything else the
+//! system has is left alone, and the system fonts are never loaded a second time. Never per
+//! frame, never in the background. fbterm never downloads fonts.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -30,20 +33,11 @@ use iced::Task;
 
 use crate::app::{App, Message};
 
-/// The font files of one family found by a scan, read and ready for the renderer.
-#[derive(Clone)]
+/// A font file of a missing suggested family found by a scan, for the renderer to map.
+#[derive(Clone, Debug)]
 pub(crate) struct NewFace {
     pub family: String,
-    pub data: Vec<u8>,
-}
-
-impl std::fmt::Debug for NewFace {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NewFace")
-            .field("family", &self.family)
-            .field("bytes", &self.data.len())
-            .finish()
-    }
+    pub path: PathBuf,
 }
 
 /// The renderer's installed families, given the suggested ones (see the module docs).
@@ -94,24 +88,70 @@ pub(crate) fn installed_families<'a>(
     out
 }
 
-/// Of `faces` (family, key) found by a scan, the keys of faces whose family is suggested and
-/// not `known` to the renderer yet, each once, in scan order.
+/// The faces a terminal draws with: (weight, italic) for regular, bold, italic, bold italic.
+const TERMINAL_FACES: [(u16, bool); 4] = [(400, false), (700, false), (400, true), (700, true)];
+
+/// Of `faces` (family, weight, italic, key) found by a scan, the keys to load: for each
+/// suggested family not `known` to the renderer yet, the closest face to each of
+/// [`TERMINAL_FACES`] (the same slant when the family has it, then the nearest weight, the
+/// first on a tie). Each key once, by family in scan order.
 pub(crate) fn pick_new_faces<'a, K: Clone + PartialEq>(
-    faces: impl IntoIterator<Item = (&'a str, K)>,
+    faces: impl IntoIterator<Item = (&'a str, u16, bool, K)>,
     known: &HashSet<String>,
     suggested: &HashSet<String>,
 ) -> Vec<K> {
+    /// One family's faces: (weight, italic, key).
+    type Faces<K> = Vec<(u16, bool, K)>;
+    let mut families: Vec<(&str, Faces<K>)> = Vec::new();
+    for (family, weight, italic, key) in faces {
+        if !suggested.contains(family) || known.contains(family) {
+            continue;
+        }
+        match families.iter_mut().find(|(f, _)| *f == family) {
+            Some((_, list)) => list.push((weight, italic, key)),
+            None => families.push((family, vec![(weight, italic, key)])),
+        }
+    }
     let mut out: Vec<K> = Vec::new();
-    for (family, key) in faces {
-        if suggested.contains(family) && !known.contains(family) && !out.contains(&key) {
-            out.push(key);
+    for (_, list) in &families {
+        for (weight, italic) in TERMINAL_FACES {
+            let slanted = list.iter().any(|f| f.1 == italic);
+            let best = list
+                .iter()
+                .filter(|f| !slanted || f.1 == italic)
+                .min_by_key(|f| f.0.abs_diff(weight));
+            if let Some((_, _, key)) = best
+                && !out.contains(key)
+            {
+                out.push(key.clone());
+            }
         }
     }
     out
 }
 
+/// `host` as `Download` shows it: whole, or when longer than `max` characters its end (the
+/// part that names who owns it) after an ellipsis, cut at a label boundary when one is in
+/// reach. Never the start, which a long crafted host could fill with a familiar name.
+pub(crate) fn host_label(host: &str, max: usize) -> String {
+    let count = host.chars().count();
+    if count <= max {
+        return host.to_owned();
+    }
+    let keep = max.saturating_sub(1);
+    let tail: String = host.chars().skip(count - keep).collect();
+    let tail = match tail.split_once('.') {
+        Some((_, rest)) if !rest.is_empty() => rest.to_owned(),
+        _ => tail,
+    };
+    format!("\u{2026}{tail}")
+}
+
 /// The host of an `https://` link, as `Download` shows it: no user, port, path or query.
 pub(crate) fn url_host(url: &str) -> Option<String> {
+    if !fbterm_config::schemes::is_plain_https_url(url) {
+        return None;
+    }
     let rest = url.strip_prefix("https://")?;
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     let host_port = authority.rsplit('@').next().unwrap_or("");
@@ -152,8 +192,8 @@ fn renderer_families(suggested: &HashSet<String>) -> Vec<String> {
     installed_families(faces.iter().map(|(n, m)| (n.as_str(), *m)), suggested)
 }
 
-/// Scan the system fonts afresh (blocking) and read the files of the faces of `missing`
-/// families the renderer does not know yet.
+/// Scan the system fonts afresh (blocking) and pick the files of the terminal faces of
+/// `missing` families the renderer does not know yet.
 fn scan_system(missing: &HashSet<String>) -> Vec<NewFace> {
     use iced::advanced::graphics::text::cosmic_text::fontdb;
     let start = std::time::Instant::now();
@@ -165,7 +205,7 @@ fn scan_system(missing: &HashSet<String>) -> Vec<NewFace> {
         .collect();
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
-    let faces: Vec<(String, PathBuf)> = db
+    let faces: Vec<(String, u16, bool, PathBuf)> = db
         .faces()
         .filter_map(|f| {
             let family = f.families.first()?.0.clone();
@@ -173,25 +213,19 @@ fn scan_system(missing: &HashSet<String>) -> Vec<NewFace> {
                 fontdb::Source::File(p) | fontdb::Source::SharedFile(p, _) => p.clone(),
                 fontdb::Source::Binary(_) => return None,
             };
-            Some((family, path))
+            Some((family, f.weight.0, f.style != fontdb::Style::Normal, path))
         })
         .collect();
     let picked = pick_new_faces(
         faces
             .iter()
-            .map(|(f, p)| (f.as_str(), (f.clone(), p.clone()))),
+            .map(|(f, w, i, p)| (f.as_str(), *w, *i, (f.clone(), p.clone()))),
         &known,
         missing,
     );
     let found: Vec<NewFace> = picked
         .into_iter()
-        .filter_map(|(family, path)| match std::fs::read(&path) {
-            Ok(data) => Some(NewFace { family, data }),
-            Err(e) => {
-                tracing::warn!(error = %e, %family, "font file not read");
-                None
-            }
-        })
+        .map(|(family, path)| NewFace { family, path })
         .collect();
     tracing::info!(
         faces = db.len(),
@@ -202,11 +236,19 @@ fn scan_system(missing: &HashSet<String>) -> Vec<NewFace> {
     found
 }
 
-/// Add `faces` to the renderer, each file once.
+/// Add `faces` to the renderer, each file once, memory-mapped by its font database (as the
+/// fonts it read at startup are), so they cost almost no memory until drawn.
 fn load_into_renderer(faces: &[NewFace]) {
     let mut system = renderer();
+    let mut seen: Vec<&PathBuf> = Vec::new();
     for face in faces {
-        system.load_font(std::borrow::Cow::Owned(face.data.clone()));
+        if seen.contains(&&face.path) {
+            continue;
+        }
+        seen.push(&face.path);
+        if let Err(e) = system.raw().db_mut().load_font_file(&face.path) {
+            tracing::warn!(error = %e, family = %face.family, "font file not loaded");
+        }
     }
 }
 
@@ -289,7 +331,13 @@ impl App {
     /// On a user action: scan the system fonts on the blocking pool for suggested families
     /// that are still missing (none missing, or a scan under way: nothing to do).
     pub(crate) fn scan_fonts(&mut self) -> Task<Message> {
-        if self.fonts_scanning || self.missing_fonts().is_empty() {
+        if self.missing_fonts().is_empty() {
+            return Task::none();
+        }
+        if self.fonts_scanning {
+            // The running scan may not cover what is missing now (a catalog arrived): one
+            // more when it ends.
+            self.fonts_rescan = true;
             return Task::none();
         }
         self.fonts_scanning = true;
@@ -300,14 +348,20 @@ impl App {
         )
     }
 
-    /// A scan finished: add what it found to the renderer, then read the list again.
-    pub(crate) fn fonts_scanned(&mut self, faces: &[NewFace]) {
+    /// A scan finished: add what it found to the renderer, make every terminal view measure
+    /// again, read the list again, and run the follow-up scan asked for meanwhile, if any.
+    pub(crate) fn fonts_scanned(&mut self, faces: &[NewFace]) -> Task<Message> {
         self.fonts_scanning = false;
         if !faces.is_empty() {
             let families: HashSet<&str> = faces.iter().map(|f| f.family.as_str()).collect();
             tracing::info!(?families, files = faces.len(), "suggested fonts loaded");
             (self.font_io.load)(faces);
+            fbterm_term::fonts_loaded();
         }
         self.refresh_installed_fonts();
+        if std::mem::take(&mut self.fonts_rescan) {
+            return self.scan_fonts();
+        }
+        Task::none()
     }
 }

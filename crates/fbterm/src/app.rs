@@ -485,6 +485,9 @@ pub struct App {
     pub(crate) scheme_fonts: HashMap<String, Option<&'static str>>,
     /// A system font scan is under way on the blocking pool.
     pub(crate) fonts_scanning: bool,
+    /// A scan was asked for while one ran (for example a catalog arrived): run one more when
+    /// it finishes.
+    pub(crate) fonts_rescan: bool,
     /// Whether the Welcome tab may open at this launch: off in unit tests, and off once it
     /// opened (or was found not due) this run. See `crate::welcome`.
     pub(crate) ask_welcome: bool,
@@ -820,6 +823,7 @@ impl App {
             installed_fonts: Vec::new(),
             scheme_fonts: HashMap::new(),
             fonts_scanning: false,
+            fonts_rescan: false,
             ask_welcome: !cfg!(test),
             demo_update: debug_env("FBTERM_DEMO_UPDATE").map(|v| v.to_string_lossy().into_owned()),
         };
@@ -1400,10 +1404,7 @@ impl App {
             Message::Export(msg) => self.export_msg(msg),
             Message::Settings(msg) => self.settings_msg(msg),
             Message::Schemes(msg) => self.schemes_msg(msg),
-            Message::FontsScanned(faces) => {
-                self.fonts_scanned(&faces);
-                Task::none()
-            }
+            Message::FontsScanned(faces) => self.fonts_scanned(&faces),
             Message::Tunnels(msg) => self.tunnels_msg(msg),
             Message::Archive(msg) => self.archive_msg(msg),
             Message::Prompt(msg) => self.prompt_msg(msg),

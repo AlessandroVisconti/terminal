@@ -561,7 +561,10 @@ fn suggestion<'a>(t: &'static Tokens, line: FontLine, compact: bool) -> Element<
     }
     if let Some(url) = line.url {
         let label = match &line.host {
-            Some(host) => format!("Download ({})", clip_chars(host, HOST_CHARS)),
+            Some(host) => format!(
+                "Download ({})",
+                crate::theme_fonts::host_label(host, HOST_CHARS)
+            ),
             None => "Download".to_owned(),
         };
         actions = actions.push(

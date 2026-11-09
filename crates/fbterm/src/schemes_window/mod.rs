@@ -321,7 +321,7 @@ impl FontContext<'_> {
         } else {
             FontState::NotInstalled
         };
-        let url = Some(font.url.clone()).filter(|u| gallery::credit_link_ok(u));
+        let url = Some(font.url.clone()).filter(|u| fbterm_config::schemes::is_plain_https_url(u));
         Some(FontLine {
             family: font.family.clone(),
             host: url.as_deref().and_then(crate::theme_fonts::url_host),

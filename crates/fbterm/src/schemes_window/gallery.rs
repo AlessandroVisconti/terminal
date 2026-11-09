@@ -584,7 +584,10 @@ pub fn demo_catalog() -> (Catalog, Vec<Scheme>) {
                 false,
                 (
                     author.trim_end_matches([',', ' ']),
-                    (&family, "https://example.org/sample-font"),
+                    (
+                        &family,
+                        "https://fonts.a-rather-long-sample-mirror-name.example.org/sample-font",
+                    ),
                 ),
                 slate,
             ));
