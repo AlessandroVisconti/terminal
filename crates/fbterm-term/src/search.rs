@@ -516,6 +516,7 @@ pub struct Cover {
 }
 
 /// Search `term` for `req`, locking it one chunk at a time. Checks `cancel` between chunks.
+/// Drops the terminal's history read cache when done.
 /// Meant for a worker thread: a full 10,000-line scrollback takes a few milliseconds.
 pub fn search(term: &SharedTerminal, req: &SearchRequest, cancel: &AtomicBool) -> SearchOutcome {
     search_with_budget(term, req, cancel, CHUNK_BUDGET)
@@ -551,6 +552,8 @@ fn search_with_budget(
             None => break,
         }
     }
+    // The search read the history it covered: let go of the blocks the read cache kept, once.
+    term.lock().drop_history_cache();
     out
 }
 
@@ -1038,6 +1041,29 @@ mod tests {
             out[0].hits.last().unwrap().snippet.as_ref().unwrap().text,
             "line 1"
         );
+    }
+
+    /// A search sweeps the history; it lets go of the read cache once per call (so once per
+    /// page), never per chunk.
+    #[test]
+    fn search_drops_the_history_read_cache_when_done() {
+        let mut bytes = Vec::new();
+        for i in 0..200 {
+            bytes.extend(format!("line {i}\r\n").bytes());
+        }
+        let (_, on) = crate::cold_tests::pair(20, 5, &bytes, b"");
+        let on = shared(on);
+        let mut r = req("line", false);
+        r.limit = 50;
+        let first = find(&on, &r);
+        assert!(first.resume.is_some());
+        assert_eq!(on.lock().cache_drops, 1);
+        r.below = first.resume;
+        find(&on, &r);
+        assert_eq!(on.lock().cache_drops, 2);
+        // Cancelled before the first chunk: it still lets go.
+        search(&on, &r, &AtomicBool::new(true));
+        assert_eq!(on.lock().cache_drops, 3);
     }
 
     #[test]

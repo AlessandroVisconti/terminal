@@ -169,6 +169,10 @@ pub struct Terminal {
     parser: Processor,
     shared: Arc<Mutex<Shared>>,
     pub(crate) generation: u64,
+    /// Calls of [`Terminal::drop_history_cache`] (tests: the read cache itself is not visible
+    /// outside feathercritty).
+    #[cfg(test)]
+    pub(crate) cache_drops: usize,
 }
 
 pub type SharedTerminal = Arc<Mutex<Terminal>>;
@@ -198,6 +202,8 @@ impl Terminal {
             parser: Processor::new(),
             shared,
             generation: 0,
+            #[cfg(test)]
+            cache_drops: 0,
         }
     }
 
@@ -276,6 +282,17 @@ impl Terminal {
     /// since the job was taken) and was dropped; that is normal.
     pub fn install_history_job(&mut self, done: HistoryDone) -> bool {
         self.term.install_history_job(done)
+    }
+
+    /// Free the decompressed history blocks kept for reads (up to 256 KiB with compression on;
+    /// nothing otherwise). Called once after a sweep of the whole history (a search, an export),
+    /// so the blocks it read last do not stay resident.
+    pub fn drop_history_cache(&mut self) {
+        self.term.drop_history_cache();
+        #[cfg(test)]
+        {
+            self.cache_drops += 1;
+        }
     }
 
     /// Run and install every pending history job now, under the caller's lock (tests and

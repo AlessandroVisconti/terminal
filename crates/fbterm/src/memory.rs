@@ -17,6 +17,12 @@
 //! anything else a program does (programs cannot resize the terminal): remote programs must not
 //! cause host work, and the freed blocks are reused by the next output anyway.
 //!
+//! With compression on, each terminal also keeps a few decompressed history blocks for reads (up
+//! to 256 KiB). A search or an export drops them when its sweep ends
+//! (`Terminal::drop_history_cache`, called by `fbterm_term::search` and the export itself); that
+//! frees them to the allocator only and asks for no release here, since a search can follow
+//! output a program wrote and the next read refills the cache anyway.
+//!
 //! Requests run on tokio's blocking pool and fold: a request runs at once unless one ran less
 //! than [`WINDOW`] ago, in which case a single run is scheduled for the end of that window and
 //! every request until then joins it.

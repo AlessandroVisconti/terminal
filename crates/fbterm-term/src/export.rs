@@ -140,8 +140,23 @@ pub fn export(
     export_chunked(terminal, format, out, CHUNK_ROWS, &mut || {})
 }
 
-/// [`export`] with the chunk size and a hook run between chunks (with the lock released).
+/// [`export`] with the chunk size and a hook run between chunks (with the lock released). Drops
+/// the terminal's history read cache when done, whether the export succeeded or not.
 fn export_chunked(
+    terminal: &SharedTerminal,
+    format: ExportFormat,
+    out: &mut dyn Write,
+    chunk: i64,
+    between: &mut dyn FnMut(),
+) -> Result<ExportSummary, ExportError> {
+    let result = export_rows(terminal, format, out, chunk, between);
+    // The export read every history block: let go of the ones the read cache kept, once.
+    terminal.lock().drop_history_cache();
+    result
+}
+
+/// The body of [`export_chunked`].
+fn export_rows(
     terminal: &SharedTerminal,
     format: ExportFormat,
     out: &mut dyn Write,
@@ -826,6 +841,26 @@ mod tests {
         let (plain, _) = cold_exports(20, 4, b"normal 1\r\n", b"\x1b[?1049hAPP\x1b[?1049l");
         assert!(plain.starts_with("normal 1\n~~ "));
         assert!(!plain.contains("APP"));
+    }
+
+    /// An export reads every history block; it lets go of the read cache once, when done.
+    #[test]
+    fn export_drops_the_history_read_cache_when_done() {
+        let (_, on) = crate::cold_tests::pair(20, 5, b"old\r\n", b"");
+        let on = shared(on);
+        for f in ExportFormat::ALL {
+            let before = on.lock().cache_drops;
+            export(&on, f, &mut Vec::new()).unwrap();
+            assert_eq!(on.lock().cache_drops, before + 1, "{f:?}");
+        }
+        // A failed export (resized midway) lets go of it too.
+        let before = on.lock().cache_drops;
+        let mut resize = || on.lock().resize(crate::cold_tests::size(30, 5));
+        assert!(matches!(
+            export_chunked(&on, ExportFormat::Plain, &mut Vec::new(), 7, &mut resize),
+            Err(ExportError::Resized)
+        ));
+        assert_eq!(on.lock().cache_drops, before + 1);
     }
 
     #[test]
