@@ -392,8 +392,15 @@ fn lower_priority() {
     unsafe {
         libc::nice(10);
     }
-    // Windows: `SetThreadPriority` needs windows-sys's `Win32_System_Threading` feature, which
-    // the workspace does not enable, so the worker keeps normal priority there.
+    #[cfg(windows)]
+    // SAFETY: `GetCurrentThread` returns a pseudo handle for the calling thread that needs no
+    // closing; `SetThreadPriority` takes it and a plain value and touches no memory of ours.
+    unsafe {
+        use windows_sys::Win32::System::Threading::{
+            GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
+        };
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    }
 }
 
 #[cfg(test)]

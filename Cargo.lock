@@ -1566,6 +1566,7 @@ dependencies = [
  "serde_json",
  "skrifa 0.44.0",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
