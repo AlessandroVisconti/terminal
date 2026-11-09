@@ -10,7 +10,7 @@ use fbterm_term::{ColorScheme, TerminalStyle};
 use iced::{Font, Task, window};
 use parking_lot::Mutex;
 
-use super::{SettingsMsg, SettingsState, WRITE_DEBOUNCE, Write, fonts, thousands};
+use super::{SettingsMsg, SettingsState, WRITE_DEBOUNCE, Write, thousands};
 use crate::app::{App, Message, SettingsSource};
 use crate::chrome::Chrome;
 use crate::tabs::{Page, Pane, Tab};
@@ -100,6 +100,7 @@ impl App {
                 crate::config_files::reveal_config_folder(&self.paths);
                 Task::none()
             }
+            SettingsMsg::FontsOpened => self.scan_monospace_fonts(),
             SettingsMsg::EditSchemes => {
                 let current = self.settings.color_scheme.clone();
                 self.open_schemes(Some(current))
@@ -198,7 +199,7 @@ impl App {
         }
         let (id, open) = self.show_page(Page::Settings);
         let read_only = Settings::load(&self.paths.settings()).err();
-        let mut state = SettingsState::new(&self.settings, fonts::installed_monospace(), read_only);
+        let mut state = SettingsState::new(&self.settings, (self.font_io.monospace)(), read_only);
         state.display_hz = self.display_hz();
         state.max_open_history = self.max_open_history();
         self.settings_win = Some((id, state));

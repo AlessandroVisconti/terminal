@@ -23,6 +23,11 @@
 //! a pane already naming that family stops using the fallback's metrics. Everything else the
 //! system has is left alone, and the system fonts are never loaded a second time. Never per
 //! frame, never in the background. fbterm never downloads fonts.
+//!
+//! Opening the Settings tab's font list is a user action too: it scans the same way for every
+//! monospace family the renderer does not know yet, suggested or not, so any monospace font
+//! installed while fbterm runs joins that list. After every scan an open Settings tab reads its
+//! list again (`FontIo::monospace`).
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -40,10 +45,21 @@ pub(crate) struct NewFace {
     pub path: PathBuf,
 }
 
+/// What a system font scan looks for.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ScanFor {
+    /// Missing suggested families (monospaced or not).
+    pub families: HashSet<String>,
+    /// Also every monospaced family the renderer does not know yet.
+    pub monospace: bool,
+}
+
 /// The renderer's installed families, given the suggested ones (see the module docs).
 pub(crate) type ListFn = dyn Fn(&HashSet<String>) -> Vec<String> + Send + Sync;
-/// A blocking scan of the system fonts for the faces of these missing families.
-pub(crate) type ScanFn = dyn Fn(&HashSet<String>) -> Vec<NewFace> + Send + Sync;
+/// A blocking scan of the system fonts for the faces of the families `ScanFor` asks for.
+pub(crate) type ScanFn = dyn Fn(&ScanFor) -> Vec<NewFace> + Send + Sync;
+/// The renderer's monospace families, for the Settings font list.
+pub(crate) type MonospaceFn = dyn Fn() -> Vec<String> + Send + Sync;
 /// Adds faces to the renderer.
 pub(crate) type LoadFn = dyn Fn(&[NewFace]) + Send + Sync;
 /// Tells every terminal view that fonts were added (`fbterm_term::fonts_loaded`).
@@ -56,6 +72,7 @@ pub(crate) struct FontIo {
     pub scan: Arc<ScanFn>,
     pub load: Arc<LoadFn>,
     pub loaded: Arc<LoadedFn>,
+    pub monospace: Arc<MonospaceFn>,
 }
 
 impl Default for FontIo {
@@ -66,6 +83,7 @@ impl Default for FontIo {
                 scan: Arc::new(|_| Vec::new()),
                 load: Arc::new(|_| {}),
                 loaded: Arc::new(|| {}),
+                monospace: Arc::new(Vec::new),
             };
         }
         Self {
@@ -73,6 +91,7 @@ impl Default for FontIo {
             scan: Arc::new(scan_system),
             load: Arc::new(load_into_renderer),
             loaded: Arc::new(fbterm_term::fonts_loaded),
+            monospace: Arc::new(crate::settings_window::installed_monospace),
         }
     }
 }
@@ -247,9 +266,9 @@ fn renderer_families(suggested: &HashSet<String>) -> Vec<String> {
     installed_families(faces.iter().map(|(n, m)| (n.as_str(), *m)), suggested)
 }
 
-/// Scan the system fonts afresh (blocking) and pick the files of the terminal faces of
-/// `missing` families the renderer does not know yet.
-fn scan_system(missing: &HashSet<String>) -> Vec<NewFace> {
+/// Scan the system fonts afresh (blocking) and pick the files of the terminal faces of the
+/// families `want` asks for that the renderer does not know yet.
+fn scan_system(want: &ScanFor) -> Vec<NewFace> {
     use iced::advanced::graphics::text::cosmic_text::fontdb;
     let start = std::time::Instant::now();
     let known: HashSet<String> = renderer()
@@ -277,12 +296,20 @@ fn scan_system(missing: &HashSet<String>) -> Vec<NewFace> {
             ))
         })
         .collect();
+    let mut wanted = want.families.clone();
+    if want.monospace {
+        wanted.extend(
+            db.faces()
+                .filter(|f| f.monospaced)
+                .filter_map(|f| f.families.first().map(|(n, _)| n.clone())),
+        );
+    }
     let picked = pick_new_faces(
         faces
             .iter()
             .map(|(f, w, i, s, p)| (f.as_str(), *w, *i, *s, (f.clone(), p.clone()))),
         &known,
-        missing,
+        &wanted,
     );
     let found: Vec<NewFace> = picked
         .into_iter()
@@ -385,8 +412,11 @@ impl App {
     /// The scan as the blocking pool runs it.
     pub(crate) fn font_scan_job(&self) -> impl FnOnce() -> Vec<NewFace> + Send + 'static + use<> {
         let scan = self.font_io.scan.clone();
-        let missing = self.missing_fonts();
-        move || scan(&missing)
+        let want = ScanFor {
+            families: self.missing_fonts(),
+            monospace: self.fonts_monospace,
+        };
+        move || scan(&want)
     }
 
     /// The Color schemes tab was shown (selected, opened, or its window focused): read the
@@ -409,6 +439,23 @@ impl App {
             self.fonts_rescan = true;
             return Task::none();
         }
+        self.start_font_scan()
+    }
+
+    /// The Settings font list was opened (a user action): scan the system fonts for every
+    /// monospace family the renderer does not know yet, so a font installed while fbterm runs
+    /// joins the list.
+    pub(crate) fn scan_monospace_fonts(&mut self) -> Task<Message> {
+        if self.fonts_scanning {
+            self.fonts_rescan = true;
+            self.fonts_monospace_next = true;
+            return Task::none();
+        }
+        self.fonts_monospace = true;
+        self.start_font_scan()
+    }
+
+    fn start_font_scan(&mut self) -> Task<Message> {
         self.fonts_scanning = true;
         let job = self.font_scan_job();
         Task::perform(
@@ -421,14 +468,21 @@ impl App {
     /// again, read the list again, and run the follow-up scan asked for meanwhile, if any.
     pub(crate) fn fonts_scanned(&mut self, faces: &[NewFace]) -> Task<Message> {
         self.fonts_scanning = false;
+        self.fonts_monospace = false;
         if !faces.is_empty() {
             let families: HashSet<&str> = faces.iter().map(|f| f.family.as_str()).collect();
-            tracing::info!(?families, files = faces.len(), "suggested fonts loaded");
+            tracing::info!(?families, files = faces.len(), "fonts loaded");
             (self.font_io.load)(faces);
             (self.font_io.loaded)();
         }
         self.refresh_installed_fonts();
+        if let Some((_, state)) = &mut self.settings_win {
+            state.set_installed((self.font_io.monospace)());
+        }
         if std::mem::take(&mut self.fonts_rescan) {
+            if std::mem::take(&mut self.fonts_monospace_next) {
+                return self.scan_monospace_fonts();
+            }
             return self.scan_fonts();
         }
         Task::none()
