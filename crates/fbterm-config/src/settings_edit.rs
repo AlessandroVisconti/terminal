@@ -31,6 +31,8 @@ pub enum SettingChange {
     TabBar(TabBar),
     /// Fold the sidebar into profile groups.
     TabGroups(bool),
+    /// Draw panes in their scheme's suggested font when installed.
+    UseThemeFonts(bool),
     MaxFps(MaxFps),
     TunnelMaxRetries(u32),
     CheckUpdates(bool),
@@ -60,6 +62,7 @@ impl SettingChange {
             Self::WindowDecorations(_) => "window_decorations",
             Self::TabBar(_) => "tab_bar",
             Self::TabGroups(_) => "tab_groups",
+            Self::UseThemeFonts(_) => "use_theme_fonts",
             Self::MaxFps(_) => "max_fps",
             Self::TunnelMaxRetries(_) => "tunnel_max_retries",
             Self::CheckUpdates(_) => "check_updates",
@@ -85,6 +88,7 @@ impl SettingChange {
             Self::WindowDecorations(v) => settings.window_decorations = *v,
             Self::TabBar(v) => settings.tab_bar = Some(*v),
             Self::TabGroups(v) => settings.tab_groups = *v,
+            Self::UseThemeFonts(v) => settings.use_theme_fonts = *v,
             Self::MaxFps(v) => settings.max_fps.clone_from(v),
             Self::TunnelMaxRetries(v) => settings.tunnel_max_retries = *v,
             Self::CheckUpdates(v) => settings.check_updates = Some(*v),
@@ -117,7 +121,7 @@ impl SettingChange {
             Self::WindowDecorations(v) => Value::from(v.as_str()),
             Self::MacosBlurStyle(v) => Value::from(v.as_str()),
             Self::TabBar(v) => Value::from(v.as_str()),
-            Self::TabGroups(v) => Value::from(*v),
+            Self::TabGroups(v) | Self::UseThemeFonts(v) => Value::from(*v),
             // Written per action by `edit_keys`.
             Self::Keys(_) => Value::from(""),
         }
@@ -394,6 +398,7 @@ mod tests {
             SettingChange::WindowDecorations(WindowDecorations::System),
             SettingChange::TabBar(TabBar::Left),
             SettingChange::TabGroups(true),
+            SettingChange::UseThemeFonts(true),
             SettingChange::MaxFps(MaxFps::Fixed(120)),
             SettingChange::MaxFps(MaxFps::Display),
             SettingChange::TunnelMaxRetries(3),
@@ -720,6 +725,22 @@ mod tests {
         }
         assert_eq!(Settings::default().secret_storage, SecretStorage::Auto);
         assert!(toml::from_str::<Settings>("secret_storage = \"cloud\"\n").is_err());
+    }
+
+    #[test]
+    fn use_theme_fonts_defaults_off_and_is_written_in_place() {
+        assert!(!Settings::default().use_theme_fonts);
+        let s: Settings = toml::from_str("use_theme_fonts = true\n").unwrap();
+        assert!(s.use_theme_fonts);
+        let sample: Settings = toml::from_str(SETTINGS_TEMPLATE).unwrap();
+        assert!(
+            !sample.use_theme_fonts,
+            "the sample leaves it commented out"
+        );
+        assert!(SETTINGS_TEMPLATE.contains("#use_theme_fonts = false\n"));
+        let edited = edit_text(SETTINGS_TEMPLATE, &SettingChange::UseThemeFonts(true)).unwrap();
+        assert!(edited.contains("#use_theme_fonts = false\nuse_theme_fonts = true\n"));
+        assert!(toml::from_str::<Settings>(&edited).unwrap().use_theme_fonts);
     }
 
     #[test]

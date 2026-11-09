@@ -350,6 +350,19 @@ fn appearance<'a>(
         setting(t, "Font size", None, false, size),
         setting(
             t,
+            THEME_FONTS_LABEL,
+            Some(THEME_FONTS_HINT),
+            false,
+            switch(
+                t,
+                v.use_theme_fonts,
+                editable,
+                false,
+                SettingsMsg::UseThemeFonts,
+            ),
+        ),
+        setting(
+            t,
             "Ligatures",
             Some("Draws sequences such as -> and != as one symbol when the font has them."),
             false,
@@ -421,6 +434,12 @@ fn appearance<'a>(
     }
     rows
 }
+
+/// The label of the `use_theme_fonts` row; the Color schemes window's checkbox says the same.
+pub const THEME_FONTS_LABEL: &str = "Use each theme's suggested font";
+/// The line under it.
+pub const THEME_FONTS_HINT: &str =
+    "When the font is installed. A scheme that sets its own font keeps it.";
 
 /// The line under `Background opacity` at `opacity` when `opaque_windows` (an open terminal
 /// window was created opaque, which never happens on macOS): such a window shows a lower

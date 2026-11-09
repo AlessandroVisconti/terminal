@@ -19,12 +19,12 @@ In a split tab each pane uses the scheme of its own profile. A tab or pane that 
 
 ## Built-in schemes
 
-| Name | Id | Look |
-| --- | --- | --- |
-| Graphite | `graphite` | The default: the dark Graphite palette with a violet cursor. |
-| Graphite Light | `graphite-light` | A light companion on a near-white background. |
-| Harbor | `harbor` | Deep teal-black with an aqua cursor. |
-| Ember | `ember` | Coal-brown with a warm orange cursor. |
+| Name | Id | Look | Suggested font |
+| --- | --- | --- | --- |
+| Graphite | `graphite` | The default: the dark Graphite palette with a violet cursor. | Geist Mono (fbterm's default font) |
+| Graphite Light | `graphite-light` | A light companion on a near-white background. | Geist Mono |
+| Harbor | `harbor` | Deep teal-black with an aqua cursor. | JetBrains Mono |
+| Ember | `ember` | Coal-brown with a warm orange cursor. | IBM Plex Mono |
 
 Built-in schemes cannot be changed or deleted; duplicate one to start your own. Each meets a readability bar: text against the background at a contrast ratio of at least 7, the ANSI colors 1 to 6 and 9 to 14 against the background at least 4.5, and the selection against the text at least 4.5.
 
@@ -60,6 +60,28 @@ The themes come from [terminal-themes](https://github.com/featherbitplatform/ter
 ## Fonts in schemes
 
 A scheme that names a font gives its sessions that family and size instead of the global font in Settings. The size of a character cell follows the font, so the rows and columns of those panes change with it, and the program (or the SSH channel) is told the new size once. Panes with different fonts can sit in the same split tab. Saving a scheme with a different font reflows its open sessions once.
+
+## Suggested fonts
+
+A scheme can suggest a font that suits it, with a link to the font's official download page. The built-in schemes and every theme in the gallery carry one. A suggestion changes nothing by itself: fbterm never ships, downloads or installs fonts.
+
+In the Color schemes window, the selected scheme (and each gallery row) shows **Suggested font** with the family and:
+
+- **Download** opens the font's page in your browser; the button shows the site it leads to, such as `Download (github.com)` (a long host name shows its end, the part that names the site's owner). Download and install the font there, the way your system installs fonts.
+- **Use font** makes it the global **Font family** in Settings. It is available once the font is installed; the suggestion itself is not written into the scheme, so an installed gallery theme keeps receiving updates.
+- **In use** when the scheme's sessions already use that font, or **Not installed** when your system does not have it. A scheme that sets its own font (under **Font**) keeps it for its sessions, and the line says so.
+
+The check looks at the fonts fbterm can draw with. A suggested font you install while fbterm runs is picked up the next time you open the Color schemes window or its gallery (or turn on the checkbox below): fbterm looks through the system's fonts again for the suggested families it is missing and adds just those, without a restart.
+
+### Use each theme's suggested font
+
+With **Use each theme's suggested font** checked (in the Color schemes window, or the row of the same name in Settings, both the `use_theme_fonts` setting in [`settings.toml`](files#settingstoml)), choosing another scheme, globally or for a profile, also switches its sessions to that scheme's suggested font. The font a session uses is then:
+
+1. the scheme's own font, if it sets one;
+2. else the scheme's suggested font, if it is installed;
+3. else the global **Font family**.
+
+A missing font falls back to the global one without a message (the scheme's line shows **Not installed**). Nothing is written into schemes or into the font setting, so unchecking the box restores the global font everywhere. Sessions whose font changes reflow once, as with a scheme font.
 
 ## Files and sharing
 
@@ -98,6 +120,11 @@ bright_blue = "#9fc3f7"
 bright_magenta = "#d8b9f7"
 bright_cyan = "#97e3e9"
 bright_white = "#f6f8fc"
+
+[suggested_font]             # optional
+family = "JetBrains Mono"
+url = "https://www.jetbrains.com/lp/mono/"
+license = "OFL-1.1"
 ```
 
 | Key | Meaning |
@@ -106,6 +133,7 @@ bright_white = "#f6f8fc"
 | `name` | Name shown in the list and in Settings. Required. |
 | `font_family`, `font_size` | Optional font for the scheme's sessions. `font_size` must be a positive number. |
 | `[colors]` | Every key shown above, each as `"#rrggbb"`. `selection` is the selection background as it should look on the background (a solid color, not a transparency). |
+| `[suggested_font]` | Optional [suggestion](#suggested-fonts): `family` (the name exactly as your system lists the installed font), `url` (the font's official page: a plain `https://` link whose host is a name, with no user part, `%` escapes or backslashes) and `license` (one of `OFL-1.1`, `Apache-2.0`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Unlicense`, `CC0-1.0`, `Zlib`), all three required, each at most 2000 characters. A table that breaks these rules, or holds hidden or direction-changing characters, is ignored with a line in the banner; the scheme still loads. It travels with the scheme like the credit (duplicate, export, archives) and never counts as a change to a gallery theme. |
 
 The 256-color cube and the grayscale ramp are computed and are not part of a scheme.
 

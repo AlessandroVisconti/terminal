@@ -155,6 +155,28 @@ struct Measured {
     font: Font,
     font_size: f32,
     cell: Size,
+    /// [`font_epoch`] when measured.
+    epoch: u64,
+}
+
+/// Counts font loads after startup (see [`fonts_loaded`]).
+static FONT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many times fonts were added to the renderer after startup.
+pub fn font_epoch() -> u64 {
+    FONT_EPOCH.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Fonts were added to the renderer: every terminal view measures its cell again and drops
+/// its shaped text at its next layout, since a family it names may now resolve to a real face
+/// instead of the fallback. A view whose grid changes reports it as for a font change.
+pub fn fonts_loaded() {
+    FONT_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a view measured as `measured` must measure again for `font` at `font_size`.
+fn needs_measure(measured: Option<Measured>, font: Font, font_size: f32) -> bool {
+    measured.is_none_or(|m| m.font != font || m.font_size != font_size || m.epoch != font_epoch())
 }
 
 #[derive(Default)]
@@ -239,14 +261,18 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TerminalView<'_, 
     ) -> layout::Node {
         let state = tree.state.downcast_mut::<State>();
         let (font, font_size) = (self.style.font, self.style.font_size);
-        if state
-            .measured
-            .is_none_or(|m| m.font != font || m.font_size != font_size)
-        {
+        if needs_measure(state.measured, font, font_size) {
+            let epoch = font_epoch();
+            if state.measured.is_some_and(|m| m.epoch != epoch) {
+                // New faces: text shaped with the fallback is stale.
+                *state.shapes.borrow_mut() = shaped::ShapeCache::default();
+                *state.cache.borrow_mut() = None;
+            }
             state.measured = Some(Measured {
                 font,
                 font_size,
                 cell: measure(font, font_size),
+                epoch,
             });
             state.synced = None;
         }
@@ -365,5 +391,29 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TerminalView<'_, 
                 &mut state.shapes.borrow_mut(),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_font_load_makes_views_measure_again() {
+        let font = Font::with_name("Sample Mono");
+        let epoch = font_epoch();
+        let m = Measured {
+            font,
+            font_size: 13.0,
+            cell: Size::new(8.0, 16.0),
+            epoch,
+        };
+        assert!(!needs_measure(Some(m), font, 13.0));
+        assert!(needs_measure(None, font, 13.0));
+        assert!(needs_measure(Some(m), Font::MONOSPACE, 13.0));
+        assert!(needs_measure(Some(m), font, 14.0));
+        fonts_loaded();
+        assert!(font_epoch() > epoch);
+        assert!(needs_measure(Some(m), font, 13.0), "same font, new faces");
     }
 }

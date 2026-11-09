@@ -121,6 +121,9 @@ mod tab_menu;
 mod tab_sidebar;
 mod tabs;
 mod theme;
+mod theme_fonts;
+#[cfg(test)]
+mod theme_fonts_tests;
 mod tiles;
 mod tooltip;
 mod tunnels;

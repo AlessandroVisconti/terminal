@@ -5,7 +5,8 @@ use fbterm_config::Rgb;
 use fbterm_config::schemes::{Credit, Scheme, SchemeColors, SchemeSet};
 use fbterm_term::{TerminalStyle, highlighted_terminal_view};
 use iced::widget::{
-    Space, button, column, container, pick_list, row, scrollable, slider, stack, text, text_input,
+    Space, button, checkbox, column, container, pick_list, row, scrollable, slider, stack, text,
+    text_input,
 };
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
@@ -13,10 +14,11 @@ use super::gallery::{
     GalleryRow, RowButton, clip_chars, credit_line, credit_link_ok, gallery_rows,
 };
 use super::{
-    DeleteAsk, Entry, GalleryLoad, ImportAsk, ImportChoice, SchemesMsg, SchemesState, UpdateChoice,
+    DeleteAsk, Entry, FontLine, FontState, GalleryLoad, ImportAsk, ImportChoice, SchemesMsg,
+    SchemesState, UpdateChoice,
 };
 use crate::app::Message;
-use crate::settings_window::view::{menu_style, pick_style, slider_style};
+use crate::settings_window::view::{THEME_FONTS_LABEL, menu_style, pick_style, slider_style};
 use crate::theme::{Tokens, UI_FONT};
 use crate::ui::{self, MONO};
 
@@ -26,6 +28,12 @@ const FORM_WIDTH: f32 = 640.0;
 const NAME_CHARS: usize = 32;
 /// The longest credit line shown before an ellipsis (the rest wraps).
 const CREDIT_CHARS: usize = 300;
+/// The longest suggested font family shown before an ellipsis (the line keeps its buttons).
+const FAMILY_CHARS: usize = 48;
+/// The longest host shown beside `Download`.
+const HOST_CHARS: usize = 32;
+/// The longest suggested font family shown in a gallery row, where the line is narrower.
+const FAMILY_CHARS_COMPACT: usize = 34;
 /// Height of the preview terminal: the sample's seven lines at the usual sizes.
 const PREVIEW_HEIGHT: f32 = 116.0;
 
@@ -414,6 +422,18 @@ fn form<'a>(
     if let Some(c) = state.credit_of(d) {
         col = col.push(credit(t, c));
     }
+    // The suggestion, with the checkbox beside it, before the preview so it shows without
+    // scrolling; a scheme without one has the checkbox in its Font section.
+    let line = state.font_line(d);
+    let suggests = line.is_some();
+    if let Some(line) = line {
+        col = col.push(
+            container(column![suggestion(t, line, false), theme_fonts_checkbox(state)].spacing(10))
+                .padding(Padding::from([10.0, 12.0]))
+                .width(Length::Fill)
+                .style(move |_| ui::card(t)),
+        );
+    }
     col = col.push(preview(t, state, d, base));
     if let Some(hint) = state.contrast_hint() {
         col = col.push(
@@ -465,9 +485,136 @@ fn form<'a>(
             ]
             .spacing(24),
         )
-        .push(section(t, "Font"))
-        .push(font(t, state, editable));
-    col.into()
+        .push(section(t, "Font"));
+    if !suggests {
+        col = col.push(theme_fonts_checkbox(state));
+    }
+    col.push(font(t, state, editable)).into()
+}
+
+/// The `use_theme_fonts` checkbox; the Settings tab's row writes the same setting.
+fn theme_fonts_checkbox<'a>(state: &SchemesState) -> Element<'a, Message> {
+    checkbox(state.use_theme_fonts)
+        .label(THEME_FONTS_LABEL)
+        .on_toggle(|on| msg(SchemesMsg::UseThemeFonts(on)))
+        .font(UI_FONT)
+        .text_size(12.5)
+        .size(14)
+        .into()
+}
+
+/// A scheme's `Suggested font` line: the family, its state word, `Download` (its official
+/// page in the browser) and `Use font` (the global font, only when installed); and when the
+/// scheme sets its own font, a line saying so. `compact` for a gallery row, where the buttons
+/// go under the family so a long family keeps its room.
+fn suggestion<'a>(t: &'static Tokens, line: FontLine, compact: bool) -> Element<'a, Message> {
+    let (size, chars) = if compact {
+        (12.0, FAMILY_CHARS_COMPACT)
+    } else {
+        (12.5, FAMILY_CHARS)
+    };
+    // The family takes the room left and is clipped, so the buttons always show.
+    let name = row![
+        text("Suggested font")
+            .font(UI_FONT)
+            .size(size)
+            .color(t.text_secondary)
+            .wrapping(text::Wrapping::None),
+        container(
+            text(clip_chars(&line.family, chars))
+                .font(MONO)
+                .size(size)
+                .color(t.text)
+                .wrapping(text::Wrapping::None),
+        )
+        .width(Length::Fill)
+        .clip(true),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+    let mut actions = row![].spacing(8).align_y(Alignment::Center);
+    if let Some(word) = line.state.word() {
+        let color = if line.state == FontState::InUse {
+            t.accent_edge
+        } else {
+            t.text_muted
+        };
+        actions = actions.push(
+            container(
+                text(word)
+                    .font(UI_FONT)
+                    .size(11)
+                    .color(color)
+                    .wrapping(text::Wrapping::None),
+            )
+            .padding(Padding::from([1.0, 6.0]))
+            .style(move |_| container::Style {
+                border: Border {
+                    color: t.border,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..container::Style::default()
+            }),
+        );
+    }
+    if let Some(url) = line.url {
+        let label = match &line.host {
+            Some(host) => format!(
+                "Download ({})",
+                crate::theme_fonts::host_label(host, HOST_CHARS)
+            ),
+            None => "Download".to_owned(),
+        };
+        actions = actions.push(
+            button(
+                text(label)
+                    .font(UI_FONT)
+                    .size(12)
+                    .wrapping(text::Wrapping::None),
+            )
+            .on_press(msg(SchemesMsg::DownloadFont(url)))
+            .padding(Padding::from([2.0, 6.0]))
+            .style(move |_, status| {
+                let mut style = ui::ghost(t, status);
+                style.text_color = t.accent_edge;
+                style
+            }),
+        );
+    }
+    let use_font = line
+        .can_use
+        .then(|| msg(SchemesMsg::UseFont(line.family.clone())));
+    actions = actions.push(
+        button(
+            text("Use font")
+                .font(UI_FONT)
+                .size(12.5)
+                .wrapping(text::Wrapping::None),
+        )
+        .on_press_maybe(use_font)
+        .padding(Padding::from([5.0, 12.0]))
+        .style(move |_, status| ui::secondary(t, status)),
+    );
+    let mut col = if compact {
+        column![name, actions]
+    } else {
+        column![row![name, actions].spacing(8).align_y(Alignment::Center)]
+    };
+    if let Some(own) = line.own_font {
+        col = col.push(
+            text(format!(
+                "This scheme sets its own font, {}, which its panes use.",
+                clip_chars(&own, FAMILY_CHARS)
+            ))
+            .font(UI_FONT)
+            .size(12)
+            .color(t.text_muted)
+            .wrapping(text::Wrapping::WordOrGlyph),
+        );
+    }
+    col.spacing(6).into()
 }
 
 /// The preview terminal, drawn with the draft's colors and font, on its own background.
@@ -885,7 +1032,9 @@ fn gallery<'a>(
     ))
     .width(200);
     let controls = row![search, variant].spacing(12).align_y(Alignment::Center);
-    let mut col = column![header, controls].spacing(14).width(Length::Fill);
+    let mut col = column![header, controls, theme_fonts_checkbox(state)]
+        .spacing(14)
+        .width(Length::Fill);
     let quiet = |line: &'a str| -> Element<'a, Message> {
         container(text(line).font(UI_FONT).size(13).color(t.text_muted))
             .padding(Padding::from([18.0, 2.0]))
@@ -922,7 +1071,13 @@ fn gallery<'a>(
             );
         }
         GalleryLoad::Loaded(catalog) => {
-            let rows = gallery_rows(catalog, installed, &state.gallery_query, v);
+            let rows = gallery_rows(
+                catalog,
+                installed,
+                &state.gallery_query,
+                v,
+                &state.font_context(),
+            );
             if rows.is_empty() {
                 col = col.push(quiet("No themes match."));
             }
@@ -980,8 +1135,8 @@ fn strip<'a>(c: SchemeColors) -> Element<'a, Message> {
     .into()
 }
 
-/// One theme: its colors, name and variant, credit and project page, and Install, Update,
-/// Installed or the withdrawn note.
+/// One theme: its colors, name and variant, credit and project page, its suggested font, and
+/// Install, Update, Installed or the withdrawn note.
 fn gallery_row<'a>(t: &'static Tokens, r: GalleryRow) -> Element<'a, Message> {
     let variant = container(
         text(if r.dark { "Dark" } else { "Light" })
@@ -1028,7 +1183,10 @@ fn gallery_row<'a>(t: &'static Tokens, r: GalleryRow) -> Element<'a, Message> {
     ]
     .spacing(8)
     .align_y(Alignment::Start);
-    let info = column![name, credit].spacing(4).width(Length::Fill);
+    let mut info = column![name, credit].spacing(4).width(Length::Fill);
+    if let Some(line) = r.font {
+        info = info.push(suggestion(t, line, true));
+    }
     let action: Element<'a, Message> = match (r.button, r.note) {
         (Some(RowButton::Install), _) => {
             small(t, "Install", Some(SchemesMsg::Install(r.id)), ui::primary)
