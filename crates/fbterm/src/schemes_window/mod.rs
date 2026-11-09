@@ -285,8 +285,12 @@ pub struct FontLine {
     pub family: String,
     /// The page `Download` opens, when it is an `https://` link that may be opened.
     pub url: Option<String>,
+    /// That page's host, shown beside `Download` so a scheme from elsewhere cannot hide
+    /// where it leads.
+    pub host: Option<String>,
     pub state: FontState,
-    /// `Use font` is enabled: the family is installed and not the global font already.
+    /// `Use font` is enabled: the family is installed, not the global font already and not
+    /// what the scheme's panes use now.
     pub can_use: bool,
     /// The scheme's own `font_family`, which wins for its panes, when it is another family.
     pub own_font: Option<String>,
@@ -317,11 +321,13 @@ impl FontContext<'_> {
         } else {
             FontState::NotInstalled
         };
+        let url = Some(font.url.clone()).filter(|u| gallery::credit_link_ok(u));
         Some(FontLine {
             family: font.family.clone(),
-            url: Some(font.url.clone()).filter(|u| gallery::credit_link_ok(u)),
+            host: url.as_deref().and_then(crate::theme_fonts::url_host),
+            url,
             state,
-            can_use: installed && self.global_font != font.family,
+            can_use: installed && self.global_font != font.family && state != FontState::InUse,
             own_font: scheme.font_family.clone().filter(|own| *own != font.family),
         })
     }

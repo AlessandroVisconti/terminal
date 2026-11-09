@@ -348,6 +348,16 @@ pub fn status(theme: &CatalogTheme, installed: Option<&Scheme>) -> Status {
     };
     match scheme.gallery.as_ref().filter(|g| g.id == theme.id) {
         None => Status::Update { edited: true },
+        // Installed at this version by an fbterm that did not keep `[suggested_font]` (or with
+        // another one): offered again while unedited, so the suggestion arrives. The table is
+        // not in `install_hash`, so this never touches the edited-theme protection.
+        Some(g)
+            if g.version == theme.version
+                && scheme.suggested_font != theme.scheme.suggested_font
+                && !is_edited(scheme) =>
+        {
+            Status::Update { edited: false }
+        }
         Some(g) if g.version >= theme.version => Status::Installed,
         Some(_) => Status::Update {
             edited: is_edited(scheme),
@@ -905,6 +915,45 @@ derived = false
             "{:?}",
             catalog.skipped
         );
+    }
+
+    /// A theme installed (or updated) by an fbterm that dropped `[suggested_font]` records the
+    /// catalog's version without it: Update is offered again, and only while unedited.
+    #[test]
+    fn a_missing_or_different_suggestion_offers_update() {
+        let text = catalog_of(&[format!(
+            "{}\n[themes.suggested_font]\nfamily = \"Fira Code\"\n\
+             url = \"https://github.com/tonsky/FiraCode\"\nlicense = \"OFL-1.1\"\n",
+            entry("a")
+        )]);
+        let catalog = parse(&text);
+        let theme = &catalog.themes[0];
+        assert!(theme.scheme.suggested_font.is_some());
+        assert_eq!(status(theme, Some(&theme.scheme)), Status::Installed);
+
+        let mut older_client = theme.scheme.clone();
+        older_client.suggested_font = None;
+        assert!(!is_edited(&older_client));
+        assert_eq!(
+            status(theme, Some(&older_client)),
+            Status::Update { edited: false }
+        );
+        let mut other = theme.scheme.clone();
+        other.suggested_font.as_mut().unwrap().family = "Other Mono".into();
+        assert_eq!(
+            status(theme, Some(&other)),
+            Status::Update { edited: false }
+        );
+
+        // An edited copy at the same version stays Installed: nothing newer to offer.
+        let mut edited = older_client.clone();
+        edited.colors.background = edited.colors.foreground;
+        assert_eq!(status(theme, Some(&edited)), Status::Installed);
+        // A newer installed version than the catalog's is left alone.
+        let mut newer = older_client.clone();
+        newer.gallery.as_mut().unwrap().version += 1;
+        newer.gallery.as_mut().unwrap().colors_hash = install_hash(&newer);
+        assert_eq!(status(theme, Some(&newer)), Status::Installed);
     }
 
     #[test]

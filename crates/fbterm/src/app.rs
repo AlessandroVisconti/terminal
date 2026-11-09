@@ -105,6 +105,8 @@ impl<T> std::fmt::Debug for Delivered<T> {
 #[derive(Debug, Clone)]
 pub enum Message {
     Session(SessionId, SessionEvent),
+    /// A system font scan for missing suggested fonts finished (see `crate::theme_fonts`).
+    FontsScanned(Arc<Vec<crate::theme_fonts::NewFace>>),
     Terminal(window::Id, PaneId, TerminalOutput),
     /// Focus, divider drags and the area of a window's panes.
     Tiles(window::Id, crate::tiles::TilesMsg),
@@ -472,12 +474,17 @@ pub struct App {
     pub(crate) gallery_loading: bool,
     /// How the theme gallery fetches its catalog and opens credit links (fakes in tests).
     pub(crate) gallery_io: crate::schemes_window::gallery::GalleryIo,
-    /// Reads the installed monospace families from the font database (a fake in tests).
-    pub(crate) font_list: crate::theme_fonts::FontList,
-    /// The installed families as last read through `font_list`: when `use_theme_fonts` turns
-    /// on, and each time the Color schemes window shows a scheme's details. Never read per
-    /// frame; see `crate::theme_fonts`.
+    /// How the app lists, scans for and loads fonts (fakes in tests).
+    pub(crate) font_io: crate::theme_fonts::FontIo,
+    /// The installed families as last read through `font_io` (sorted), on a user action only;
+    /// never read per frame. See `crate::theme_fonts`.
     pub(crate) installed_fonts: Vec<String>,
+    /// Each scheme's resolved font (its own, or with `use_theme_fonts` its installed
+    /// suggestion; `None`: the global font), rebuilt when the schemes, the installed list or
+    /// the settings change, so drawing a pane only looks it up.
+    pub(crate) scheme_fonts: HashMap<String, Option<&'static str>>,
+    /// A system font scan is under way on the blocking pool.
+    pub(crate) fonts_scanning: bool,
     /// Whether the Welcome tab may open at this launch: off in unit tests, and off once it
     /// opened (or was found not due) this run. See `crate::welcome`.
     pub(crate) ask_welcome: bool,
@@ -809,14 +816,18 @@ impl App {
             gallery_generation: 0,
             gallery_loading: false,
             gallery_io: crate::schemes_window::gallery::GalleryIo::default(),
-            font_list: crate::theme_fonts::system_font_list(),
+            font_io: crate::theme_fonts::FontIo::default(),
             installed_fonts: Vec::new(),
+            scheme_fonts: HashMap::new(),
+            fonts_scanning: false,
             ask_welcome: !cfg!(test),
             demo_update: debug_env("FBTERM_DEMO_UPDATE").map(|v| v.to_string_lossy().into_owned()),
         };
         app.update_output_rate();
         if app.settings.use_theme_fonts {
             app.refresh_installed_fonts();
+        } else {
+            app.rebuild_scheme_fonts();
         }
         app.refresh_scheme_notices();
         app.refresh_feature_notices();
@@ -1389,6 +1400,10 @@ impl App {
             Message::Export(msg) => self.export_msg(msg),
             Message::Settings(msg) => self.settings_msg(msg),
             Message::Schemes(msg) => self.schemes_msg(msg),
+            Message::FontsScanned(faces) => {
+                self.fonts_scanned(&faces);
+                Task::none()
+            }
             Message::Tunnels(msg) => self.tunnels_msg(msg),
             Message::Archive(msg) => self.archive_msg(msg),
             Message::Prompt(msg) => self.prompt_msg(msg),

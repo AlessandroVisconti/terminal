@@ -21,7 +21,7 @@ mod glue;
 pub mod view;
 
 pub use fonts::FontChoice;
-pub(crate) use fonts::{BUNDLED as BUNDLED_FONT, choices as font_choices, installed_monospace};
+pub(crate) use fonts::{BUNDLED as BUNDLED_FONT, choices as font_choices};
 pub(crate) use glue::{intern, terminal_style};
 
 /// Quiet period after the last slider or typing change before the file is written.

@@ -195,11 +195,7 @@ fn net_fetch(url: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
 /// Whether a credit link may be opened: `https://` with a host, and no whitespace or control
 /// characters (the opener gets it as one argument, never through a shell).
 pub fn credit_link_ok(url: &str) -> bool {
-    url.strip_prefix("https://").is_some_and(|rest| {
-        !rest.is_empty()
-            && !rest.starts_with('/')
-            && !rest.chars().any(|c| c.is_whitespace() || c.is_control())
-    })
+    fbterm_config::schemes::is_https_url(url)
 }
 
 /// The gallery's line for a fetch that failed or a catalog that could not be used.
@@ -221,6 +217,9 @@ fn load_result(result: Result<Vec<u8>, String>) -> GalleryLoad {
         Ok(catalog) => {
             for skipped in &catalog.skipped {
                 tracing::info!(theme = %skipped, "gallery theme skipped");
+            }
+            for note in &catalog.notes {
+                tracing::info!(theme = %note, "gallery theme kept without part of its entry");
             }
             if catalog.themes.is_empty() && !catalog.skipped.is_empty() {
                 // Every theme was refused: say so instead of "No themes match."
@@ -282,8 +281,7 @@ impl App {
             SchemesMsg::ShowGallery(show) => self.show_gallery(show),
             SchemesMsg::RefreshGallery => self.fetch_gallery(),
             SchemesMsg::GalleryFetched(generation, result) => {
-                self.gallery_fetched(generation, result);
-                Task::none()
+                self.gallery_fetched(generation, result)
             }
             SchemesMsg::Install(id) | SchemesMsg::Update(id) => self.install_theme(&id),
             SchemesMsg::UpdateChoice(choice) => self.update_choice(choice),
@@ -311,20 +309,31 @@ impl App {
 
     /// A fetch finished. Only the latest fetch counts; an older result is dropped. A good
     /// catalog is kept for the rest of the run; a failure shows its line and leaves installed
-    /// schemes alone.
-    fn gallery_fetched(&mut self, generation: u64, result: Result<Vec<u8>, String>) {
+    /// schemes alone. A loaded catalog's suggested fonts are looked for among the installed
+    /// ones (and, when missing, among fonts installed since fbterm started).
+    fn gallery_fetched(
+        &mut self,
+        generation: u64,
+        result: Result<Vec<u8>, String>,
+    ) -> Task<Message> {
         if generation != self.gallery_generation || !self.gallery_loading {
             tracing::debug!(generation, "stale theme catalog result dropped");
-            return;
+            return Task::none();
         }
         self.gallery_loading = false;
         let load = load_result(result);
+        let loaded = matches!(load, GalleryLoad::Loaded(_));
         if let GalleryLoad::Loaded(catalog) = &load {
             self.gallery_catalog = Some(catalog.clone());
         }
         if let Some((_, state)) = &mut self.schemes_win {
             state.gallery = load;
         }
+        if !loaded {
+            return Task::none();
+        }
+        self.refresh_installed_fonts();
+        self.scan_fonts()
     }
 
     /// The loaded catalog's theme `id`, if the gallery shows a catalog.

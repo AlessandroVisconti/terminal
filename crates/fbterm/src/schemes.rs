@@ -29,13 +29,22 @@ fn graphite() -> &'static Scheme {
     })
 }
 
-/// Load every scheme from `dir`, with each problem as a banner line.
+/// Load every scheme from `dir`, with each problem as a banner line: files that did not
+/// load, then schemes that loaded without part of their file.
 pub(crate) fn load(dir: &std::path::Path) -> (SchemeSet, Vec<String>) {
-    let (set, errors) = SchemeSet::load(dir);
+    let (set, errors, notes) = SchemeSet::load_noted(dir);
     for e in &errors {
         tracing::warn!(error = %e, "scheme file not loaded");
     }
-    (set, errors.iter().map(ToString::to_string).collect())
+    for n in &notes {
+        tracing::warn!(note = %n, "scheme loaded without part of its file");
+    }
+    let lines = errors
+        .iter()
+        .chain(&notes)
+        .map(ToString::to_string)
+        .collect();
+    (set, lines)
 }
 
 /// The first entry of the profile editor's scheme list: no override.
@@ -156,6 +165,7 @@ impl App {
         self.schemes = set;
         self.scheme_errors = errors;
         tracing::info!(schemes = self.schemes.all().len(), "schemes reloaded");
+        self.rebuild_scheme_fonts();
         self.warm_ligature_sets();
         if let Some((_, state)) = &mut self.schemes_win {
             state.refresh(&self.schemes);

@@ -25,12 +25,13 @@ impl App {
     /// it to the front and select `select` there.
     pub(crate) fn open_schemes(&mut self, select: Option<String>) -> Task<Message> {
         let select = select.unwrap_or_else(|| self.settings.color_scheme.clone());
-        // The details show: read the installed fonts again, for the suggestion line.
+        // The window shows (a user action): read the installed fonts again, and look for
+        // suggested fonts installed since fbterm started (see `crate::theme_fonts`).
         self.refresh_installed_fonts();
+        let scan = self.scan_fonts();
         if let Some((id, state)) = &mut self.schemes_win {
-            state.set_installed(self.installed_fonts.clone());
             state.update(SchemesMsg::Select(select));
-            return window::gain_focus(*id);
+            return Task::batch([window::gain_focus(*id), scan]);
         }
         let (id, open) = crate::chrome::open_window(window::Settings {
             size: iced::Size::new(980.0, 780.0),
@@ -49,22 +50,20 @@ impl App {
             state.gallery = super::GalleryLoad::Loaded(catalog.clone());
         }
         self.schemes_win = Some((id, state));
-        open.discard()
+        Task::batch([open.discard(), scan])
     }
 
     pub(crate) fn schemes_msg(&mut self, msg: SchemesMsg) -> Task<Message> {
-        // A scheme's details, or the gallery, are shown: the installed fonts are read once
-        // for this showing (a font installed while fbterm runs is then found), never per frame.
-        if matches!(msg, SchemesMsg::Select(_) | SchemesMsg::ShowGallery(true))
-            && self.schemes_win.is_some()
-        {
+        // The gallery is shown (a user action): read the installed fonts again and look for
+        // suggested fonts installed since; moving through the scheme list reads nothing.
+        let scan = if matches!(msg, SchemesMsg::ShowGallery(true)) && self.schemes_win.is_some() {
             self.refresh_installed_fonts();
-            if let Some((_, state)) = &mut self.schemes_win {
-                state.set_installed(self.installed_fonts.clone());
-            }
-        }
+            self.scan_fonts()
+        } else {
+            Task::none()
+        };
         let msg = match self.gallery_msg(msg) {
-            Ok(task) => return task,
+            Ok(task) => return Task::batch([task, scan]),
             Err(msg) => msg,
         };
         match msg {

@@ -14,6 +14,7 @@ use crate::schemes_tests::{app_with, style, user_scheme, with_scheme};
 use crate::schemes_window::gallery::{GalleryIo, GalleryLoad};
 use crate::schemes_window::{FontState, SchemesMsg, SchemesState};
 use crate::settings_window::SettingsMsg;
+use crate::theme_fonts::{FontIo, NewFace, installed_families, pick_new_faces, url_host};
 use crate::watch::Changed;
 
 const SETTINGS_CHANGED: Changed = Changed {
@@ -37,11 +38,66 @@ fn suggesting(name: &str, bg: u32, family: &str) -> Scheme {
     s
 }
 
+/// A fake font setup: what the renderer knows, what a system scan would find, how often the
+/// renderer's list was read and which families were added to it.
+#[derive(Clone, Default)]
+struct FakeFonts {
+    renderer: Arc<Mutex<Vec<String>>>,
+    system: Arc<Mutex<Vec<String>>>,
+    lists: Arc<Mutex<usize>>,
+    scans: Arc<Mutex<usize>>,
+    loaded: Arc<Mutex<Vec<String>>>,
+}
+
+fn strings(families: &[&str]) -> Vec<String> {
+    families.iter().map(|f| (*f).to_owned()).collect()
+}
+
+/// Replace the app's font access: the renderer knows `renderer`; a scan of the system finds
+/// `system` (so families there but not in the renderer are "installed while fbterm runs").
+fn fake_fonts(app: &mut App, renderer: &[&str], system: &[&str]) -> FakeFonts {
+    let fake = FakeFonts::default();
+    *fake.renderer.lock() = strings(renderer);
+    *fake.system.lock() = strings(system);
+    let (f1, f2, f3) = (fake.clone(), fake.clone(), fake.clone());
+    app.font_io = FontIo {
+        list: Arc::new(move |_suggested| {
+            *f1.lists.lock() += 1;
+            f1.renderer.lock().clone()
+        }),
+        scan: Arc::new(move |suggested| {
+            *f2.scans.lock() += 1;
+            let known = f2.renderer.lock().clone();
+            f2.system
+                .lock()
+                .iter()
+                .filter(|f| suggested.contains(*f) && !known.contains(f))
+                .map(|f| NewFace {
+                    family: f.clone(),
+                    data: Vec::new(),
+                })
+                .collect()
+        }),
+        load: Arc::new(move |faces: &[NewFace]| {
+            for face in faces {
+                f3.renderer.lock().push(face.family.clone());
+                f3.loaded.lock().push(face.family.clone());
+            }
+        }),
+    };
+    fake
+}
+
 /// Make `families` the installed fonts, as the font database would report them.
 fn installed(app: &mut App, families: &[&str]) {
-    let list: Vec<String> = families.iter().map(|f| (*f).to_owned()).collect();
-    app.font_list = Arc::new(move || list.clone());
+    fake_fonts(app, families, families);
     app.refresh_installed_fonts();
+}
+
+/// Run the system scan the way the blocking task does and hand its result to the app.
+fn finish_scan(app: &mut App) {
+    let faces = app.font_scan_job()();
+    let _ = app.update(Message::FontsScanned(Arc::new(faces)));
 }
 
 /// Replace the link opener with one that records what it was asked to open.
@@ -225,6 +281,8 @@ fn use_font_needs_the_font_installed_and_saves_font_family() {
     );
     installed(&mut app, &[]);
     send(&mut app, SchemesMsg::Open);
+    // The scan finds nothing new: still missing.
+    finish_scan(&mut app);
     send(&mut app, SchemesMsg::Select(ocean.id.clone()));
     let line = win(&app)
         .font_line(win(&app).draft(&ocean.id).unwrap())
@@ -236,9 +294,11 @@ fn use_font_needs_the_font_installed_and_saves_font_family() {
     send(&mut app, SchemesMsg::UseFont("Sample Mono".into()));
     assert_eq!(app.settings.font_family, "Geist Mono");
 
-    // Installed while fbterm runs: found the next time the details show.
-    app.font_list = Arc::new(|| vec!["Sample Mono".to_owned()]);
-    send(&mut app, SchemesMsg::Select(ocean.id.clone()));
+    // Installed while fbterm runs: the next showing of the window scans and loads it.
+    let fake = fake_fonts(&mut app, &[], &["Sample Mono"]);
+    send(&mut app, SchemesMsg::Open);
+    finish_scan(&mut app);
+    assert_eq!(*fake.loaded.lock(), strings(&["Sample Mono"]));
     let line = win(&app)
         .font_line(win(&app).draft(&ocean.id).unwrap())
         .unwrap();
@@ -411,4 +471,167 @@ fn gallery_rows_carry_the_suggestion_and_install_keeps_it() {
     let back = read_file(&out).unwrap();
     assert!(back.gallery.is_none());
     assert_eq!(back.suggested_font, saved.suggested_font);
+}
+
+#[test]
+fn new_faces_are_only_new_suggested_families() {
+    let faces = [
+        ("Sample Mono", "/fonts/sample-regular.ttf"),
+        ("Sample Mono", "/fonts/sample-bold.ttf"),
+        ("Sample Mono", "/fonts/sample-regular.ttf"),
+        ("Known Mono", "/fonts/known.ttf"),
+        ("Unrelated Sans", "/fonts/unrelated.ttf"),
+    ];
+    let known = ["Known Mono".to_owned()].into_iter().collect();
+    let suggested = ["Sample Mono".to_owned(), "Known Mono".to_owned()]
+        .into_iter()
+        .collect();
+    assert_eq!(
+        pick_new_faces(faces, &known, &suggested),
+        vec!["/fonts/sample-regular.ttf", "/fonts/sample-bold.ttf"]
+    );
+    // Nothing suggested: nothing to load.
+    assert!(pick_new_faces(faces, &known, &Default::default()).is_empty());
+}
+
+#[test]
+fn suggested_families_count_as_installed_without_the_fixed_pitch_flag() {
+    let faces = [
+        ("Fixed Mono", true),
+        ("Flagless Code", false),
+        ("Body Sans", false),
+        ("Fixed Mono", true),
+    ];
+    let suggested = ["Flagless Code".to_owned()].into_iter().collect();
+    assert_eq!(
+        installed_families(faces, &suggested),
+        strings(&["Fixed Mono", "Flagless Code"])
+    );
+    assert_eq!(
+        installed_families(faces, &Default::default()),
+        strings(&["Fixed Mono"])
+    );
+}
+
+#[test]
+fn download_shows_its_host() {
+    assert_eq!(
+        url_host("https://github.com/IBM/plex").as_deref(),
+        Some("github.com")
+    );
+    assert_eq!(
+        url_host("https://vercel.com/font").as_deref(),
+        Some("vercel.com")
+    );
+    assert_eq!(
+        url_host("https://www.jetbrains.com/lp/mono/").as_deref(),
+        Some("www.jetbrains.com")
+    );
+    assert_eq!(
+        url_host("https://a.example:8443/x?y#z").as_deref(),
+        Some("a.example")
+    );
+    assert_eq!(
+        url_host("https://user@evil.example/").as_deref(),
+        Some("evil.example")
+    );
+    assert_eq!(url_host("https://a.example").as_deref(), Some("a.example"));
+    assert_eq!(url_host("http://a.example/"), None);
+
+    let ocean = suggesting("Ocean", 0x102030, "Sample Mono");
+    let (mut app, _, _, _) = app_with(&[profile("a")], "", std::slice::from_ref(&ocean));
+    send(&mut app, SchemesMsg::Open);
+    let line = win(&app)
+        .font_line(win(&app).draft(&ocean.id).unwrap())
+        .unwrap();
+    assert_eq!(line.host.as_deref(), Some("fonts.example"));
+}
+
+#[test]
+fn use_font_is_off_while_in_use() {
+    let ocean = suggesting("Ocean", 0x102030, "Sample Mono");
+    let (mut app, _, _, _) = app_with(
+        &[profile("a")],
+        "font_family = \"Geist Mono\"\nuse_theme_fonts = true\n",
+        std::slice::from_ref(&ocean),
+    );
+    installed(&mut app, &["Sample Mono"]);
+    send(&mut app, SchemesMsg::Open);
+    let line = win(&app)
+        .font_line(win(&app).draft(&ocean.id).unwrap())
+        .unwrap();
+    assert_eq!(line.state, FontState::InUse);
+    assert!(!line.can_use, "already what its panes use");
+}
+
+/// The restart gap: a font installed while fbterm runs is loaded into the renderer on the next
+/// user action, after which the line, `Use font` and the panes agree.
+#[test]
+fn a_font_installed_while_running_is_loaded_on_the_next_showing() {
+    let ocean = suggesting("Ocean", 0x102030, "Sample Mono");
+    let a = with_scheme(&profile("a"), &ocean.id);
+    let (mut app, _, wid, ids) = app_with(
+        &[a],
+        "use_theme_fonts = true\nfont_family = \"Geist Mono\"\n",
+        std::slice::from_ref(&ocean),
+    );
+    let fake = fake_fonts(&mut app, &[], &[]);
+    app.refresh_installed_fonts();
+    assert_eq!(style(&app, wid, ids[0]).font, family("Geist Mono"));
+
+    // The user installs the font, then shows the Color schemes window.
+    fake.system.lock().push("Sample Mono".into());
+    let task = app.update(Message::Schemes(SchemesMsg::Open));
+    drop(task);
+    assert!(app.fonts_scanning, "the scan runs on the blocking pool");
+    finish_scan(&mut app);
+    assert!(!app.fonts_scanning);
+    assert_eq!(*fake.loaded.lock(), strings(&["Sample Mono"]));
+    assert_eq!(style(&app, wid, ids[0]).font, family("Sample Mono"));
+    let line = win(&app)
+        .font_line(win(&app).draft(&ocean.id).unwrap())
+        .unwrap();
+    assert_eq!(line.state, FontState::InUse);
+    // Showing again scans for the suggestions still missing (the built-ins' here) and loads
+    // nothing twice.
+    send(&mut app, SchemesMsg::Open);
+    finish_scan(&mut app);
+    assert_eq!(*fake.scans.lock(), 2);
+    assert_eq!(*fake.loaded.lock(), strings(&["Sample Mono"]));
+}
+
+#[test]
+fn nothing_missing_means_no_scan() {
+    let (mut app, _, _, _) = app_with(&[profile("a")], "", &[]);
+    let fake = fake_fonts(
+        &mut app,
+        &["Geist Mono", "JetBrains Mono", "IBM Plex Mono"],
+        &[],
+    );
+    send(&mut app, SchemesMsg::Open);
+    assert!(!app.fonts_scanning);
+    assert_eq!(*fake.scans.lock(), 0);
+}
+
+#[test]
+fn turning_theme_fonts_on_scans_and_select_never_does() {
+    let ocean = suggesting("Ocean", 0x102030, "Sample Mono");
+    let a = with_scheme(&profile("a"), &ocean.id);
+    let (mut app, _, wid, ids) = app_with(&[a], "", std::slice::from_ref(&ocean));
+    let fake = fake_fonts(&mut app, &[], &["Sample Mono"]);
+    let task = app.update(Message::Settings(SettingsMsg::Open));
+    drop(task);
+    let task = app.update(Message::Settings(SettingsMsg::UseThemeFonts(true)));
+    assert!(task.units() >= 1, "turning it on starts a scan");
+    finish_scan(&mut app);
+    assert_eq!(style(&app, wid, ids[0]).font, family("Sample Mono"));
+
+    // Moving through the scheme list reads nothing again.
+    send(&mut app, SchemesMsg::Open);
+    let (lists, scans) = (*fake.lists.lock(), *fake.scans.lock());
+    for id in ["harbor", "ember", ocean.id.as_str(), "graphite"] {
+        send(&mut app, SchemesMsg::Select(id.into()));
+    }
+    assert_eq!(*fake.lists.lock(), lists);
+    assert_eq!(*fake.scans.lock(), scans);
 }

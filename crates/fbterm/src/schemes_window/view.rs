@@ -30,7 +30,9 @@ const NAME_CHARS: usize = 32;
 const CREDIT_CHARS: usize = 300;
 /// The longest suggested font family shown before an ellipsis (the line keeps its buttons).
 const FAMILY_CHARS: usize = 48;
-/// The same in a gallery row, where the line is narrower.
+/// The longest host shown beside `Download`.
+const HOST_CHARS: usize = 32;
+/// The longest suggested font family shown in a gallery row, where the line is narrower.
 const FAMILY_CHARS_COMPACT: usize = 34;
 /// Height of the preview terminal: the sample's seven lines at the usual sizes.
 const PREVIEW_HEIGHT: f32 = 116.0;
@@ -558,9 +560,13 @@ fn suggestion<'a>(t: &'static Tokens, line: FontLine, compact: bool) -> Element<
         );
     }
     if let Some(url) = line.url {
+        let label = match &line.host {
+            Some(host) => format!("Download ({})", clip_chars(host, HOST_CHARS)),
+            None => "Download".to_owned(),
+        };
         actions = actions.push(
             button(
-                text("Download")
+                text(label)
                     .font(UI_FONT)
                     .size(12)
                     .wrapping(text::Wrapping::None),

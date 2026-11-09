@@ -420,15 +420,20 @@ impl App {
         let decorations_changed = new.window_decorations != self.settings.window_decorations;
         let scheme_changed = new.color_scheme != self.settings.color_scheme;
         let before = scheme_changed.then(|| self.pane_colors());
-        let theme_fonts_on = new.use_theme_fonts && !self.settings.use_theme_fonts;
+        let theme_fonts_changed = new.use_theme_fonts != self.settings.use_theme_fonts;
         self.settings = new;
         if let Some((_, state)) = &mut self.schemes_win {
             state.sync_settings(&self.settings);
         }
-        if theme_fonts_on {
-            // Panes read their font each frame; they need to know what is installed.
+        let mut task = task;
+        if theme_fonts_changed && self.settings.use_theme_fonts {
+            // Turned on (a user action): read what is installed, and look for suggested fonts
+            // installed since fbterm started.
             self.refresh_installed_fonts();
             self.warm_ligature_sets();
+            task = Task::batch([task, self.scan_fonts()]);
+        } else if theme_fonts_changed {
+            self.rebuild_scheme_fonts();
         }
         self.refresh_feature_notices();
         if restyle {

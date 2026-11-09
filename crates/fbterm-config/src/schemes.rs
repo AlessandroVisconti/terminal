@@ -776,10 +776,20 @@ impl SchemeSet {
     /// Load the built-ins and every `*.toml` file in `dir`, sorted by file name. A
     /// missing directory means no user schemes. A file that does not parse, uses a
     /// built-in id or repeats an earlier id is skipped with an error. A scheme whose
-    /// `[suggested_font]` table was dropped loads, with an error saying so.
+    /// `[suggested_font]` table was dropped loads, with an error saying so (see
+    /// [`SchemeSet::load_noted`] to tell the two apart).
     pub fn load(dir: &Path) -> (Self, Vec<ConfigError>) {
+        let (set, mut errors, notes) = Self::load_noted(dir);
+        errors.extend(notes);
+        (set, errors)
+    }
+
+    /// [`SchemeSet::load`], with the files that did not load (`errors`) apart from the notes
+    /// about schemes that loaded without part of their file (a dropped `[suggested_font]`).
+    pub fn load_noted(dir: &Path) -> (Self, Vec<ConfigError>, Vec<ConfigError>) {
         let mut schemes = builtins();
         let mut errors = Vec::new();
+        let mut notes = Vec::new();
         let mut files: Vec<PathBuf> = match std::fs::read_dir(dir) {
             Ok(entries) => entries
                 .filter_map(Result::ok)
@@ -795,7 +805,7 @@ impl SchemeSet {
         files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
         for path in files {
             let read = read_file_noted(&path).map(|(scheme, note)| {
-                errors.extend(note);
+                notes.extend(note);
                 scheme
             });
             match read {
@@ -823,7 +833,7 @@ impl SchemeSet {
                 },
             }
         }
-        (Self { schemes }, errors)
+        (Self { schemes }, errors, notes)
     }
 
     pub fn get(&self, id: &str) -> Option<&Scheme> {
@@ -1155,6 +1165,25 @@ mod tests {
         );
         let scheme: Scheme = toml::from_str(&future).unwrap();
         assert_eq!(scheme.suggested_font, Some(sample_font()));
+    }
+
+    #[test]
+    fn dropped_tables_are_notes_not_load_errors() {
+        let dir = std::env::temp_dir().join(format!("fbterm-notes-{}", new_user_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("user-font.toml"),
+            file_with_font("family = \"A\"\nurl = \"http://a.example/\"\nlicense = \"OFL-1.1\""),
+        )
+        .unwrap();
+        std::fs::write(dir.join("user-bad.toml"), "id = 1\n").unwrap();
+        let (set, errors, notes) = SchemeSet::load_noted(&dir);
+        assert!(set.get("user-font").is_some());
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].path.ends_with("user-bad.toml"), "{errors:?}");
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].message.contains("suggested_font"), "{notes:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
