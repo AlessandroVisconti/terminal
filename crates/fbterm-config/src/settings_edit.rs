@@ -887,6 +887,20 @@ mod tests {
         assert!(!edited.contains("uncompressed"), "{edited}");
     }
 
+    /// Another key in the file is invalid: the whole edit is refused with that key's line, so
+    /// the scrollback is never written without the uncompressed value it drags down (the
+    /// drag-down's own read of the edited file cannot fail where this one passed).
+    #[test]
+    fn lowering_scrollback_beside_an_invalid_key_writes_nothing() {
+        for text in [
+            "theme = \"purple\"\nscrollback_lines = 20000\nuncompressed_history_lines = 8000\n",
+            "scrollback_lines = 20000\nuncompressed_history_lines = \"lots\"\n",
+        ] {
+            let (line, _) = edit_text(text, &SettingChange::ScrollbackLines(5_000)).unwrap_err();
+            assert!(line.is_some(), "{text}");
+        }
+    }
+
     #[test]
     fn every_field_round_trips_through_the_template() {
         let mut text = SETTINGS_TEMPLATE.to_owned();
