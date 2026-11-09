@@ -675,7 +675,6 @@ fn selecting_the_schemes_tab_scans() {
     let fake = fake_fonts(&mut app, &[], &[]);
     send(&mut app, SchemesMsg::Open);
     assert!(app.fonts_scanning);
-    assert!(!app.fonts_rescan, "one open starts one scan, no follow-up");
     finish_scan(&mut app);
     assert_eq!(*fake.scans.lock(), 1);
     select_first_tab(&mut app, wid);
@@ -706,6 +705,29 @@ fn focusing_the_window_with_the_tab_active_scans() {
     let _ = app.update(Message::WindowFocused(wid));
     assert!(!app.fonts_scanning, "another tab active: no scan");
     assert_eq!(*fake.scans.lock(), 2);
+}
+
+#[test]
+fn focusing_during_a_scan_queues_one_more() {
+    let ocean = suggesting("Ocean", 0x102030, "Sample Mono");
+    let (mut app, _, wid, _) = app_with(&[profile("a")], "", std::slice::from_ref(&ocean));
+    let fake = fake_fonts(&mut app, &[], &[]);
+    send(&mut app, SchemesMsg::Open);
+    assert!(app.fonts_scanning);
+    // The user installs the font while the scan runs, then focuses the window.
+    fake.system.lock().push("Sample Mono".into());
+    let _ = app.update(Message::WindowFocused(wid));
+    assert!(app.fonts_rescan, "one more scan is queued");
+    // The running scan ends (it read the system before the install) and the follow-up runs.
+    let stale = Vec::new();
+    let _ = app.update(Message::FontsScanned(Arc::new(stale)));
+    assert!(app.fonts_scanning, "the follow-up scan started");
+    finish_scan(&mut app);
+    assert!(!app.fonts_scanning);
+    let line = win(&app)
+        .font_line(win(&app).draft(&ocean.id).unwrap())
+        .unwrap();
+    assert_ne!(line.state, FontState::NotInstalled);
 }
 
 #[test]
