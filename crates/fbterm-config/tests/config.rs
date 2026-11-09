@@ -1299,3 +1299,87 @@ fn icon_is_written_only_when_set() {
     assert_eq!(text.matches("icon").count(), 1, "{text}");
     assert_eq!(ProfileStore::load(&path).unwrap(), store);
 }
+
+#[test]
+fn macos_blur_style_defaults_to_native() {
+    assert_eq!(Settings::default().macos_blur_style, MacosBlurStyle::Native);
+    let s = Settings::load_or_default(&tmp("nope.toml"));
+    assert_eq!(s.macos_blur_style, MacosBlurStyle::Native);
+}
+
+#[test]
+fn macos_blur_style_parses_both_values_and_round_trips() {
+    let path = tmp("settings.toml");
+    for (text, want) in [
+        ("macos_blur_style = \"native\"\n", MacosBlurStyle::Native),
+        ("macos_blur_style = \"classic\"\n", MacosBlurStyle::Classic),
+    ] {
+        std::fs::write(&path, text).unwrap();
+        let (s, warning) = Settings::load_checked(&path).unwrap();
+        assert_eq!(s.macos_blur_style, want, "{text}");
+        assert!(warning.is_none(), "{text}");
+    }
+    let s = Settings {
+        macos_blur_style: MacosBlurStyle::Classic,
+        ..Settings::default()
+    };
+    s.save(&path).unwrap();
+    assert_eq!(
+        Settings::load(&path).unwrap().macos_blur_style,
+        MacosBlurStyle::Classic
+    );
+}
+
+#[test]
+fn unknown_macos_blur_style_falls_back_to_native_with_a_notice() {
+    let path = tmp("settings.toml");
+    for value in ["\"frosted\"", "\"Classic\"", "true", "3"] {
+        std::fs::write(
+            &path,
+            format!("font_size = 14.0\nmacos_blur_style = {value}\n"),
+        )
+        .unwrap();
+        let (s, warning) = Settings::load_checked(&path).unwrap();
+        assert_eq!(s.macos_blur_style, MacosBlurStyle::Native, "{value}");
+        assert_eq!(s.font_size, 14.0, "the rest of the file still loads");
+        let w = warning.expect(value);
+        assert_eq!(w.line, Some(2), "{value}");
+        assert!(w.message.contains("macos_blur_style"), "{}", w.message);
+        assert!(w.message.contains("using \"native\""), "{}", w.message);
+    }
+}
+
+#[test]
+fn settings_template_shows_the_macos_blur_style() {
+    assert!(
+        SETTINGS_TEMPLATE
+            .lines()
+            .any(|l| l == "#macos_blur_style = \"native\"  # or \"classic\"; macOS only"),
+        "template line"
+    );
+}
+
+#[test]
+fn macos_blur_style_write_field_round_trips() {
+    let path = tmp("settings.toml");
+    Settings::write_field(
+        &path,
+        &SettingChange::MacosBlurStyle(MacosBlurStyle::Classic),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("macos_blur_style = \"classic\""), "{text}");
+    assert_eq!(
+        Settings::load(&path).unwrap().macos_blur_style,
+        MacosBlurStyle::Classic
+    );
+    Settings::write_field(
+        &path,
+        &SettingChange::MacosBlurStyle(MacosBlurStyle::Native),
+    )
+    .unwrap();
+    assert_eq!(
+        Settings::load(&path).unwrap().macos_blur_style,
+        MacosBlurStyle::Native
+    );
+}

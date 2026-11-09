@@ -90,7 +90,13 @@ impl App {
         pane.scheme
             .as_deref()
             .and_then(|id| self.schemes.get(id))
-            .or_else(|| self.schemes.get(&self.settings.color_scheme))
+            .unwrap_or_else(|| self.global_scheme())
+    }
+
+    /// The scheme a pane without its own uses: the global one if known, else Graphite.
+    pub(crate) fn global_scheme(&self) -> &Scheme {
+        self.schemes
+            .get(&self.settings.color_scheme)
             .or_else(|| self.schemes.get("graphite"))
             .unwrap_or_else(|| graphite())
     }

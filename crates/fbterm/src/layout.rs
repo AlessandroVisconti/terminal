@@ -116,6 +116,14 @@ fn beside(existing: Layout, subtree: Layout, side: Side, share: f32) -> Layout {
 }
 
 impl Layout {
+    /// The top-left tile: the first pane in reading order, found without collecting them.
+    pub fn first_pane(&self) -> PaneId {
+        match self {
+            Layout::Pane(id) => *id,
+            Layout::Split { first, .. } => first.first_pane(),
+        }
+    }
+
     /// Panes in reading order (first child before second, depth first).
     pub fn panes(&self) -> Vec<PaneId> {
         let mut out = Vec::new();
@@ -491,6 +499,17 @@ mod tests {
         let mut t = pane(1);
         t.split(p(1), Side::Left, p(2));
         assert_eq!(t.panes(), vec![p(2), p(1)]);
+    }
+
+    #[test]
+    fn the_first_pane_is_the_top_left_tile() {
+        assert_eq!(pane(1).first_pane(), p(1));
+        let mut l = pane(1);
+        l.split(p(1), Side::Left, p(2));
+        l.split(p(2), Side::Top, p(3));
+        l.split(p(1), Side::Bottom, p(4));
+        assert_eq!(l.first_pane(), p(3));
+        assert_eq!(l.first_pane(), l.panes()[0]);
     }
 
     #[test]

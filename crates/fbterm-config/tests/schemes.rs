@@ -266,3 +266,47 @@ fn fifo_or_device_is_refused() {
         "{err}"
     );
 }
+
+#[test]
+fn dark_and_light_schemes_are_told_apart_by_their_background() {
+    let graphite = builtins()
+        .into_iter()
+        .find(|s| s.id == "graphite")
+        .expect("built-in");
+    assert!(fbterm_config::schemes::is_dark(&graphite.colors));
+    let mut colors = graphite.colors;
+    colors.background = Rgb {
+        r: 0xf6,
+        g: 0xf6,
+        b: 0xf4,
+    };
+    assert!(!fbterm_config::schemes::is_dark(&colors));
+    colors.background = Rgb {
+        r: 0x10,
+        g: 0x10,
+        b: 0x12,
+    };
+    assert!(fbterm_config::schemes::is_dark(&colors));
+    // Mid grey sits on the dark side of the line only below it.
+    colors.background = Rgb {
+        r: 0x80,
+        g: 0x80,
+        b: 0x80,
+    };
+    assert!(!fbterm_config::schemes::is_dark(&colors));
+    // Each built-in's variant, pinned: a palette tweak across the line shows here.
+    let kinds: Vec<(String, bool)> = builtins()
+        .iter()
+        .map(|s| (s.id.clone(), fbterm_config::schemes::is_dark(&s.colors)))
+        .collect();
+    let want: Vec<(String, bool)> = [
+        ("graphite", true),
+        ("graphite-light", false),
+        ("harbor", true),
+        ("ember", true),
+    ]
+    .iter()
+    .map(|(id, dark)| ((*id).to_owned(), *dark))
+    .collect();
+    assert_eq!(kinds, want);
+}

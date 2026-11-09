@@ -319,54 +319,13 @@ fn the_windows_build_is_read_from_the_registry_output() {
 #[test]
 fn an_unsupported_blur_switch_cannot_be_toggled() {
     use crate::app::Message;
-    use iced::advanced::layout::{self, Layout};
-    use iced::advanced::widget::{Operation, Tree};
-    use iced::advanced::{Shell, clipboard};
-    use iced::{Element, Event, Pixels, Point, Rectangle, Size, mouse};
-
-    struct Texts(Vec<String>);
-    impl Operation for Texts {
-        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-            operate(self);
-        }
-        fn text(&mut self, _id: Option<&iced::advanced::widget::Id>, _b: Rectangle, text: &str) {
-            self.0.push(text.to_owned());
-        }
-    }
     let t = crate::theme::tokens(ThemeMode::Dark);
-    let renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
-        iced::Font::DEFAULT,
-        Pixels(16.0),
-    ));
-    let size = Size::new(560.0, 72.0);
     // Lay the blur row out, click the switch at its right end: what does it publish and say?
-    let run = |supported: bool| -> (Vec<Message>, Vec<String>) {
-        let mut element: Element<'_, Message> = view::blur_setting(t, false, true, supported, 0.8);
-        let mut tree = Tree::new(&element);
-        let node = element.as_widget_mut().layout(
-            &mut tree,
-            &renderer,
-            &layout::Limits::new(Size::ZERO, size),
-        );
-        let bounds = node.bounds();
-        let mut texts = Texts(Vec::new());
-        element
-            .as_widget_mut()
-            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
-        let at = Point::new(bounds.width - 16.0 - 9.0, bounds.height / 2.0);
-        let mut messages = Vec::new();
-        let mut shell = Shell::new(&mut messages);
-        element.as_widget_mut().update(
-            &mut tree,
-            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
-            Layout::new(&node),
-            mouse::Cursor::Available(at),
-            &renderer,
-            &mut clipboard::Null,
-            &mut shell,
-            &Rectangle::with_size(size),
-        );
-        (messages, texts.0)
+    let run = |supported: bool| {
+        press_right_end(
+            view::blur_setting(t, false, true, supported, 0.8),
+            16.0 + 9.0,
+        )
     };
     let (messages, texts) = run(true);
     assert!(
@@ -386,6 +345,142 @@ fn an_unsupported_blur_switch_cannot_be_toggled() {
         texts.iter().any(|x| x == "Not supported on this system"),
         "{texts:?}"
     );
+}
+
+/// Lay `element` out at 560x72, press at its right end `inset` px in from the edge, and say
+/// what it published and which texts it shows.
+fn press_right_end(
+    mut element: iced::Element<'_, crate::app::Message>,
+    inset: f32,
+) -> (Vec<crate::app::Message>, Vec<String>) {
+    use iced::advanced::layout::{self, Layout};
+    use iced::advanced::widget::{Operation, Tree};
+    use iced::advanced::{Shell, clipboard};
+    use iced::{Event, Pixels, Point, Rectangle, Size, mouse};
+
+    struct Texts(Vec<String>);
+    impl Operation for Texts {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+            operate(self);
+        }
+        fn text(&mut self, _id: Option<&iced::advanced::widget::Id>, _b: Rectangle, text: &str) {
+            self.0.push(text.to_owned());
+        }
+    }
+    let renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
+        iced::Font::DEFAULT,
+        Pixels(16.0),
+    ));
+    let size = Size::new(560.0, 72.0);
+    let mut tree = Tree::new(&element);
+    let node = element.as_widget_mut().layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, size),
+    );
+    let bounds = node.bounds();
+    let mut texts = Texts(Vec::new());
+    element
+        .as_widget_mut()
+        .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
+    let at = Point::new(bounds.width - inset, bounds.height / 2.0);
+    let mut messages = Vec::new();
+    // A press and its release: buttons publish on release, switches on press.
+    for event in [
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    ] {
+        let mut shell = Shell::new(&mut messages);
+        element.as_widget_mut().update(
+            &mut tree,
+            &Event::Mouse(event),
+            Layout::new(&node),
+            mouse::Cursor::Available(at),
+            &renderer,
+            &mut clipboard::Null,
+            &mut shell,
+            &Rectangle::with_size(size),
+        );
+    }
+    (messages, texts.0)
+}
+
+#[test]
+fn the_blur_style_row_is_macos_only() {
+    use crate::chrome::Platform;
+    assert!(view::shows_blur_style_row(Platform::MacOs));
+    assert!(!view::shows_blur_style_row(Platform::Windows));
+    assert!(!view::shows_blur_style_row(Platform::Linux));
+}
+
+#[test]
+fn the_blur_style_row_is_usable_only_while_blur_shows() {
+    // Same rule as the blur switch's effect: blur on, below full opacity, on a system that
+    // blurs.
+    assert!(view::blur_style_enabled(true, true, 0.8));
+    assert!(!view::blur_style_enabled(false, true, 0.8), "blur off");
+    assert!(!view::blur_style_enabled(true, true, 1.0), "opacity 100%");
+    assert!(!view::blur_style_enabled(true, false, 0.8), "unsupported");
+}
+
+#[test]
+fn choosing_a_blur_style_applies_and_saves_it() {
+    use fbterm_config::MacosBlurStyle;
+    let mut s = state();
+    let e = s.update(SettingsMsg::BlurStyle(MacosBlurStyle::Classic));
+    assert_eq!(
+        e.apply,
+        Some(SettingChange::MacosBlurStyle(MacosBlurStyle::Classic))
+    );
+    assert_eq!(e.write, Write::Now);
+    assert_eq!(s.values.macos_blur_style, MacosBlurStyle::Classic);
+    assert_eq!(
+        s.take_pending(),
+        [SettingChange::MacosBlurStyle(MacosBlurStyle::Classic)]
+    );
+    assert_eq!(
+        s.update(SettingsMsg::BlurStyle(MacosBlurStyle::Classic)),
+        Effect::NONE
+    );
+}
+
+#[test]
+fn the_blur_style_row_offers_both_styles_and_is_inert_without_blur() {
+    use crate::app::Message;
+    use fbterm_config::MacosBlurStyle;
+    let t = crate::theme::tokens(ThemeMode::Dark);
+    const NOTE: &str = "Native uses the macOS look. Classic is fbterm's earlier, clearer blur.";
+    // The right segment is `Classic`: press inside it, clear of the card's padding.
+    let inset = 16.0 + 2.0 + 12.0;
+    let (messages, texts) = press_right_end(
+        view::blur_style_setting(t, &MacosBlurStyle::Native, true, true),
+        inset,
+    );
+    assert!(
+        matches!(
+            messages.as_slice(),
+            [Message::Settings(SettingsMsg::BlurStyle(
+                MacosBlurStyle::Classic
+            ))]
+        ),
+        "{messages:?}"
+    );
+    for want in ["Blur style", "Native", "Classic", NOTE] {
+        assert!(texts.iter().any(|x| x == want), "{want}: {texts:?}");
+    }
+    // Disabled (blur off or opaque): nothing to press.
+    let (messages, texts) = press_right_end(
+        view::blur_style_setting(t, &MacosBlurStyle::Native, true, false),
+        inset,
+    );
+    assert!(messages.is_empty(), "{messages:?}");
+    assert!(texts.iter().any(|x| x == NOTE), "{texts:?}");
+    // Not editable (the file does not load): nothing to press either.
+    let (messages, _) = press_right_end(
+        view::blur_style_setting(t, &MacosBlurStyle::Native, false, true),
+        inset,
+    );
+    assert!(messages.is_empty(), "{messages:?}");
 }
 
 #[test]

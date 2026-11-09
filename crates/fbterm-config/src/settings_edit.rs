@@ -7,7 +7,8 @@ use toml_edit::{DocumentMut, Item, Value};
 
 use crate::keys::{Action, Overrides};
 use crate::settings::{
-    DEFAULT_MAX_FPS, MaxFps, SecretStorage, Settings, TabBar, ThemeMode, WindowDecorations,
+    DEFAULT_MAX_FPS, MacosBlurStyle, MaxFps, SecretStorage, Settings, TabBar, ThemeMode,
+    WindowDecorations,
 };
 use crate::store::{ConfigError, atomic_write, line_of};
 
@@ -24,6 +25,8 @@ pub enum SettingChange {
     Ligatures(bool),
     BackgroundOpacity(f32),
     BackgroundBlur(bool),
+    /// How blur looks on macOS.
+    MacosBlurStyle(MacosBlurStyle),
     WindowDecorations(WindowDecorations),
     TabBar(TabBar),
     /// Fold the sidebar into profile groups.
@@ -53,6 +56,7 @@ impl SettingChange {
             Self::Ligatures(_) => "ligatures",
             Self::BackgroundOpacity(_) => "background_opacity",
             Self::BackgroundBlur(_) => "background_blur",
+            Self::MacosBlurStyle(_) => "macos_blur_style",
             Self::WindowDecorations(_) => "window_decorations",
             Self::TabBar(_) => "tab_bar",
             Self::TabGroups(_) => "tab_groups",
@@ -77,6 +81,7 @@ impl SettingChange {
             Self::Ligatures(v) => settings.ligatures = *v,
             Self::BackgroundOpacity(v) => settings.background_opacity = *v,
             Self::BackgroundBlur(v) => settings.background_blur = *v,
+            Self::MacosBlurStyle(v) => settings.macos_blur_style.clone_from(v),
             Self::WindowDecorations(v) => settings.window_decorations = *v,
             Self::TabBar(v) => settings.tab_bar = Some(*v),
             Self::TabGroups(v) => settings.tab_groups = *v,
@@ -110,6 +115,7 @@ impl SettingChange {
             Self::TunnelMaxRetries(v) => Value::from(i64::from(*v)),
             Self::SecretStorage(v) => Value::from(v.as_str()),
             Self::WindowDecorations(v) => Value::from(v.as_str()),
+            Self::MacosBlurStyle(v) => Value::from(v.as_str()),
             Self::TabBar(v) => Value::from(v.as_str()),
             Self::TabGroups(v) => Value::from(*v),
             // Written per action by `edit_keys`.

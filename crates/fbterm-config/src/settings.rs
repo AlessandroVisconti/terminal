@@ -81,6 +81,60 @@ impl TabBar {
     }
 }
 
+/// How a blurred window looks on macOS (`macos_blur_style`). Other systems ignore it.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub enum MacosBlurStyle {
+    /// The system's own blur look.
+    #[default]
+    Native,
+    /// fbterm's earlier, clearer blur, recreated with the system's public blur view.
+    Classic,
+    /// A value from the file that is neither `"native"` nor `"classic"`, as written.
+    /// [`Settings::clamp`] replaces it with [`MacosBlurStyle::Native`], so loaded settings
+    /// never hold it.
+    Invalid(String),
+}
+
+impl MacosBlurStyle {
+    /// The value as written in `settings.toml` (an invalid value writes the default).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Native | Self::Invalid(_) => "native",
+            Self::Classic => "classic",
+        }
+    }
+}
+
+impl Serialize for MacosBlurStyle {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for MacosBlurStyle {
+    /// Lenient: any string, number or boolean loads, and what is not allowed is kept as
+    /// [`MacosBlurStyle::Invalid`] for [`Settings::clamp`] to report, so a typo does not
+    /// reject the whole file (a table or array is still a type error).
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged, expecting = "\"native\" or \"classic\"")]
+        enum Raw {
+            Int(i64),
+            Float(f64),
+            Bool(bool),
+            Str(String),
+        }
+        Ok(match Raw::deserialize(d)? {
+            Raw::Str(s) if s == "native" => Self::Native,
+            Raw::Str(s) if s == "classic" => Self::Classic,
+            Raw::Str(s) => Self::Invalid(format!("{s:?}")),
+            Raw::Int(n) => Self::Invalid(n.to_string()),
+            Raw::Float(f) => Self::Invalid(format!("{f:?}")),
+            Raw::Bool(b) => Self::Invalid(b.to_string()),
+        })
+    }
+}
+
 /// The most redraws per second caused by program output (`max_fps`). Typing, scrolling and
 /// resizing always redraw at once; this only caps how often streaming output is drawn.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -187,6 +241,9 @@ pub struct Settings {
     pub background_opacity: f32,
     /// Blur what shows through a translucent background, where the platform supports it.
     pub background_blur: bool,
+    /// How blur looks on macOS: the system's look or fbterm's earlier, clearer one. Ignored
+    /// elsewhere.
+    pub macos_blur_style: MacosBlurStyle,
     /// Who draws the window title bar on Linux; ignored elsewhere.
     pub window_decorations: WindowDecorations,
     /// Where open sessions are listed. `None`: never answered (absent from the file), which
@@ -225,6 +282,7 @@ impl Default for Settings {
             grapheme_clusters: false,
             background_opacity: 1.0,
             background_blur: false,
+            macos_blur_style: MacosBlurStyle::Native,
             window_decorations: WindowDecorations::Fbterm,
             tab_bar: None,
             tab_groups: false,
@@ -377,6 +435,15 @@ impl Settings {
             ));
             self.max_fps = MaxFps::Fixed(used);
         }
+        if let MacosBlurStyle::Invalid(raw) = &self.macos_blur_style {
+            problems.push((
+                "macos_blur_style".into(),
+                format!(
+                    "macos_blur_style {raw} is not \"native\" or \"classic\", using \"native\""
+                ),
+            ));
+            self.macos_blur_style = MacosBlurStyle::Native;
+        }
         for (name, why) in std::mem::take(&mut self.keys.invalid) {
             let message = format!("keys.{name} {why}");
             problems.push((name, message));
@@ -457,6 +524,11 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 # Blur what shows through a see-through background (true or false), where the system
 # supports it: macOS, Windows 11 and Linux desktops that offer blur.
 #background_blur = false
+
+# How blur looks on macOS: "native" (the system's look, with its own tint) or "classic"
+# (fbterm's earlier, clearer blur: no tint of its own, so the opacity drives the look).
+# Ignored on other systems.
+#macos_blur_style = "native"  # or "classic"; macOS only
 
 # Window title bar on Linux: "fbterm" draws it in the tab bar, "system" uses the desktop's.
 #window_decorations = "fbterm"
