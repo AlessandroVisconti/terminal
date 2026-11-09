@@ -36,7 +36,7 @@ pub enum SettingsMsg {
     Close,
     OpenFile,
     RevealFolder,
-    /// Open the Color schemes window.
+    /// Open the Color schemes tab.
     EditSchemes,
     /// The quiet period after change number `n` passed.
     Flush(u64),
@@ -79,7 +79,7 @@ pub enum SettingsMsg {
     Clusters(bool),
     /// `Ligatures`.
     Ligatures(bool),
-    /// `Use each theme's suggested font`, the same setting as the Color schemes window's
+    /// `Use each theme's suggested font`, the same setting as the Color schemes tab's
     /// checkbox.
     UseThemeFonts(bool),
     MaxFps(MaxFps),

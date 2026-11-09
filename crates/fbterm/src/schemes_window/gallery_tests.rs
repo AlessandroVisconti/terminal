@@ -1,4 +1,4 @@
-//! The theme gallery in the Color schemes window, against a temporary config directory and a
+//! The theme gallery in the Color schemes tab, against a temporary config directory and a
 //! fake fetch: when the catalog is fetched, how failures read, and what Install and Update do
 //! to scheme files and open panes. Nothing here touches the network.
 

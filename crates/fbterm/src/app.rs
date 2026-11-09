@@ -191,7 +191,7 @@ pub enum Message {
     },
     Editor(EditorMsg),
     Settings(SettingsMsg),
-    /// The Color schemes window.
+    /// The Color schemes tab.
     Schemes(SchemesMsg),
     /// A window's tunnels panel.
     Tunnels(TunnelsMsg),
@@ -1423,7 +1423,7 @@ impl App {
             }
             Message::WindowScale(id, s) => {
                 tracing::info!(window = ?id, scale = s, "window scale");
-                // Kept for every open window: the editor, Settings and Color schemes windows
+                // Kept for every open window: the editor, Settings and Color schemes tabs
                 // draw their hairlines from it too (`physical_scale`).
                 let open = self.open_windows.contains(&id) || self.windows.contains_key(&id);
                 if open && s.is_finite() && s > 0.0 {

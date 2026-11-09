@@ -1164,7 +1164,7 @@ fn merged_layout_survives_save_and_reload() {
 
 #[test]
 fn every_window_reports_its_own_os_scale() {
-    // The editor, Settings and Color schemes windows draw hairlines from their physical
+    // The editor, Settings and Color schemes tabs draw hairlines from their physical
     // scale too, so the OS scale is kept for any open window, not only terminal ones, and
     // dropped when the window closes.
     let paths = paths_with(&[profile("a")]);

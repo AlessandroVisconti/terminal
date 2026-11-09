@@ -573,7 +573,7 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 # With history_compression: how many of the newest lines stay uncompressed.
 #uncompressed_history_lines = 10000  # 1000 to scrollback_lines - 1
 
-# Terminal color scheme for every session (a scheme id; see the Color schemes window).
+# Terminal color scheme for every session (a scheme id; see the Color schemes tab).
 #color_scheme = "graphite"
 
 # Let programs turn on the kitty keyboard protocol (true or false).

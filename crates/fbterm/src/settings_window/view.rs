@@ -434,7 +434,7 @@ fn appearance<'a>(
     rows
 }
 
-/// The label of the `use_theme_fonts` row; the Color schemes window's checkbox says the same.
+/// The label of the `use_theme_fonts` row; the Color schemes tab's checkbox says the same.
 pub const THEME_FONTS_LABEL: &str = "Use each theme's suggested font";
 /// The line under it.
 pub const THEME_FONTS_HINT: &str =
