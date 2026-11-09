@@ -1,0 +1,1292 @@
+# Copied from the terminal-themes repository (catalog.toml, main).
+format = 1
+
+[[themes]]
+id = "ayu-dark"
+name = "Ayu Dark"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#bfbdb6"
+background = "#10141c"
+cursor = "#e6b450"
+selection = "#193155"
+black = "#0a0000"
+red = "#e6495a"
+green = "#97c142"
+yellow = "#e89d37"
+blue = "#17acf2"
+magenta = "#c385fe"
+cyan = "#84ceb5"
+white = "#ffffff"
+bright_black = "#0a0000"
+bright_red = "#f07178"
+bright_green = "#aad94c"
+bright_yellow = "#ffb454"
+bright_blue = "#59c2ff"
+bright_magenta = "#d2a6ff"
+bright_cyan = "#95e6cb"
+bright_white = "#ffffff"
+
+[themes.credit]
+project = "Ayu"
+author = "Konstantin Pschera"
+url = "https://github.com/ayu-theme/ayu-colors"
+license = "MIT"
+copyright = "Copyright (c) Konstantin Pschera <me@kons.ch> (kons.ch)"
+license_file = "LICENSES/ayu-MIT.txt"
+description = "Simple theme with bright colors, Dark variant. The 16 colors are the palette's own terminal colors (ayu 9.1.0); foreground and background are the editor colors, cursor is the accent, and selection is the translucent editor selection blended onto the background."
+derived = false
+
+[themes.suggested_font]
+family = "Geist Mono"
+url = "https://vercel.com/font"
+license = "OFL-1.1"
+
+[[themes]]
+id = "ayu-light"
+name = "Ayu Light"
+version = 2
+variant = "light"
+
+[themes.colors]
+foreground = "#5c6166"
+background = "#fcfcfc"
+cursor = "#f29718"
+selection = "#d7e4f6"
+black = "#86878c"
+red = "#f07171"
+green = "#86b300"
+yellow = "#eba400"
+blue = "#22a4e6"
+magenta = "#a37acc"
+cyan = "#4cbf99"
+white = "#adaeb1"
+bright_black = "#939498"
+bright_red = "#f07171"
+bright_green = "#86b300"
+bright_yellow = "#eba400"
+bright_blue = "#22a4e6"
+bright_magenta = "#a37acc"
+bright_cyan = "#4cbf99"
+bright_white = "#c5c5c8"
+
+[themes.credit]
+project = "Ayu"
+author = "Konstantin Pschera"
+url = "https://github.com/ayu-theme/ayu-colors"
+license = "MIT"
+copyright = "Copyright (c) Konstantin Pschera <me@kons.ch> (kons.ch)"
+license_file = "LICENSES/ayu-MIT.txt"
+description = "Simple theme with bright colors, Light variant. The 16 colors are the palette's own terminal colors (ayu 9.1.0); foreground and background are the editor colors, cursor is the accent, and selection is the translucent editor selection blended onto the background."
+derived = false
+
+[themes.suggested_font]
+family = "Geist Mono"
+url = "https://vercel.com/font"
+license = "OFL-1.1"
+
+[[themes]]
+id = "ayu-mirage"
+name = "Ayu Mirage"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#cccac2"
+background = "#242936"
+cursor = "#ffcc66"
+selection = "#2b4768"
+black = "#0a0000"
+red = "#f06b5c"
+green = "#bfe76d"
+yellow = "#e6b752"
+blue = "#3bbbf4"
+magenta = "#d09ffd"
+cyan = "#84ceb5"
+white = "#d2d6dc"
+bright_black = "#0a0000"
+bright_red = "#f39184"
+bright_green = "#d5ff80"
+bright_yellow = "#ffcd66"
+bright_blue = "#73d0ff"
+bright_magenta = "#dfbfff"
+bright_cyan = "#95e6cb"
+bright_white = "#e3e6ea"
+
+[themes.credit]
+project = "Ayu"
+author = "Konstantin Pschera"
+url = "https://github.com/ayu-theme/ayu-colors"
+license = "MIT"
+copyright = "Copyright (c) Konstantin Pschera <me@kons.ch> (kons.ch)"
+license_file = "LICENSES/ayu-MIT.txt"
+description = "Simple theme with bright colors, Mirage variant. The 16 colors are the palette's own terminal colors (ayu 9.1.0); foreground and background are the editor colors, cursor is the accent, and selection is the translucent editor selection blended onto the background."
+derived = false
+
+[themes.suggested_font]
+family = "Geist Mono"
+url = "https://vercel.com/font"
+license = "OFL-1.1"
+
+[[themes]]
+id = "catppuccin-frappe"
+name = "Catppuccin Frappé"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#c6d0f5"
+background = "#303446"
+cursor = "#f2d5cf"
+selection = "#626880"
+black = "#51576d"
+red = "#e78284"
+green = "#a6d189"
+yellow = "#e5c890"
+blue = "#8caaee"
+magenta = "#f4b8e4"
+cyan = "#81c8be"
+white = "#a5adce"
+bright_black = "#626880"
+bright_red = "#e67172"
+bright_green = "#8ec772"
+bright_yellow = "#d9ba73"
+bright_blue = "#7b9ef0"
+bright_magenta = "#f2a4db"
+bright_cyan = "#5abfb5"
+bright_white = "#b5bfe2"
+
+[themes.credit]
+project = "Catppuccin"
+author = "Catppuccin"
+url = "https://github.com/catppuccin/catppuccin"
+license = "MIT"
+copyright = "Copyright (c) 2021 Catppuccin"
+license_file = "LICENSES/catppuccin-MIT.txt"
+description = "Soothing pastel theme, Frappé flavor. The 16 colors are the palette's official ANSI colors and the cursor is Rosewater; selection uses Surface 2, since fbterm draws selected text in the normal foreground."
+derived = false
+
+[themes.suggested_font]
+family = "Maple Mono"
+url = "https://github.com/subframe7536/maple-font"
+license = "OFL-1.1"
+
+[[themes]]
+id = "catppuccin-latte"
+name = "Catppuccin Latte"
+version = 2
+variant = "light"
+
+[themes.colors]
+foreground = "#4c4f69"
+background = "#eff1f5"
+cursor = "#dc8a78"
+selection = "#acb0be"
+black = "#5c5f77"
+red = "#d20f39"
+green = "#40a02b"
+yellow = "#df8e1d"
+blue = "#1e66f5"
+magenta = "#ea76cb"
+cyan = "#179299"
+white = "#acb0be"
+bright_black = "#6c6f85"
+bright_red = "#de293e"
+bright_green = "#49af3d"
+bright_yellow = "#eea02d"
+bright_blue = "#456eff"
+bright_magenta = "#fe85d8"
+bright_cyan = "#2d9fa8"
+bright_white = "#bcc0cc"
+
+[themes.credit]
+project = "Catppuccin"
+author = "Catppuccin"
+url = "https://github.com/catppuccin/catppuccin"
+license = "MIT"
+copyright = "Copyright (c) 2021 Catppuccin"
+license_file = "LICENSES/catppuccin-MIT.txt"
+description = "Soothing pastel theme, Latte flavor. The 16 colors are the palette's official ANSI colors and the cursor is Rosewater; selection uses Surface 2, since fbterm draws selected text in the normal foreground."
+derived = false
+
+[themes.suggested_font]
+family = "Maple Mono"
+url = "https://github.com/subframe7536/maple-font"
+license = "OFL-1.1"
+
+[[themes]]
+id = "catppuccin-macchiato"
+name = "Catppuccin Macchiato"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#cad3f5"
+background = "#24273a"
+cursor = "#f4dbd6"
+selection = "#5b6078"
+black = "#494d64"
+red = "#ed8796"
+green = "#a6da95"
+yellow = "#eed49f"
+blue = "#8aadf4"
+magenta = "#f5bde6"
+cyan = "#8bd5ca"
+white = "#a5adcb"
+bright_black = "#5b6078"
+bright_red = "#ec7486"
+bright_green = "#8ccf7f"
+bright_yellow = "#e1c682"
+bright_blue = "#78a1f6"
+bright_magenta = "#f2a9dd"
+bright_cyan = "#63cbc0"
+bright_white = "#b8c0e0"
+
+[themes.credit]
+project = "Catppuccin"
+author = "Catppuccin"
+url = "https://github.com/catppuccin/catppuccin"
+license = "MIT"
+copyright = "Copyright (c) 2021 Catppuccin"
+license_file = "LICENSES/catppuccin-MIT.txt"
+description = "Soothing pastel theme, Macchiato flavor. The 16 colors are the palette's official ANSI colors and the cursor is Rosewater; selection uses Surface 2, since fbterm draws selected text in the normal foreground."
+derived = false
+
+[themes.suggested_font]
+family = "Maple Mono"
+url = "https://github.com/subframe7536/maple-font"
+license = "OFL-1.1"
+
+[[themes]]
+id = "catppuccin-mocha"
+name = "Catppuccin Mocha"
+version = 3
+variant = "dark"
+
+[themes.colors]
+foreground = "#cdd6f4"
+background = "#1e1e2e"
+cursor = "#f5e0dc"
+selection = "#585b70"
+black = "#45475a"
+red = "#f38ba8"
+green = "#a6e3a1"
+yellow = "#f9e2af"
+blue = "#89b4fa"
+magenta = "#f5c2e7"
+cyan = "#94e2d5"
+white = "#a6adc8"
+bright_black = "#585b70"
+bright_red = "#f37799"
+bright_green = "#89d88b"
+bright_yellow = "#ebd391"
+bright_blue = "#74a8fc"
+bright_magenta = "#f2aede"
+bright_cyan = "#6bd7ca"
+bright_white = "#bac2de"
+
+[themes.credit]
+project = "Catppuccin"
+author = "Catppuccin"
+url = "https://github.com/catppuccin/catppuccin"
+license = "MIT"
+copyright = "Copyright (c) 2021 Catppuccin"
+license_file = "LICENSES/catppuccin-MIT.txt"
+description = "Soothing pastel theme, Mocha flavor. The 16 colors are the palette's official ANSI colors and the cursor is Rosewater; selection uses Surface 2, since fbterm draws selected text in the normal foreground."
+derived = false
+
+[themes.suggested_font]
+family = "Maple Mono"
+url = "https://github.com/subframe7536/maple-font"
+license = "OFL-1.1"
+
+[[themes]]
+id = "dracula"
+name = "Dracula"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#f8f8f2"
+background = "#282a36"
+cursor = "#f8f8f2"
+selection = "#44475a"
+black = "#21222c"
+red = "#ff5555"
+green = "#50fa7b"
+yellow = "#f1fa8c"
+blue = "#bd93f9"
+magenta = "#ff79c6"
+cyan = "#8be9fd"
+white = "#f8f8f2"
+bright_black = "#6272a4"
+bright_red = "#ff6e6e"
+bright_green = "#69ff94"
+bright_yellow = "#ffffa5"
+bright_blue = "#d6acff"
+bright_magenta = "#ff92df"
+bright_cyan = "#a4ffff"
+bright_white = "#ffffff"
+
+[themes.credit]
+project = "Dracula"
+author = "Dracula Theme"
+url = "https://github.com/dracula/dracula-theme"
+license = "MIT"
+copyright = "Copyright (c) 2023 Dracula Theme"
+license_file = "LICENSES/dracula-MIT.txt"
+description = "Dark theme for vampires. The 16 colors are the specification's ANSI colors; background, foreground and selection are its palette's, and the cursor is the foreground (the specification names no cursor color)."
+derived = false
+
+[themes.suggested_font]
+family = "Fira Code"
+url = "https://github.com/tonsky/FiraCode"
+license = "OFL-1.1"
+
+[[themes]]
+id = "everforest-dark"
+name = "Everforest Dark"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#d3c6aa"
+background = "#2d353b"
+cursor = "#d3c6aa"
+selection = "#543a48"
+black = "#475258"
+red = "#e67e80"
+green = "#a7c080"
+yellow = "#dbbc7f"
+blue = "#7fbbb3"
+magenta = "#d699b6"
+cyan = "#83c092"
+white = "#d3c6aa"
+bright_black = "#475258"
+bright_red = "#e67e80"
+bright_green = "#a7c080"
+bright_yellow = "#dbbc7f"
+bright_blue = "#7fbbb3"
+bright_magenta = "#d699b6"
+bright_cyan = "#83c092"
+bright_white = "#d3c6aa"
+
+[themes.credit]
+project = "Everforest"
+author = "sainnhe"
+url = "https://github.com/sainnhe/everforest"
+license = "MIT"
+copyright = "Copyright (c) 2019 sainnhe"
+license_file = "LICENSES/everforest-MIT.txt"
+description = "Green based color scheme, dark mode with medium background. The 16 colors are the terminal colors the color scheme defines (normal and bright alike); the cursor is the foreground and selection is bg_visual, the scheme's visual-selection color."
+derived = false
+
+[themes.suggested_font]
+family = "Victor Mono"
+url = "https://rubjo.github.io/victor-mono/"
+license = "OFL-1.1"
+
+[[themes]]
+id = "everforest-light"
+name = "Everforest Light"
+version = 2
+variant = "light"
+
+[themes.colors]
+foreground = "#5c6a72"
+background = "#fdf6e3"
+cursor = "#5c6a72"
+selection = "#eaedc8"
+black = "#5c6a72"
+red = "#f85552"
+green = "#8da101"
+yellow = "#dfa000"
+blue = "#3a94c5"
+magenta = "#df69ba"
+cyan = "#35a77c"
+white = "#e6e2cc"
+bright_black = "#5c6a72"
+bright_red = "#f85552"
+bright_green = "#8da101"
+bright_yellow = "#dfa000"
+bright_blue = "#3a94c5"
+bright_magenta = "#df69ba"
+bright_cyan = "#35a77c"
+bright_white = "#e6e2cc"
+
+[themes.credit]
+project = "Everforest"
+author = "sainnhe"
+url = "https://github.com/sainnhe/everforest"
+license = "MIT"
+copyright = "Copyright (c) 2019 sainnhe"
+license_file = "LICENSES/everforest-MIT.txt"
+description = "Green based color scheme, light mode with medium background. The 16 colors are the terminal colors the color scheme defines (normal and bright alike); the cursor is the foreground and selection is bg_visual, the scheme's visual-selection color."
+derived = false
+
+[themes.suggested_font]
+family = "Victor Mono"
+url = "https://rubjo.github.io/victor-mono/"
+license = "OFL-1.1"
+
+[[themes]]
+id = "github-dark"
+name = "GitHub Dark"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#e6edf3"
+background = "#010409"
+cursor = "#e6edf3"
+selection = "#0a1d39"
+black = "#484f58"
+red = "#ff7b72"
+green = "#3fb950"
+yellow = "#d29922"
+blue = "#58a6ff"
+magenta = "#bc8cff"
+cyan = "#39c5cf"
+white = "#b1bac4"
+bright_black = "#6e7681"
+bright_red = "#ffa198"
+bright_green = "#56d364"
+bright_yellow = "#e3b341"
+bright_blue = "#79c0ff"
+bright_magenta = "#d2a8ff"
+bright_cyan = "#56d4dd"
+bright_white = "#ffffff"
+
+[themes.credit]
+project = "GitHub Theme"
+author = "Primer"
+url = "https://github.com/primer/github-vscode-theme"
+license = "MIT"
+copyright = "Copyright (c) 2020 Primer; Primer Primitives: Copyright (c) 2018 GitHub Inc."
+license_file = "LICENSES/github-theme-MIT.txt"
+description = "GitHub's dark default theme. The 16 colors are its terminal colors from Primer Primitives 7.10.0 (MIT, GitHub Inc.; license in LICENSES/primer-primitives-MIT.txt); background is the panel background the terminal is drawn on, foreground and cursor are the default text color, and selection is the translucent accent selection blended onto the background."
+derived = false
+
+[themes.suggested_font]
+family = "Monaspace Neon"
+url = "https://monaspace.githubnext.com/"
+license = "OFL-1.1"
+
+[[themes]]
+id = "github-light"
+name = "GitHub Light"
+version = 2
+variant = "light"
+
+[themes.colors]
+foreground = "#1f2328"
+background = "#f6f8fa"
+cursor = "#1f2328"
+selection = "#c7dbf4"
+black = "#24292f"
+red = "#cf222e"
+green = "#116329"
+yellow = "#4d2d00"
+blue = "#0969da"
+magenta = "#8250df"
+cyan = "#1b7c83"
+white = "#6e7781"
+bright_black = "#57606a"
+bright_red = "#a40e26"
+bright_green = "#1a7f37"
+bright_yellow = "#633c01"
+bright_blue = "#218bff"
+bright_magenta = "#a475f9"
+bright_cyan = "#3192aa"
+bright_white = "#8c959f"
+
+[themes.credit]
+project = "GitHub Theme"
+author = "Primer"
+url = "https://github.com/primer/github-vscode-theme"
+license = "MIT"
+copyright = "Copyright (c) 2020 Primer; Primer Primitives: Copyright (c) 2018 GitHub Inc."
+license_file = "LICENSES/github-theme-MIT.txt"
+description = "GitHub's light default theme. The 16 colors are its terminal colors from Primer Primitives 7.10.0 (MIT, GitHub Inc.; license in LICENSES/primer-primitives-MIT.txt); background is the panel background the terminal is drawn on, foreground and cursor are the default text color, and selection is the translucent accent selection blended onto the background."
+derived = false
+
+[themes.suggested_font]
+family = "Monaspace Neon"
+url = "https://monaspace.githubnext.com/"
+license = "OFL-1.1"
+
+[[themes]]
+id = "gruvbox-dark"
+name = "Gruvbox Dark"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#ebdbb2"
+background = "#282828"
+cursor = "#ebdbb2"
+selection = "#665c54"
+black = "#282828"
+red = "#cc241d"
+green = "#98971a"
+yellow = "#d79921"
+blue = "#458588"
+magenta = "#b16286"
+cyan = "#689d6a"
+white = "#a89984"
+bright_black = "#928374"
+bright_red = "#fb4934"
+bright_green = "#b8bb26"
+bright_yellow = "#fabd2f"
+bright_blue = "#83a598"
+bright_magenta = "#d3869b"
+bright_cyan = "#8ec07c"
+bright_white = "#ebdbb2"
+
+[themes.credit]
+project = "Gruvbox"
+author = "Pavel Pertsev (morhetz)"
+url = "https://github.com/morhetz/gruvbox"
+license = "MIT"
+copyright = "Copyright (c) 2018 Pavel Pertsev"
+license_file = "LICENSES/gruvbox-MIT.txt"
+description = "Retro groove color scheme, dark mode with medium contrast. The 16 colors follow the terminal colors the original color scheme defines; the cursor is the foreground (fg1) and selection is bg3, the scheme's visual-selection color. The original repository states MIT in its README; the license text is from the gruvbox-community repository."
+derived = false
+
+[themes.suggested_font]
+family = "Inconsolata"
+url = "https://github.com/googlefonts/Inconsolata"
+license = "OFL-1.1"
+
+[[themes]]
+id = "gruvbox-light"
+name = "Gruvbox Light"
+version = 2
+variant = "light"
+
+[themes.colors]
+foreground = "#3c3836"
+background = "#fbf1c7"
+cursor = "#3c3836"
+selection = "#bdae93"
+black = "#fbf1c7"
+red = "#cc241d"
+green = "#98971a"
+yellow = "#d79921"
+blue = "#458588"
+magenta = "#b16286"
+cyan = "#689d6a"
+white = "#7c6f64"
+bright_black = "#928374"
+bright_red = "#9d0006"
+bright_green = "#79740e"
+bright_yellow = "#b57614"
+bright_blue = "#076678"
+bright_magenta = "#8f3f71"
+bright_cyan = "#427b58"
+bright_white = "#3c3836"
+
+[themes.credit]
+project = "Gruvbox"
+author = "Pavel Pertsev (morhetz)"
+url = "https://github.com/morhetz/gruvbox"
+license = "MIT"
+copyright = "Copyright (c) 2018 Pavel Pertsev"
+license_file = "LICENSES/gruvbox-MIT.txt"
+description = "Retro groove color scheme, light mode with medium contrast. The 16 colors follow the terminal colors the original color scheme defines; the cursor is the foreground (fg1) and selection is bg3, the scheme's visual-selection color. The original repository states MIT in its README; the license text is from the gruvbox-community repository."
+derived = false
+
+[themes.suggested_font]
+family = "Inconsolata"
+url = "https://github.com/googlefonts/Inconsolata"
+license = "OFL-1.1"
+
+[[themes]]
+id = "kanagawa"
+name = "Kanagawa"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#dcd7ba"
+background = "#1f1f28"
+cursor = "#c8c093"
+selection = "#2d4f67"
+black = "#16161d"
+red = "#c34043"
+green = "#76946a"
+yellow = "#c0a36e"
+blue = "#7e9cd8"
+magenta = "#957fb8"
+cyan = "#6a9589"
+white = "#c8c093"
+bright_black = "#727169"
+bright_red = "#e82424"
+bright_green = "#98bb6c"
+bright_yellow = "#e6c384"
+bright_blue = "#7fb4ca"
+bright_magenta = "#938aa9"
+bright_cyan = "#7aa89f"
+bright_white = "#dcd7ba"
+
+[themes.credit]
+project = "Kanagawa"
+author = "Tommaso Laurenzi"
+url = "https://github.com/rebelot/kanagawa.nvim"
+license = "MIT"
+copyright = "Copyright (c) 2021 Tommaso Laurenzi"
+license_file = "LICENSES/kanagawa-MIT.txt"
+description = "Dark theme inspired by the colors of the famous painting by Katsushika Hokusai, Wave style. The 16 colors are the theme's terminal colors; foreground and background are fujiWhite and sumiInk3, cursor is oldWhite and selection is waveBlue2, as in the project's own terminal color files."
+derived = false
+
+[themes.suggested_font]
+family = "Iosevka"
+url = "https://typeof.net/Iosevka/"
+license = "OFL-1.1"
+
+[[themes]]
+id = "nord"
+name = "Nord"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#d8dee9"
+background = "#2e3440"
+cursor = "#d8dee9"
+selection = "#434c5e"
+black = "#3b4252"
+red = "#bf616a"
+green = "#a3be8c"
+yellow = "#ebcb8b"
+blue = "#81a1c1"
+magenta = "#b48ead"
+cyan = "#88c0d0"
+white = "#e5e9f0"
+bright_black = "#4c566a"
+bright_red = "#bf616a"
+bright_green = "#a3be8c"
+bright_yellow = "#ebcb8b"
+bright_blue = "#81a1c1"
+bright_magenta = "#b48ead"
+bright_cyan = "#8fbcbb"
+bright_white = "#eceff4"
+
+[themes.credit]
+project = "Nord"
+author = "Sven Greb"
+url = "https://github.com/nordtheme/nord"
+license = "MIT"
+copyright = "Copyright (c) 2016-present Sven Greb <development@svengreb.de> (https://www.svengreb.de)"
+license_file = "LICENSES/nord-MIT.txt"
+description = "An arctic, north-bluish color palette. Foreground, background, cursor and the 16 colors are the official Nord terminal colors; selection is Nord 2."
+derived = false
+
+[themes.suggested_font]
+family = "Red Hat Mono"
+url = "https://github.com/RedHatOfficial/RedHatFont"
+license = "OFL-1.1"
+
+[[themes]]
+id = "one-dark"
+name = "One Dark"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#abb2bf"
+background = "#282c34"
+cursor = "#528bff"
+selection = "#3e4451"
+black = "#3e4451"
+red = "#e06c75"
+green = "#98c379"
+yellow = "#e5c07b"
+blue = "#61afef"
+magenta = "#c678dd"
+cyan = "#56b6c2"
+white = "#abb2bf"
+bright_black = "#5c6370"
+bright_red = "#e06c75"
+bright_green = "#98c379"
+bright_yellow = "#e5c07b"
+bright_blue = "#61afef"
+bright_magenta = "#c678dd"
+bright_cyan = "#56b6c2"
+bright_white = "#abb2bf"
+
+[themes.credit]
+project = "One Dark and One Light"
+author = "GitHub Inc."
+url = "https://github.com/atom/atom/tree/master/packages/one-dark-syntax"
+license = "MIT"
+copyright = "Copyright (c) 2016 GitHub Inc."
+license_file = "LICENSES/atom-one-MIT.txt"
+description = "Dark syntax theme from the Atom editor. The palette has no terminal colors; fbterm's mapping: black is the selection color, bright black is mono-3, white and bright white are mono-1 (the text color), and red, green, yellow, blue, magenta and cyan are hue-5, hue-4, hue-6-2, hue-2, hue-3 and hue-1 in both normal and bright. Cursor and selection are the theme's own."
+derived = true
+
+[themes.suggested_font]
+family = "Fira Code"
+url = "https://github.com/tonsky/FiraCode"
+license = "OFL-1.1"
+
+[[themes]]
+id = "one-light"
+name = "One Light"
+version = 2
+variant = "light"
+
+[themes.colors]
+foreground = "#383a42"
+background = "#fafafa"
+cursor = "#526fff"
+selection = "#e5e5e6"
+black = "#383a42"
+red = "#e45649"
+green = "#50a14f"
+yellow = "#cb7701"
+blue = "#4078f2"
+magenta = "#a626a4"
+cyan = "#0184bc"
+white = "#a0a1a7"
+bright_black = "#696c77"
+bright_red = "#e45649"
+bright_green = "#50a14f"
+bright_yellow = "#cb7701"
+bright_blue = "#4078f2"
+bright_magenta = "#a626a4"
+bright_cyan = "#0184bc"
+bright_white = "#fafafa"
+
+[themes.credit]
+project = "One Dark and One Light"
+author = "GitHub Inc."
+url = "https://github.com/atom/atom/tree/master/packages/one-light-syntax"
+license = "MIT"
+copyright = "Copyright (c) 2016 GitHub Inc."
+license_file = "LICENSES/atom-one-MIT.txt"
+description = "Light syntax theme from the Atom editor. The palette has no terminal colors; fbterm's mapping: black is mono-1 (the text color), bright black is mono-2, white is mono-3, bright white is the background, and red, green, yellow, blue, magenta and cyan are hue-5, hue-4, hue-6-2, hue-2, hue-3 and hue-1 in both normal and bright. Cursor and selection are the theme's own."
+derived = true
+
+[themes.suggested_font]
+family = "Fira Code"
+url = "https://github.com/tonsky/FiraCode"
+license = "OFL-1.1"
+
+[[themes]]
+id = "rose-pine"
+name = "Rosé Pine"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#e0def4"
+background = "#191724"
+cursor = "#524f67"
+selection = "#403d52"
+black = "#26233a"
+red = "#eb6f92"
+green = "#31748f"
+yellow = "#f6c177"
+blue = "#9ccfd8"
+magenta = "#c4a7e7"
+cyan = "#ebbcba"
+white = "#e0def4"
+bright_black = "#6e6a86"
+bright_red = "#eb6f92"
+bright_green = "#31748f"
+bright_yellow = "#f6c177"
+bright_blue = "#9ccfd8"
+bright_magenta = "#c4a7e7"
+bright_cyan = "#ebbcba"
+bright_white = "#e0def4"
+
+[themes.credit]
+project = "Rosé Pine"
+author = "Rosé Pine"
+url = "https://github.com/rose-pine/rose-pine-theme"
+license = "MIT"
+copyright = "Copyright (c) 2023 Rosé Pine"
+license_file = "LICENSES/rose-pine-MIT.txt"
+description = "All natural pine, faux fur and a bit of soho vibes for the classy minimalist. Colors follow the official palette roles: terminal colors as the palette assigns them, Base background, Text foreground, Highlight High cursor and Highlight Med selection."
+derived = false
+
+[themes.suggested_font]
+family = "IBM Plex Mono"
+url = "https://github.com/IBM/plex"
+license = "OFL-1.1"
+
+[[themes]]
+id = "rose-pine-dawn"
+name = "Rosé Pine Dawn"
+version = 2
+variant = "light"
+
+[themes.colors]
+foreground = "#464261"
+background = "#faf4ed"
+cursor = "#cecacd"
+selection = "#dfdad9"
+black = "#f2e9e1"
+red = "#b4637a"
+green = "#286983"
+yellow = "#ea9d34"
+blue = "#56949f"
+magenta = "#907aa9"
+cyan = "#d7827e"
+white = "#464261"
+bright_black = "#9893a5"
+bright_red = "#b4637a"
+bright_green = "#286983"
+bright_yellow = "#ea9d34"
+bright_blue = "#56949f"
+bright_magenta = "#907aa9"
+bright_cyan = "#d7827e"
+bright_white = "#464261"
+
+[themes.credit]
+project = "Rosé Pine"
+author = "Rosé Pine"
+url = "https://github.com/rose-pine/rose-pine-theme"
+license = "MIT"
+copyright = "Copyright (c) 2023 Rosé Pine"
+license_file = "LICENSES/rose-pine-MIT.txt"
+description = "All natural pine, faux fur and a bit of soho vibes for the classy minimalist. Colors follow the official palette roles: terminal colors as the palette assigns them, Base background, Text foreground, Highlight High cursor and Highlight Med selection."
+derived = false
+
+[themes.suggested_font]
+family = "IBM Plex Mono"
+url = "https://github.com/IBM/plex"
+license = "OFL-1.1"
+
+[[themes]]
+id = "rose-pine-moon"
+name = "Rosé Pine Moon"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#e0def4"
+background = "#232136"
+cursor = "#56526e"
+selection = "#44415a"
+black = "#393552"
+red = "#eb6f92"
+green = "#3e8fb0"
+yellow = "#f6c177"
+blue = "#9ccfd8"
+magenta = "#c4a7e7"
+cyan = "#ea9a97"
+white = "#e0def4"
+bright_black = "#6e6a86"
+bright_red = "#eb6f92"
+bright_green = "#3e8fb0"
+bright_yellow = "#f6c177"
+bright_blue = "#9ccfd8"
+bright_magenta = "#c4a7e7"
+bright_cyan = "#ea9a97"
+bright_white = "#e0def4"
+
+[themes.credit]
+project = "Rosé Pine"
+author = "Rosé Pine"
+url = "https://github.com/rose-pine/rose-pine-theme"
+license = "MIT"
+copyright = "Copyright (c) 2023 Rosé Pine"
+license_file = "LICENSES/rose-pine-MIT.txt"
+description = "All natural pine, faux fur and a bit of soho vibes for the classy minimalist. Colors follow the official palette roles: terminal colors as the palette assigns them, Base background, Text foreground, Highlight High cursor and Highlight Med selection."
+derived = false
+
+[themes.suggested_font]
+family = "IBM Plex Mono"
+url = "https://github.com/IBM/plex"
+license = "OFL-1.1"
+
+[[themes]]
+id = "solarized-dark"
+name = "Solarized Dark"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#839496"
+background = "#002b36"
+cursor = "#93a1a1"
+selection = "#073642"
+black = "#073642"
+red = "#dc322f"
+green = "#859900"
+yellow = "#b58900"
+blue = "#268bd2"
+magenta = "#d33682"
+cyan = "#2aa198"
+white = "#eee8d5"
+bright_black = "#002b36"
+bright_red = "#cb4b16"
+bright_green = "#586e75"
+bright_yellow = "#657b83"
+bright_blue = "#839496"
+bright_magenta = "#6c71c4"
+bright_cyan = "#93a1a1"
+bright_white = "#fdf6e3"
+
+[themes.credit]
+project = "Solarized"
+author = "Ethan Schoonover"
+url = "https://github.com/altercation/solarized"
+license = "MIT"
+copyright = "Copyright (c) 2011 Ethan Schoonover"
+license_file = "LICENSES/solarized-MIT.txt"
+description = "Precision colors for machines and people, dark mode. The 16 colors follow the README's terminal table and background/foreground are base03/base0; cursor is base1 (emphasized content) and selection is base02 (the highlight background)."
+derived = false
+
+[themes.suggested_font]
+family = "Source Code Pro"
+url = "https://github.com/adobe-fonts/source-code-pro"
+license = "OFL-1.1"
+
+[[themes]]
+id = "solarized-light"
+name = "Solarized Light"
+version = 2
+variant = "light"
+
+[themes.colors]
+foreground = "#657b83"
+background = "#fdf6e3"
+cursor = "#586e75"
+selection = "#eee8d5"
+black = "#073642"
+red = "#dc322f"
+green = "#859900"
+yellow = "#b58900"
+blue = "#268bd2"
+magenta = "#d33682"
+cyan = "#2aa198"
+white = "#eee8d5"
+bright_black = "#002b36"
+bright_red = "#cb4b16"
+bright_green = "#586e75"
+bright_yellow = "#657b83"
+bright_blue = "#839496"
+bright_magenta = "#6c71c4"
+bright_cyan = "#93a1a1"
+bright_white = "#fdf6e3"
+
+[themes.credit]
+project = "Solarized"
+author = "Ethan Schoonover"
+url = "https://github.com/altercation/solarized"
+license = "MIT"
+copyright = "Copyright (c) 2011 Ethan Schoonover"
+license_file = "LICENSES/solarized-MIT.txt"
+description = "Precision colors for machines and people, light mode. The 16 colors follow the README's terminal table and background/foreground are base3/base00; cursor is base01 (emphasized content) and selection is base2 (the highlight background)."
+derived = false
+
+[themes.suggested_font]
+family = "Source Code Pro"
+url = "https://github.com/adobe-fonts/source-code-pro"
+license = "OFL-1.1"
+
+[[themes]]
+id = "tokyo-night"
+name = "Tokyo Night"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#787c99"
+background = "#16161e"
+cursor = "#c0caf5"
+selection = "#282b3b"
+black = "#363b54"
+red = "#f7768e"
+green = "#73daca"
+yellow = "#e0af68"
+blue = "#7aa2f7"
+magenta = "#bb9af7"
+cyan = "#7dcfff"
+white = "#787c99"
+bright_black = "#363b54"
+bright_red = "#f7768e"
+bright_green = "#73daca"
+bright_yellow = "#e0af68"
+bright_blue = "#7aa2f7"
+bright_magenta = "#bb9af7"
+bright_cyan = "#7dcfff"
+bright_white = "#acb0d0"
+
+[themes.credit]
+project = "Tokyo Night"
+author = "Enkia"
+url = "https://github.com/enkia/tokyo-night-vscode-theme"
+license = "MIT"
+copyright = "Copyright (c) 2018-present Enkia"
+license_file = "LICENSES/tokyo-night-MIT.txt"
+description = "A clean dark theme that celebrates the lights of downtown Tokyo at night. Foreground, background and the 16 colors are the theme's terminal colors; cursor is its editor cursor, and selection is its translucent terminal selection blended onto the background."
+derived = false
+
+[themes.suggested_font]
+family = "JetBrains Mono"
+url = "https://www.jetbrains.com/lp/mono/"
+license = "OFL-1.1"
+
+[[themes]]
+id = "tokyo-night-day"
+name = "Tokyo Night Day"
+version = 3
+variant = "light"
+
+[themes.colors]
+foreground = "#3760bf"
+background = "#e1e2e7"
+cursor = "#3760bf"
+selection = "#b7c1e3"
+black = "#b4b5b9"
+red = "#f52a65"
+green = "#587539"
+yellow = "#8c6c3e"
+blue = "#2e7de9"
+magenta = "#9854f1"
+cyan = "#007197"
+white = "#6172b0"
+bright_black = "#a1a6c5"
+bright_red = "#ff4774"
+bright_green = "#5c8524"
+bright_yellow = "#a27629"
+bright_blue = "#358aff"
+bright_magenta = "#a463ff"
+bright_cyan = "#007ea8"
+bright_white = "#3760bf"
+
+[themes.credit]
+project = "Tokyo Night"
+author = "Enkia; Folke Lemaitre (tokyonight.nvim)"
+url = "https://github.com/folke/tokyonight.nvim"
+license = "Apache-2.0"
+copyright = "Copyright (c) 2018-present Enkia"
+license_file = "LICENSES/tokyo-night-storm-day.txt"
+description = "Tokyo Night, Day style. Terminal colors from tokyonight.nvim by Folke Lemaitre (Apache-2.0), which extends Enkia's Tokyo Night palette (MIT): its day style's terminal colors, foreground, background, cursor (the foreground) and visual selection. Both licenses, MIT for the Enkia palette and Apache-2.0 for the terminal colors, are in the license file."
+derived = false
+
+[themes.suggested_font]
+family = "JetBrains Mono"
+url = "https://www.jetbrains.com/lp/mono/"
+license = "OFL-1.1"
+
+[[themes]]
+id = "tokyo-night-storm"
+name = "Tokyo Night Storm"
+version = 3
+variant = "dark"
+
+[themes.colors]
+foreground = "#c0caf5"
+background = "#24283b"
+cursor = "#c0caf5"
+selection = "#2e3c64"
+black = "#1d202f"
+red = "#f7768e"
+green = "#9ece6a"
+yellow = "#e0af68"
+blue = "#7aa2f7"
+magenta = "#bb9af7"
+cyan = "#7dcfff"
+white = "#a9b1d6"
+bright_black = "#414868"
+bright_red = "#ff899d"
+bright_green = "#9fe044"
+bright_yellow = "#faba4a"
+bright_blue = "#8db0ff"
+bright_magenta = "#c7a9ff"
+bright_cyan = "#a4daff"
+bright_white = "#c0caf5"
+
+[themes.credit]
+project = "Tokyo Night"
+author = "Enkia; Folke Lemaitre (tokyonight.nvim)"
+url = "https://github.com/folke/tokyonight.nvim"
+license = "Apache-2.0"
+copyright = "Copyright (c) 2018-present Enkia"
+license_file = "LICENSES/tokyo-night-storm-day.txt"
+description = "Tokyo Night, Storm style. Terminal colors from tokyonight.nvim by Folke Lemaitre (Apache-2.0), which extends Enkia's Tokyo Night palette (MIT): its storm style's terminal colors, foreground, background, cursor (the foreground) and visual selection. Both licenses, MIT for the Enkia palette and Apache-2.0 for the terminal colors, are in the license file."
+derived = false
+
+[themes.suggested_font]
+family = "JetBrains Mono"
+url = "https://www.jetbrains.com/lp/mono/"
+license = "OFL-1.1"
+
+[[themes]]
+id = "vscode-dark-modern"
+name = "VS Code Dark Modern"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#cccccc"
+background = "#181818"
+cursor = "#cccccc"
+selection = "#264f78"
+black = "#000000"
+red = "#cd3131"
+green = "#0dbc79"
+yellow = "#e5e510"
+blue = "#2472c8"
+magenta = "#bc3fbc"
+cyan = "#11a8cd"
+white = "#e5e5e5"
+bright_black = "#666666"
+bright_red = "#f14c4c"
+bright_green = "#23d18b"
+bright_yellow = "#f5f543"
+bright_blue = "#3b8eea"
+bright_magenta = "#d670d6"
+bright_cyan = "#29b8db"
+bright_white = "#e5e5e5"
+
+[themes.credit]
+project = "Visual Studio Code default themes"
+author = "Microsoft Corporation"
+url = "https://github.com/microsoft/vscode/tree/main/extensions/theme-defaults"
+license = "MIT"
+copyright = "Copyright (c) 2015 - present Microsoft Corporation"
+license_file = "LICENSES/vscode-MIT.txt"
+description = "The 16 colors are VS Code's default terminal colors, which this theme does not override. Background is the theme's panel background, where the terminal is drawn; foreground is the theme's terminal foreground, cursor follows it, and selection is the default editor selection."
+derived = false
+
+[themes.suggested_font]
+family = "Cascadia Code"
+url = "https://github.com/microsoft/cascadia-code"
+license = "OFL-1.1"
+
+[[themes]]
+id = "vscode-dark-plus"
+name = "VS Code Dark+"
+version = 2
+variant = "dark"
+
+[themes.colors]
+foreground = "#cccccc"
+background = "#1e1e1e"
+cursor = "#cccccc"
+selection = "#264f78"
+black = "#000000"
+red = "#cd3131"
+green = "#0dbc79"
+yellow = "#e5e510"
+blue = "#2472c8"
+magenta = "#bc3fbc"
+cyan = "#11a8cd"
+white = "#e5e5e5"
+bright_black = "#666666"
+bright_red = "#f14c4c"
+bright_green = "#23d18b"
+bright_yellow = "#f5f543"
+bright_blue = "#3b8eea"
+bright_magenta = "#d670d6"
+bright_cyan = "#29b8db"
+bright_white = "#e5e5e5"
+
+[themes.credit]
+project = "Visual Studio Code default themes"
+author = "Microsoft Corporation"
+url = "https://github.com/microsoft/vscode/tree/main/extensions/theme-defaults"
+license = "MIT"
+copyright = "Copyright (c) 2015 - present Microsoft Corporation"
+license_file = "LICENSES/vscode-MIT.txt"
+description = "The 16 colors are VS Code's default terminal colors, which this theme does not override. Background is the theme's panel background, where the terminal is drawn; foreground is the default terminal foreground, cursor follows it, and selection is the default editor selection."
+derived = false
+
+[themes.suggested_font]
+family = "Cascadia Code"
+url = "https://github.com/microsoft/cascadia-code"
+license = "OFL-1.1"
+
+[[themes]]
+id = "vscode-light-modern"
+name = "VS Code Light Modern"
+version = 2
+variant = "light"
+
+[themes.colors]
+foreground = "#3b3b3b"
+background = "#f8f8f8"
+cursor = "#005fb8"
+selection = "#add6ff"
+black = "#000000"
+red = "#cd3131"
+green = "#107c10"
+yellow = "#949800"
+blue = "#0451a5"
+magenta = "#bc05bc"
+cyan = "#0598bc"
+white = "#555555"
+bright_black = "#666666"
+bright_red = "#f14c4c"
+bright_green = "#14ce14"
+bright_yellow = "#b5ba00"
+bright_blue = "#3b8eea"
+bright_magenta = "#d670d6"
+bright_cyan = "#29b8db"
+bright_white = "#a5a5a5"
+
+[themes.credit]
+project = "Visual Studio Code default themes"
+author = "Microsoft Corporation"
+url = "https://github.com/microsoft/vscode/tree/main/extensions/theme-defaults"
+license = "MIT"
+copyright = "Copyright (c) 2015 - present Microsoft Corporation"
+license_file = "LICENSES/vscode-MIT.txt"
+description = "The 16 colors are VS Code's default terminal colors, which this theme does not override. Background is the theme's panel background, where the terminal is drawn; foreground and cursor are the theme's terminal colors, and selection is the default editor selection."
+derived = false
+
+[themes.suggested_font]
+family = "Cascadia Code"
+url = "https://github.com/microsoft/cascadia-code"
+license = "OFL-1.1"
+
+[[themes]]
+id = "vscode-light-plus"
+name = "VS Code Light+"
+version = 2
+variant = "light"
+
+[themes.colors]
+foreground = "#333333"
+background = "#ffffff"
+cursor = "#333333"
+selection = "#add6ff"
+black = "#000000"
+red = "#cd3131"
+green = "#107c10"
+yellow = "#949800"
+blue = "#0451a5"
+magenta = "#bc05bc"
+cyan = "#0598bc"
+white = "#555555"
+bright_black = "#666666"
+bright_red = "#f14c4c"
+bright_green = "#14ce14"
+bright_yellow = "#b5ba00"
+bright_blue = "#3b8eea"
+bright_magenta = "#d670d6"
+bright_cyan = "#29b8db"
+bright_white = "#a5a5a5"
+
+[themes.credit]
+project = "Visual Studio Code default themes"
+author = "Microsoft Corporation"
+url = "https://github.com/microsoft/vscode/tree/main/extensions/theme-defaults"
+license = "MIT"
+copyright = "Copyright (c) 2015 - present Microsoft Corporation"
+license_file = "LICENSES/vscode-MIT.txt"
+description = "The 16 colors are VS Code's default terminal colors, which this theme does not override. Background is the theme's panel background, where the terminal is drawn; foreground is the default terminal foreground, cursor follows it, and selection is the default editor selection."
+derived = false
+
+[themes.suggested_font]
+family = "Cascadia Code"
+url = "https://github.com/microsoft/cascadia-code"
+license = "OFL-1.1"
