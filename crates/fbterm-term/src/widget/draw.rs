@@ -826,4 +826,237 @@ mod tests {
         let plain = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
         assert!(plain.quads.iter().all(|(_, c)| *c != tint && *c != strong));
     }
+
+    // Compression-on variants: the same content, written into the oldest history rows and
+    // compressed (`cold_tests::pair`), viewed with the view scrolled to the top, builds the same
+    // draw list as with compression off.
+
+    /// Both terminals of the pair (`cols` x `rows`), scrolled to the top of the history, after
+    /// `prepare` (given the oldest line); asserts that `draw` builds the same list from each and
+    /// returns the compressed one's.
+    fn cold_list(
+        cols: u16,
+        rows: u16,
+        before: &[u8],
+        prepare: impl Fn(&mut Terminal, i32),
+        draw: impl Fn(&Terminal) -> DrawList,
+    ) -> DrawList {
+        let (mut off, mut on) = crate::cold_tests::pair(cols, rows, before, b"");
+        let top = on.term().grid().topmost_line().0;
+        assert!(top < -1000, "the content is deep in history");
+        for t in [&mut off, &mut on] {
+            t.scroll_to_top();
+            prepare(t, top);
+        }
+        let (a, b) = (draw(&off), draw(&on));
+        assert_eq!(
+            format!("{a:?}"),
+            format!("{b:?}"),
+            "differs with compression on"
+        );
+        b
+    }
+
+    fn cold(before: &[u8]) -> DrawList {
+        cold_list(
+            20,
+            4,
+            before,
+            |_, _| {},
+            |t| build(&mut RowReader::new(), t, &scheme(), true, None, None),
+        )
+    }
+
+    #[test]
+    fn build_batches_runs_by_style_compressed() {
+        let list = cold(b"ab \x1b[31mcd\x1b[0m  \x1b[1mef\r\n");
+        let texts: Vec<_> = list
+            .texts
+            .iter()
+            .filter(|r| r.span.row == 0)
+            .map(|r| (r.span.col, r.text.as_str(), r.bold))
+            .collect();
+        assert_eq!(
+            texts,
+            vec![(0, "ab", false), (3, "cd", false), (7, "ef", true)]
+        );
+        assert!(list.cursor.is_none(), "the cursor is below the view");
+    }
+
+    #[test]
+    fn explicit_backgrounds_are_quads_compressed() {
+        let list = cold(b"\x1b[42mab\x1b[0m cd\r\n");
+        let green = list.quads.iter().find(|(s, _)| s.row == 0 && s.col == 0);
+        assert_eq!(green.map(|(s, _)| s.cells), Some(2));
+    }
+
+    #[test]
+    fn wide_and_non_ascii_characters_compressed() {
+        let list = cold("a日b\r\na❯b █▓─x\r\n".as_bytes());
+        let texts: Vec<_> = list
+            .texts
+            .iter()
+            .map(|r| (r.span.row, r.span.col, r.span.cells, r.text.as_str()))
+            .collect();
+        assert_eq!(
+            texts[..6],
+            [
+                (0, 0, 1, "a"),
+                (0, 1, 2, "日"),
+                (0, 3, 1, "b"),
+                (1, 0, 1, "a"),
+                (1, 1, 1, "❯"),
+                (1, 2, 6, "b █▓─x")
+            ]
+        );
+    }
+
+    #[test]
+    fn emoji_presentation_draws_with_the_color_emoji_font_compressed() {
+        let list = cold("\x1b[?2027h❤\u{FE0F} ❤ 日\r\n".as_bytes());
+        let run = list.texts.iter().find(|r| r.text == "❤\u{FE0F}").unwrap();
+        assert_eq!(
+            run_font(Font::MONOSPACE, run).family,
+            iced::font::Family::Name(EMOJI_FONT)
+        );
+    }
+
+    #[test]
+    fn build_underlines_hovered_link_only_compressed() {
+        let bytes = b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\ x\r\n";
+        let none = cold(bytes);
+        assert!(none.lines.is_empty());
+        let hovered = cold_list(
+            20,
+            4,
+            bytes,
+            |_, _| {},
+            |t| {
+                let top = t.term().grid().topmost_line();
+                let link = t
+                    .term()
+                    .grid()
+                    .cell(Point::new(top, Column(0)))
+                    .hyperlink()
+                    .unwrap();
+                assert_eq!(link.uri(), "https://example.com");
+                build(&mut RowReader::new(), t, &scheme(), true, Some(&link), None)
+            },
+        );
+        assert_eq!(hovered.lines.len(), 1);
+        assert_eq!(hovered.lines[0].0.cells, 4);
+    }
+
+    #[test]
+    fn runs_split_at_selection_and_match_edges_compressed() {
+        let list = cold_list(
+            20,
+            4,
+            b"a->b\r\n",
+            |t, top| t.set_selection(Some(crate::Selection::on_line(top, 2, 3))),
+            |t| build(&mut RowReader::new(), t, &scheme(), false, None, None),
+        );
+        assert_eq!(row0(&list), ["a-", ">b"]);
+        let list = cold_list(
+            20,
+            4,
+            b"a->b\r\n",
+            |_, _| {},
+            |t| {
+                let pattern = crate::SearchPattern::new(&crate::SearchQuery::new(">", false))
+                    .unwrap()
+                    .unwrap();
+                let h = Highlight {
+                    pattern,
+                    current: None,
+                    match_bg: Rgb { r: 1, g: 1, b: 1 },
+                    current_bg: Rgb { r: 2, g: 2, b: 2 },
+                    current_fg: Rgb { r: 3, g: 3, b: 3 },
+                };
+                build(&mut RowReader::new(), t, &scheme(), false, None, Some(&h))
+            },
+        );
+        assert_eq!(row0(&list), ["a-", ">", "b"]);
+    }
+
+    #[test]
+    fn runs_split_on_background_and_underline_and_alone_runs_compressed() {
+        assert_eq!(row0(&cold(b"\x1b[41m-\x1b[0m>\r\n")), ["-", ">"]);
+        assert_eq!(row0(&cold(b"\x1b[4m-\x1b[0m>\r\n")), ["-", ">"]);
+        let list = cold("日 e\u{301} ->\r\n".as_bytes());
+        let alone: Vec<(&str, bool)> = list
+            .texts
+            .iter()
+            .filter(|r| r.span.row == 0)
+            .map(|r| (r.text.as_str(), r.alone))
+            .collect();
+        assert_eq!(alone, [("日", true), ("e\u{301}", true), ("->", false)]);
+    }
+
+    #[test]
+    fn a_ligature_at_the_last_cells_stays_in_its_run_compressed() {
+        let list = cold_list(
+            4,
+            3,
+            b"ab->\r\n",
+            |_, _| {},
+            |t| build(&mut RowReader::new(), t, &scheme(), false, None, None),
+        );
+        let run = list.texts.iter().find(|r| r.span.row == 0).unwrap();
+        assert_eq!(run.text, "ab->");
+        assert_eq!((run.span.col, run.span.cells), (0, 4));
+    }
+
+    #[test]
+    fn build_marks_selection_and_tints_matches_compressed() {
+        let list = cold_list(
+            20,
+            4,
+            b"hello\r\n",
+            |t, top| {
+                let mut sel = crate::Selection::start(Point::new(Line(top), Column(1)));
+                sel.update(Point::new(Line(top), Column(3)));
+                t.set_selection(Some(sel));
+            },
+            |t| build(&mut RowReader::new(), t, &scheme(), false, None, None),
+        );
+        assert!(list.quads.contains(&(
+            Span {
+                row: 0,
+                col: 1,
+                cells: 3
+            },
+            scheme().selection
+        )));
+        let (tint, strong) = (Rgb { r: 1, g: 1, b: 1 }, Rgb { r: 2, g: 2, b: 2 });
+        let list = cold_list(
+            20,
+            4,
+            b"ab ab\r\nab\r\n",
+            |_, _| {},
+            |t| {
+                let pattern = crate::SearchPattern::new(&crate::SearchQuery::new("ab", false))
+                    .unwrap()
+                    .unwrap();
+                let all = t.visible_matches(&pattern);
+                assert_eq!(all.len(), 3);
+                let h = Highlight {
+                    pattern,
+                    current: Some(all[1]),
+                    match_bg: tint,
+                    current_bg: strong,
+                    current_fg: Rgb { r: 3, g: 3, b: 3 },
+                };
+                build(&mut RowReader::new(), t, &scheme(), false, None, Some(&h))
+            },
+        );
+        let quads: Vec<_> = list
+            .quads
+            .iter()
+            .map(|(s, c)| (s.row, s.col, s.cells, *c))
+            .collect();
+        assert!(quads.contains(&(0, 0, 2, tint)));
+        assert!(quads.contains(&(1, 0, 2, tint)));
+        assert_eq!(quads.iter().filter(|q| q.3 == strong).count(), 1);
+    }
 }

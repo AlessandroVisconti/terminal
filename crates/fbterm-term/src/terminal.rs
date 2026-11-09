@@ -6,7 +6,7 @@ use fbterm_config::Rgb;
 use feathercritty::event::WindowSize;
 use feathercritty::event::{Event, EventListener};
 use feathercritty::grid::{Dimensions, Scroll};
-use feathercritty::term::{Config, Term};
+use feathercritty::term::{Config, HistoryDone, HistoryJob, Term};
 use feathercritty::vte::ansi::{Processor, Rgb as VteRgb};
 use parking_lot::Mutex;
 
@@ -169,6 +169,10 @@ pub struct Terminal {
     parser: Processor,
     shared: Arc<Mutex<Shared>>,
     pub(crate) generation: u64,
+    /// Calls of [`Terminal::drop_history_cache`] (tests: the read cache itself is not visible
+    /// outside feathercritty).
+    #[cfg(test)]
+    pub(crate) cache_drops: usize,
 }
 
 pub type SharedTerminal = Arc<Mutex<Terminal>>;
@@ -198,6 +202,8 @@ impl Terminal {
             parser: Processor::new(),
             shared,
             generation: 0,
+            #[cfg(test)]
+            cache_drops: 0,
         }
     }
 
@@ -234,6 +240,65 @@ impl Terminal {
         self.drop_reannounced_title(seen);
         self.generation += 1;
         before.saturating_sub(self.history_len())
+    }
+
+    /// Compress history lines older than the `keep` newest (`None`: compress nothing, and
+    /// decompress what is compressed). Only marks blocks: the work is done by history jobs,
+    /// which [`crate::history_worker`] runs off the lock. Like [`Terminal::set_kitty_keyboard`],
+    /// the title the emulator re-announces is discarded.
+    pub fn set_history_compression(&mut self, keep: Option<usize>) {
+        if self.config.history_compression == keep {
+            return;
+        }
+        self.config.history_compression = keep;
+        let seen = self.shared.lock().events.len();
+        self.term.set_options(self.config.clone());
+        self.drop_reannounced_title(seen);
+        self.generation += 1;
+    }
+
+    /// The history compression setting (`None`: off).
+    pub fn history_compression(&self) -> Option<usize> {
+        self.config.history_compression
+    }
+
+    /// Whether history blocks may be waiting to be compressed or decompressed. O(1), so it is
+    /// checked after every feed.
+    pub fn has_history_jobs(&self) -> bool {
+        self.term.has_history_jobs()
+    }
+
+    /// The next history job, with a copy of its block; run it without the lock.
+    pub fn next_history_job(&mut self) -> Option<HistoryJob> {
+        self.term.next_history_job()
+    }
+
+    /// Up to `max` history jobs, oldest first; run them without the lock.
+    pub fn next_history_jobs(&mut self, max: usize) -> Vec<HistoryJob> {
+        self.term.next_history_jobs(max)
+    }
+
+    /// Install a finished history job. `false` when the result is stale (the history changed
+    /// since the job was taken) and was dropped; that is normal.
+    pub fn install_history_job(&mut self, done: HistoryDone) -> bool {
+        self.term.install_history_job(done)
+    }
+
+    /// Free the decompressed history blocks kept for reads (up to 256 KiB with compression on;
+    /// nothing otherwise). Called once after a sweep of the whole history (a search, an export),
+    /// so the blocks it read last do not stay resident.
+    pub fn drop_history_cache(&mut self) {
+        self.term.drop_history_cache();
+        #[cfg(test)]
+        {
+            self.cache_drops += 1;
+        }
+    }
+
+    /// Run and install every pending history job now, under the caller's lock (tests and
+    /// measurements; the app leaves them to [`crate::history_worker`]).
+    pub fn run_history_jobs(&mut self) {
+        self.term.run_history_jobs();
     }
 
     /// Lines of scrollback the normal screen holds (while the alternate screen is up, the

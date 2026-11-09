@@ -224,6 +224,14 @@ pub struct Settings {
     /// `"-calt"`, `"cv01=2"`. Entries that do not parse are reported and skipped.
     pub font_features: Vec<String>,
     pub scrollback_lines: usize,
+    /// Keep the history that is not near the screen compressed, saving memory at the cost of
+    /// CPU. Off by default.
+    pub history_compression: bool,
+    /// With `history_compression`: how many of the newest history lines stay uncompressed.
+    /// `None`: absent from the file, which counts as [`UNCOMPRESSED_DEFAULT`] (less than
+    /// `scrollback_lines`). Always below `scrollback_lines` once loaded with compression on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uncompressed_history_lines: Option<usize>,
     pub theme: ThemeMode,
     /// Id of the terminal color scheme used by every session without its own (a built-in id or
     /// `user-<uuid>`). Not validated here: the app reports ids it does not know.
@@ -279,6 +287,8 @@ impl Default for Settings {
             ligatures: true,
             font_features: Vec::new(),
             scrollback_lines: 10_000,
+            history_compression: false,
+            uncompressed_history_lines: None,
             theme: ThemeMode::Dark,
             color_scheme: "graphite".into(),
             kitty_keyboard: false,
@@ -314,7 +324,28 @@ pub const SCROLLBACK_RANGE: (usize, usize) = (0, 1_000_000);
 /// 0.3 s. The owner chose to warn above 100,000.
 pub const SCROLLBACK_WARN_ABOVE: usize = 100_000;
 
+/// The fewest uncompressed history lines `uncompressed_history_lines` may be. With
+/// `scrollback_lines` at or below it there is nothing worth compressing.
+pub const UNCOMPRESSED_FLOOR: usize = 1_000;
+/// The default `uncompressed_history_lines`, lowered to stay below `scrollback_lines`.
+pub const UNCOMPRESSED_DEFAULT: usize = 10_000;
+
 impl Settings {
+    /// How many of the newest history lines stay uncompressed, or `None` when history is not
+    /// compressed: the switch is off, or `scrollback_lines` is at most [`UNCOMPRESSED_FLOOR`].
+    /// Otherwise the setting (or, when absent, [`UNCOMPRESSED_DEFAULT`] capped below
+    /// `scrollback_lines`), within `UNCOMPRESSED_FLOOR..=scrollback_lines - 1`.
+    pub fn history_compression_keep(&self) -> Option<usize> {
+        if !self.history_compression || self.scrollback_lines <= UNCOMPRESSED_FLOOR {
+            return None;
+        }
+        let top = self.scrollback_lines - 1;
+        let wanted = self
+            .uncompressed_history_lines
+            .unwrap_or_else(|| UNCOMPRESSED_DEFAULT.min(top));
+        Some(wanted.clamp(UNCOMPRESSED_FLOOR, top))
+    }
+
     /// Load settings. A missing file gives defaults; a malformed file is an
     /// error carrying the 1-based line, and the file is never modified.
     /// Missing fields in a partial file take their defaults. Out-of-range values are
@@ -388,6 +419,22 @@ impl Settings {
                 ),
             ));
             self.scrollback_lines = used;
+        }
+        // Only checked while compression is on and applies: with it off the value is kept as
+        // written, so switching it on later does not surprise.
+        if let (Some(keep), Some(set)) = (
+            self.history_compression_keep(),
+            self.uncompressed_history_lines,
+        ) && set != keep
+        {
+            problems.push((
+                "uncompressed_history_lines".into(),
+                format!(
+                    "uncompressed_history_lines {set} is out of range ({UNCOMPRESSED_FLOOR} to {}), using {keep}",
+                    self.scrollback_lines - 1
+                ),
+            ));
+            self.uncompressed_history_lines = Some(keep);
         }
         let (lo, hi) = TUNNEL_RETRIES_RANGE;
         if !(lo..=hi).contains(&self.tunnel_max_retries) {
@@ -513,6 +560,13 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 # drops their oldest lines (the Settings tab asks first). Above 100000, resizing a window
 # can pause briefly while history rewraps.
 #scrollback_lines = 10000
+
+# Keep older history compressed to save memory, at the cost of CPU when it is read and when
+# output scrolls into it. Recommended for very large histories (100000 lines or more).
+#history_compression = false
+
+# With history_compression: how many of the newest lines stay uncompressed.
+#uncompressed_history_lines = 10000  # 1000 to scrollback_lines - 1
 
 # Color theme: "dark" or "light".
 #theme = "dark"

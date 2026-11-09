@@ -558,6 +558,44 @@ mod tests {
         assert!(app.find_box.is_none());
     }
 
+    /// The history worker held the terminal (a turn's lock hold) when the tab closed, and the
+    /// session task let go first: the worker's notice, not the session's, requests the release,
+    /// exactly once.
+    #[test]
+    fn closing_a_tab_the_worker_holds_requests_release_once() {
+        let p = profile("a");
+        let (mut app, wid, _) = app_with(&p, big());
+        act(&mut app, wid, Action::SplitRight);
+        let b = tab(&app, wid).focused;
+        let worker = tab(&app, wid).pane(b).unwrap().terminal().cloned().unwrap();
+        let before = crate::memory::requests();
+        act(&mut app, wid, Action::CloseTab);
+        let _ = app.update(Message::Session(
+            fbterm_session::SessionId::next(),
+            fbterm_session::SessionEvent::Released,
+        ));
+        assert_eq!(
+            crate::memory::requests(),
+            before,
+            "the worker still holds it"
+        );
+        assert_eq!(app.pending_release.len(), 1);
+
+        // The worker lets go last and says so through the notice the app gave it.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let notice = crate::memory::worker_release_notice(tx);
+        drop(worker);
+        notice();
+        let (sid, event) = rx.try_recv().expect("the worker's notice");
+        let _ = app.update(Message::Session(sid, event));
+        assert_eq!(crate::memory::requests(), before + 1);
+        assert!(app.pending_release.is_empty());
+        notice();
+        let (sid, event) = rx.try_recv().expect("the worker's notice");
+        let _ = app.update(Message::Session(sid, event));
+        assert_eq!(crate::memory::requests(), before + 1, "no second request");
+    }
+
     #[test]
     fn closing_pane_requests_release_after_last_reference() {
         let p = profile("a");

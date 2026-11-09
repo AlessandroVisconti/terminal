@@ -206,6 +206,20 @@ impl App {
         open
     }
 
+    /// Apply a value typed into a Settings field and still waiting on its quiet period, as
+    /// Enter would (the tab is closing). Leaves the write to the caller.
+    pub(crate) fn flush_typed_setting(&mut self) -> Task<Message> {
+        let Some((_, state)) = &mut self.settings_win else {
+            return Task::none();
+        };
+        let Some(change) = state.flush_typed().apply else {
+            return Task::none();
+        };
+        let mut next = self.settings.clone();
+        change.apply(&mut next);
+        self.apply_settings(next, SettingsSource::Window)
+    }
+
     /// Write the Settings tab's unwritten changes to `settings.toml`, each key in place.
     /// Our own write is remembered so the file watcher does not reload it. If the file was
     /// edited on disk since we last saw it (and the watcher has not reported it yet), that edit
@@ -394,6 +408,15 @@ impl App {
         } else {
             Task::none()
         };
+        let (old_keep, new_keep) = (
+            self.settings.history_compression_keep(),
+            new.history_compression_keep(),
+        );
+        let task = if new_keep == old_keep {
+            task
+        } else {
+            Task::batch([task, self.apply_history_compression(old_keep, new_keep)])
+        };
         let backdrop =
             |s: &Settings| Chrome::current().backdrop(s.background_opacity, s.background_blur);
         let (old_b, new_b) = (backdrop(&self.settings), backdrop(&new));
@@ -452,6 +475,41 @@ impl App {
             return Task::batch([task, chrome]);
         }
         task
+    }
+
+    /// Set every open terminal's history compression (`None`: off) and queue each for the
+    /// background worker. The memory that compressing frees goes back to the OS once, after the
+    /// worker drains, and only for a change the user made that frees memory: off to on, or a
+    /// lower number of uncompressed lines. Raising it or turning it off frees nothing.
+    fn apply_history_compression(
+        &mut self,
+        old: Option<usize>,
+        new: Option<usize>,
+    ) -> Task<Message> {
+        let panes = self
+            .windows
+            .values()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes);
+        for term in panes.filter_map(|p| p.terminal()) {
+            let queued = {
+                let mut t = term.lock();
+                t.set_history_compression(new);
+                t.has_history_jobs()
+            };
+            if queued {
+                fbterm_term::history_worker::enqueue(term);
+            }
+        }
+        let frees = match (old, new) {
+            (None, Some(_)) => true,
+            (Some(old), Some(new)) => new < old,
+            _ => false,
+        };
+        if !frees {
+            return Task::none();
+        }
+        release_when_worker_idle()
     }
 
     /// Set every open terminal's scrollback limit. If any lost lines, release the freed memory
@@ -571,4 +629,68 @@ impl App {
         // The thread is detached: drawing detects anything it has not reached yet.
         drop(fbterm_term::ligature_sets::warm_ligature_sets(fonts));
     }
+}
+
+/// Ask for the memory release once the history worker has drained (`release_when_idle` on the
+/// blocking pool), for a user change that leaves the worker compressing history: switching
+/// compression on, fewer uncompressed lines, a reflow. A release already waiting covers this
+/// one too: none is added then.
+pub(crate) fn release_when_worker_idle() -> Task<Message> {
+    if !mark_release_pending() {
+        return Task::none();
+    }
+    Task::perform(
+        async {
+            let _ = tokio::task::spawn_blocking(release_when_idle).await;
+        },
+        |()| (),
+    )
+    .discard()
+}
+
+/// How long the release waits for the history worker to drain before it releases anyway.
+const RELEASE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Mark a release as waiting; `false` if one already was.
+fn mark_release_pending() -> bool {
+    !release_pending().swap(true, std::sync::atomic::Ordering::SeqCst)
+}
+
+fn clear_release_pending() {
+    release_pending().store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Whether a release is waiting: process-wide in the app. Tests get one flag per thread (they
+/// run the release on their own thread, and run in parallel), so only where the flag lives
+/// differs and the code that sets and clears it is the same.
+fn release_pending() -> &'static std::sync::atomic::AtomicBool {
+    #[cfg(not(test))]
+    {
+        static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        &PENDING
+    }
+    #[cfg(test)]
+    {
+        thread_local! {
+            static PENDING: &'static std::sync::atomic::AtomicBool =
+                Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false)));
+        }
+        PENDING.with(|p| *p)
+    }
+}
+
+/// Wait up to [`RELEASE_WAIT`] for the history worker to drain, then ask for the memory release
+/// (once) whether it did or not, and let the next freeing change start a new wait. Runs on the
+/// blocking pool: the wait sleeps on a condition variable.
+pub(super) fn release_when_idle() {
+    fbterm_term::history_worker::wait_idle_for(RELEASE_WAIT);
+    // Cleared even if the release panics.
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            clear_release_pending();
+        }
+    }
+    let _clear = Clear;
+    crate::memory::release_freed();
 }

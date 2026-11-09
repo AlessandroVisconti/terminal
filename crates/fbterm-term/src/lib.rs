@@ -1,6 +1,9 @@
 //! Terminal emulation and local shells.
 
+#[cfg(test)]
+mod cold_tests;
 mod export;
+pub mod history_worker;
 mod input;
 mod kitty;
 pub mod ligature_sets;

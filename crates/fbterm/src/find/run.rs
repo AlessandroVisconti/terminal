@@ -520,6 +520,7 @@ mod tests {
                 below: None,
                 limit: fbterm_term::MATCH_CAP,
                 snippets: false,
+                drop_cache: true,
             },
             &std::sync::atomic::AtomicBool::new(false),
         );
@@ -585,6 +586,7 @@ mod tests {
                 below: None,
                 limit: super::super::all::PER_TAB + 1,
                 snippets: true,
+                drop_cache: true,
             };
             let out = fbterm_term::search(
                 &t.terminal,
@@ -639,6 +641,7 @@ mod tests {
                 below: None,
                 limit: super::super::all::PER_TAB + 1,
                 snippets: true,
+                drop_cache: true,
             };
             let out = fbterm_term::search(
                 &t.terminal,
@@ -748,6 +751,7 @@ mod tests {
                     below: None,
                     limit: fbterm_term::MATCH_CAP,
                     snippets: false,
+                    drop_cache: true,
                 },
                 &std::sync::atomic::AtomicBool::new(false),
             );

@@ -178,4 +178,71 @@ mod tests {
         t.feed(b"one\r\nab word");
         assert_eq!(Selection::on_line(1, 3, 6).text(&t), "word");
     }
+
+    // Compression-on variants: the same text, written into the oldest history rows and then
+    // compressed (`cold_tests::pair`), copies exactly as with compression off.
+
+    /// The text `select` (given the oldest history line) copies from both terminals of the
+    /// pair; asserts they match and returns it.
+    fn cold_text(before: &[u8], select: impl Fn(i32) -> Selection) -> String {
+        let (off, on) = crate::cold_tests::pair(10, 5, before, b"");
+        let top = on.term().grid().topmost_line().0;
+        assert!(top < -1000, "the text is deep in history");
+        let (a, b) = (select(top).text(&off), select(top).text(&on));
+        assert_eq!(a, b, "differs with compression on");
+        b
+    }
+
+    #[test]
+    fn selection_text_spans_lines_and_trims_trailing_spaces_compressed() {
+        let text = cold_text(b"hello\r\nworld\r\n", |top| {
+            let mut s = Selection::start(p(top, 0));
+            s.update(p(top + 1, 9));
+            s
+        });
+        assert_eq!(text, "hello\nworld");
+    }
+
+    #[test]
+    fn joined_pieces_are_copied_with_their_cell_compressed() {
+        let text = cold_text(
+            "\x1b[?2027hab👨\u{200D}👩\u{200D}👧c e\u{301}\r\n".as_bytes(),
+            |top| Selection::on_line(top, 0, 9),
+        );
+        assert_eq!(text, "ab👨\u{200D}👩\u{200D}👧c e\u{301}");
+    }
+
+    #[test]
+    fn a_selection_starting_on_a_spacer_copies_its_wide_character_compressed() {
+        let text = cold_text("ab界c\r\n".as_bytes(), |top| Selection::on_line(top, 3, 4));
+        assert_eq!(text, "界c");
+    }
+
+    #[test]
+    fn wrapped_lines_join_without_newline_compressed() {
+        let text = cold_text(b"abcdefghijklm\r\n", |top| {
+            let mut s = Selection::start(p(top, 0));
+            s.update(p(top + 1, 9));
+            s
+        });
+        assert_eq!(text, "abcdefghijklm");
+    }
+
+    #[test]
+    fn reversed_selection_is_normalized_compressed() {
+        let text = cold_text(b"hello\r\n", |top| {
+            let mut s = Selection::start(p(top, 3));
+            s.update(p(top, 1));
+            s
+        });
+        assert_eq!(text, "ell");
+    }
+
+    #[test]
+    fn on_line_selects_columns_of_one_line_compressed() {
+        let text = cold_text(b"one\r\nab word\r\n", |top| {
+            Selection::on_line(top + 1, 3, 6)
+        });
+        assert_eq!(text, "word");
+    }
 }

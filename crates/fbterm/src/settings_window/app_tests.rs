@@ -476,6 +476,7 @@ fn finish_search(app: &mut App, wid: iced::window::Id, term: &fbterm_term::Share
             below: None,
             limit: fbterm_term::MATCH_CAP,
             snippets: false,
+            drop_cache: true,
         },
         &std::sync::atomic::AtomicBool::new(false),
     );
@@ -599,4 +600,406 @@ fn the_key_log_never_listens_while_it_is_off() {
     // A recorder is active, but FBTERM_LOG_KEYS is not set in tests: no listener.
     assert!(app.recording_window().is_some());
     assert!(!app.key_log_listening());
+}
+
+/// An app with two tabs, each with a terminal holding `lines` lines of history.
+fn app_with_two_tabs(lines: usize) -> (App, Vec<fbterm_term::SharedTerminal>) {
+    use crate::restore_tests::{fill_history, paths_with, profile, saved};
+    let (a, b) = (profile("a"), profile("b"));
+    let paths = paths_with(&[a.clone(), b.clone()]);
+    fbterm_config::SavedState {
+        windows: vec![saved(&[&a, &b], 0)],
+        ..Default::default()
+    }
+    .save(&paths.state())
+    .unwrap();
+    let (mut app, _) = App::build(paths, true);
+    // A background tab starts on first show.
+    let _ = app.update(Message::SelectTab(1));
+    let terms: Vec<_> = app
+        .windows
+        .values()
+        .flat_map(|w| &w.tabs)
+        .flat_map(|t| &t.panes)
+        .filter_map(|p| p.terminal().cloned())
+        .collect();
+    assert_eq!(terms.len(), 2);
+    for t in &terms {
+        fill_history(t, lines);
+    }
+    (app, terms)
+}
+
+fn apply(app: &mut App, edit: impl FnOnce(&mut Settings)) {
+    let mut new = app.settings.clone();
+    edit(&mut new);
+    let _ = app.apply_settings(new, crate::app::SettingsSource::Window);
+}
+
+#[test]
+fn compression_setting_reaches_open_terminals() {
+    let (mut app, terms) = app_with_two_tabs(50);
+    assert!(
+        terms
+            .iter()
+            .all(|t| t.lock().history_compression().is_none())
+    );
+    apply(&mut app, |s| s.history_compression = true);
+    let keep = app.settings.history_compression_keep();
+    assert!(keep.is_some());
+    for t in &terms {
+        assert_eq!(t.lock().history_compression(), keep);
+    }
+}
+
+#[test]
+fn compression_off_applies_to_open_terminals() {
+    let (mut app, terms) = app_with_two_tabs(50);
+    apply(&mut app, |s| s.history_compression = true);
+    apply(&mut app, |s| s.history_compression = false);
+    for t in &terms {
+        assert_eq!(t.lock().history_compression(), None);
+    }
+}
+
+#[test]
+fn switching_on_requests_release_once_idle() {
+    let (mut app, _terms) = app_with_two_tabs(50);
+    let before = crate::memory::requests();
+    apply(&mut app, |s| s.history_compression = true);
+    // The release waits for the worker: nothing yet, then exactly one request once idle.
+    assert_eq!(crate::memory::requests(), before);
+    // The returned task runs this function on the blocking pool; a test cannot observe a
+    // request made on another thread (the counter is per thread), so it runs here.
+    super::glue::release_when_idle();
+    assert_eq!(crate::memory::requests(), before + 1);
+}
+
+#[test]
+fn two_freeing_changes_back_to_back_request_one_release() {
+    let (mut app, _terms) = app_with_two_tabs(50);
+    let before = crate::memory::requests();
+    let units = |app: &mut App, keep: usize| {
+        let mut new = app.settings.clone();
+        new.history_compression = true;
+        new.uncompressed_history_lines = Some(keep);
+        app.apply_settings(new, crate::app::SettingsSource::Window)
+            .units()
+    };
+    assert_eq!(units(&mut app, 5_000), 1);
+    // A second lowering while the first release waits spawns no second waiter.
+    assert_eq!(units(&mut app, 2_000), 0);
+    super::glue::release_when_idle();
+    assert_eq!(crate::memory::requests(), before + 1);
+    // Once it ran, the next freeing change starts a new one.
+    assert_eq!(units(&mut app, 1_000), 1);
+}
+
+#[test]
+fn only_a_freeing_change_asks_for_the_release_task() {
+    let (mut app, _terms) = app_with_two_tabs(50);
+    let units = |app: &mut App, edit: &dyn Fn(&mut Settings)| {
+        let mut new = app.settings.clone();
+        edit(&mut new);
+        app.apply_settings(new, crate::app::SettingsSource::Window)
+            .units()
+    };
+    assert_eq!(units(&mut app, &|s| s.history_compression = true), 1);
+    // The release ran (a pending one would absorb the next freeing change).
+    super::glue::release_when_idle();
+    // Lowering the kept lines frees memory; raising them again does not.
+    assert_eq!(
+        units(&mut app, &|s| s.uncompressed_history_lines = Some(2_000)),
+        1
+    );
+    super::glue::release_when_idle();
+    assert_eq!(
+        units(&mut app, &|s| s.uncompressed_history_lines = Some(5_000)),
+        0
+    );
+    // Turning off does not.
+    assert_eq!(units(&mut app, &|s| s.history_compression = false), 0);
+}
+
+#[test]
+fn output_driven_compression_never_requests_release() {
+    let (mut app, terms) = app_with_two_tabs(0);
+    apply(&mut app, |s| s.history_compression = true);
+    let before = crate::memory::requests();
+    let worker = fbterm_term::history_worker::Worker::new();
+    for t in &terms {
+        {
+            let mut g = t.lock();
+            for i in 0..12_000 {
+                g.feed(format!("output line {i} with some padding to fill blocks\r\n").as_bytes());
+            }
+        }
+        worker.enqueue(t);
+    }
+    worker.run_until_idle();
+    assert_eq!(crate::memory::requests(), before);
+}
+
+#[test]
+fn lowering_scrollback_below_uncompressed_applies_both() {
+    let (mut app, terms) = app_with_two_tabs(50);
+    apply(&mut app, |s| {
+        s.history_compression = true;
+        s.uncompressed_history_lines = Some(8_000);
+    });
+    assert_eq!(app.settings.history_compression_keep(), Some(8_000));
+    apply(&mut app, |s| s.scrollback_lines = 3_000);
+    let keep = app.settings.history_compression_keep();
+    assert_eq!(keep, Some(2_999));
+    for t in &terms {
+        assert_eq!(t.lock().history_compression(), keep);
+    }
+}
+
+/// A resize that changes a compressed terminal's columns rebuilds its history uncompressed
+/// (a reflow); the worker compresses it again, and the memory that frees goes back to the OS
+/// once it drains: one release per settled resize, however many steps a drag had, and one
+/// waiting at most. Lines-only resizes and terminals without compression ask for none.
+#[test]
+fn a_reflow_with_compression_on_asks_for_one_release() {
+    use fbterm_term::{GridSize, TerminalOutput};
+    let (mut app, terms) = app_with_two_tabs(50);
+    apply(&mut app, |s| s.history_compression = true);
+    // The switch-on release ran.
+    super::glue::release_when_idle();
+    let (wid, pane) = app
+        .windows
+        .iter()
+        .find_map(|(wid, w)| {
+            w.tabs.iter().flat_map(|t| &t.panes).find_map(|p| {
+                p.terminal()
+                    .is_some_and(|t| std::sync::Arc::ptr_eq(t, &terms[0]))
+                    .then_some((*wid, p.id))
+            })
+        })
+        .unwrap();
+    let grid = |cols: u16, rows: u16| GridSize {
+        cols,
+        rows,
+        ..crate::app::DEFAULT_GRID
+    };
+    let resized = |app: &mut App, g: GridSize| {
+        let _ = app.update(Message::Terminal(wid, pane, TerminalOutput::Resized(g)));
+        app.pending_resizes[&pane].0
+    };
+    let settle = |app: &mut App, generation: u64| {
+        app.update(Message::ResizeSettled(pane, generation)).units()
+    };
+
+    // The first layout is not a reflow of anything the worker compressed.
+    let g = resized(&mut app, grid(100, 30));
+    assert_eq!(settle(&mut app, g), 0);
+
+    // A drag: several column changes, one settle, one release task.
+    let generations: Vec<u64> = [90, 80, 70]
+        .into_iter()
+        .map(|cols| resized(&mut app, grid(cols, 30)))
+        .collect();
+    for &stale in &generations[..2] {
+        assert_eq!(settle(&mut app, stale), 0);
+    }
+    assert_eq!(settle(&mut app, generations[2]), 1);
+    // Another reflow while that release waits for the worker spawns no second waiter.
+    let g = resized(&mut app, grid(60, 30));
+    assert_eq!(settle(&mut app, g), 0);
+    let before = crate::memory::requests();
+    super::glue::release_when_idle();
+    assert_eq!(crate::memory::requests(), before + 1);
+
+    // Lines only: no reflow, no release.
+    let g = resized(&mut app, grid(60, 20));
+    assert_eq!(settle(&mut app, g), 0);
+    // A divider drag ending flushes the resize at once: the release comes with it.
+    resized(&mut app, grid(50, 20));
+    assert_eq!(
+        app.update(Message::Tiles(wid, crate::tiles::TilesMsg::EndDrag))
+            .units(),
+        1
+    );
+    super::glue::release_when_idle();
+
+    // With compression off a reflow frees nothing to release.
+    apply(&mut app, |s| s.history_compression = false);
+    let g = resized(&mut app, grid(40, 20));
+    assert_eq!(settle(&mut app, g), 0);
+}
+
+/// A reflow rebuilds a compressed terminal's history uncompressed, and nothing else may come to
+/// queue it (the program can stay silent): the settled resize hands it to the worker, which
+/// compresses it again before the release.
+#[test]
+fn a_reflow_queues_the_terminal_for_recompression() {
+    use fbterm_term::{GridSize, TerminalOutput};
+    let (mut app, terms) = app_with_two_tabs(0);
+    apply(&mut app, |s| {
+        s.scrollback_lines = 100_000;
+        s.history_compression = true;
+        s.uncompressed_history_lines = Some(1_000);
+    });
+    let term = &terms[0];
+    {
+        let mut t = term.lock();
+        for i in 0..20_000 {
+            t.feed(format!("service line {i} with some padding to fill blocks\r\n").as_bytes());
+        }
+        t.run_history_jobs();
+        assert!(!t.has_history_jobs());
+    }
+    super::glue::release_when_idle();
+    let (wid, pane) = app
+        .windows
+        .iter()
+        .find_map(|(wid, w)| {
+            w.tabs.iter().flat_map(|t| &t.panes).find_map(|p| {
+                p.terminal()
+                    .is_some_and(|t| std::sync::Arc::ptr_eq(t, term))
+                    .then_some((*wid, p.id))
+            })
+        })
+        .unwrap();
+    let grid = |cols: u16| GridSize {
+        cols,
+        rows: 30,
+        ..crate::app::DEFAULT_GRID
+    };
+    // What the widget does: resize the terminal, then report it; the settle flushes it.
+    let resize = |app: &mut App, g: GridSize| {
+        term.lock().resize(g);
+        let _ = app.update(Message::Terminal(wid, pane, TerminalOutput::Resized(g)));
+        let generation = app.pending_resizes[&pane].0;
+        let _ = app.update(Message::ResizeSettled(pane, generation));
+    };
+    resize(&mut app, grid(100));
+    resize(&mut app, grid(70));
+    assert!(
+        fbterm_term::history_worker::wait_idle_for(std::time::Duration::from_secs(10)),
+        "worker did not drain"
+    );
+    assert!(
+        !term.lock().has_history_jobs(),
+        "the reflowed history was never queued for compression"
+    );
+    super::glue::release_when_idle();
+}
+
+/// A stored `uncompressed_history_lines` out of range while compression is off: switching it on
+/// in the Settings tab writes the clamped value with the switch, so the file loads with no
+/// notice and the field shows no error.
+#[test]
+fn switching_on_in_the_tab_writes_a_clamped_uncompressed_value() {
+    let (mut app, paths) = app();
+    std::fs::write(
+        paths.settings(),
+        "scrollback_lines = 5000\nuncompressed_history_lines = 8000\n",
+    )
+    .unwrap();
+    let _ = app.update(Message::ConfigChanged(SETTINGS_CHANGED));
+    assert_eq!(app.settings.uncompressed_history_lines, Some(8_000));
+    send(&mut app, SettingsMsg::HistoryCompression(true));
+    let (loaded, notice) = Settings::load_checked(&paths.settings()).unwrap();
+    assert!(notice.is_none(), "{notice:?}");
+    assert!(loaded.history_compression);
+    assert_eq!(loaded.uncompressed_history_lines, Some(4_999));
+    assert_eq!(app.settings.uncompressed_history_lines, Some(4_999));
+    let state = &app.settings_win.as_ref().unwrap().1;
+    assert_eq!(state.uncompressed_error(), None);
+    assert_eq!(state.uncompressed_text, "4999");
+}
+
+/// A value typed into the uncompressed field and still waiting on its quiet period is applied
+/// and written when the Settings tab closes.
+#[test]
+fn closing_the_tab_applies_a_typed_uncompressed_value() {
+    let (mut app, paths) = app();
+    send(&mut app, SettingsMsg::HistoryCompression(true));
+    send(&mut app, SettingsMsg::UncompressedText("5000".into()));
+    send(&mut app, SettingsMsg::Close);
+    assert!(app.settings_window().is_none());
+    assert_eq!(app.settings.uncompressed_history_lines, Some(5_000));
+    assert_eq!(
+        Settings::load(&paths.settings())
+            .unwrap()
+            .uncompressed_history_lines,
+        Some(5_000)
+    );
+}
+
+/// Quitting writes a value still typed into the uncompressed field.
+#[test]
+fn quit_writes_a_typed_uncompressed_value() {
+    let (mut app, paths) = app();
+    send(&mut app, SettingsMsg::HistoryCompression(true));
+    send(&mut app, SettingsMsg::UncompressedText("5000".into()));
+    let _ = app.update(Message::Shortcut(
+        app.settings_window().unwrap(),
+        crate::keys::Action::Quit,
+    ));
+    assert_eq!(
+        Settings::load(&paths.settings())
+            .unwrap()
+            .uncompressed_history_lines,
+        Some(5_000)
+    );
+}
+
+/// The text of every screen row of `t`, and its history length (with the alternate screen up,
+/// the alternate screen's).
+fn shown(t: &fbterm_term::SharedTerminal) -> (Vec<String>, usize) {
+    use feathercritty::grid::Dimensions;
+    use feathercritty::index::Line;
+    let t = t.lock();
+    let grid = t.term().grid();
+    let rows = (0..grid.screen_lines() as i32)
+        .map(|l| grid.screen()[Line(l)].into_iter().map(|c| c.c).collect())
+        .collect();
+    (rows, grid.history_size())
+}
+
+/// A tab with the alternate screen up when compression is switched on and off: the
+/// process-wide worker compresses (and then decompresses) the normal screen's history behind
+/// it, and the alternate screen keeps its content and stays without history.
+#[test]
+fn compression_leaves_an_alternate_screen_alone() {
+    let (mut app, terms) = app_with_two_tabs(0);
+    let t = &terms[0];
+    {
+        let mut g = t.lock();
+        for i in 0..10_000 {
+            g.feed(format!("normal line {i:05} {}\r\n", "x".repeat(90)).as_bytes());
+        }
+        g.feed(b"\x1b[?1049h");
+        for i in 0..60 {
+            g.feed(format!("alt line {i}\r\n").as_bytes());
+        }
+        assert!(g.mode().contains(fbterm_term::TermMode::ALT_SCREEN));
+    }
+    let before = shown(t);
+    assert_eq!(before.1, 0);
+    assert!(before.0.iter().any(|r| r.starts_with("alt line 59")));
+
+    for on in [true, false] {
+        // The switch queues the terminal on the process-wide worker; everything is read once
+        // that worker has drained, so nothing races its thread.
+        apply(&mut app, |s| {
+            s.history_compression = on;
+            s.uncompressed_history_lines = Some(1_000);
+        });
+        assert!(fbterm_term::history_worker::wait_idle_for(
+            std::time::Duration::from_secs(10)
+        ));
+        let mut g = t.lock();
+        assert_eq!(g.history_compression(), on.then_some(1_000));
+        assert!(
+            g.next_history_jobs(usize::MAX).is_empty(),
+            "the worker drained it"
+        );
+        assert!(!g.has_history_jobs());
+        drop(g);
+        assert_eq!(shown(t), before, "compression {on}");
+    }
 }

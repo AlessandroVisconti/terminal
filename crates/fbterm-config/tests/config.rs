@@ -614,6 +614,7 @@ fn settings_template_parses_to_defaults_with_every_setting_uncommented() {
     let answered = Settings {
         check_updates: Some(false),
         tab_bar: Some(TabBar::Top),
+        uncompressed_history_lines: Some(10_000),
         ..Settings::default()
     };
     assert_eq!(loaded, answered);
@@ -1298,6 +1299,81 @@ fn icon_is_written_only_when_set() {
     let text = std::fs::read_to_string(&path).unwrap();
     assert_eq!(text.matches("icon").count(), 1, "{text}");
     assert_eq!(ProfileStore::load(&path).unwrap(), store);
+}
+
+#[test]
+fn history_compression_defaults_off() {
+    assert_eq!(Settings::default().history_compression_keep(), None);
+    assert!(SETTINGS_TEMPLATE.contains("#history_compression = false"));
+    assert!(SETTINGS_TEMPLATE.contains(
+        "# With history_compression: how many of the newest lines stay uncompressed.\n\
+         #uncompressed_history_lines = 10000  # 1000 to scrollback_lines - 1\n"
+    ));
+}
+
+fn compressing(scrollback: usize, keep: Option<usize>) -> Settings {
+    Settings {
+        history_compression: true,
+        scrollback_lines: scrollback,
+        uncompressed_history_lines: keep,
+        ..Settings::default()
+    }
+}
+
+#[test]
+fn uncompressed_default_tracks_scrollback() {
+    let mut s = compressing(10_000, None);
+    assert_eq!(s.history_compression_keep(), Some(9_999));
+    assert!(s.clamp().is_empty());
+    assert_eq!(
+        compressing(1_000_000, None).history_compression_keep(),
+        Some(10_000)
+    );
+}
+
+#[test]
+fn uncompressed_out_of_range_is_clamped_with_notice() {
+    let mut s = compressing(100_000, Some(500));
+    assert_eq!(s.history_compression_keep(), Some(1_000));
+    let problems = s.clamp();
+    assert_eq!(s.uncompressed_history_lines, Some(1_000));
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].0, "uncompressed_history_lines");
+    assert!(problems[0].1.contains("uncompressed_history_lines"));
+    let mut s = compressing(20_000, Some(50_000));
+    assert_eq!(s.history_compression_keep(), Some(19_999));
+    let problems = s.clamp();
+    assert_eq!(s.uncompressed_history_lines, Some(19_999));
+    assert!(problems[0].1.contains("uncompressed_history_lines"));
+    // Through a file, the warning names the key and its line.
+    let path = tmp("settings.toml");
+    std::fs::write(
+        &path,
+        "history_compression = true\nuncompressed_history_lines = 500\n",
+    )
+    .unwrap();
+    let (s, w) = Settings::load_checked(&path).unwrap();
+    assert_eq!(s.uncompressed_history_lines, Some(1_000));
+    let w = w.expect("reported");
+    assert_eq!(w.line, Some(2));
+    assert!(w.message.contains("uncompressed_history_lines"));
+    // With the switch off the value is left as written.
+    let mut off = Settings {
+        uncompressed_history_lines: Some(500),
+        ..Settings::default()
+    };
+    assert!(off.clamp().is_empty());
+    assert_eq!(off.uncompressed_history_lines, Some(500));
+}
+
+#[test]
+fn small_scrollback_disables_compression() {
+    assert_eq!(compressing(1_000, None).history_compression_keep(), None);
+    assert_eq!(compressing(0, Some(5)).history_compression_keep(), None);
+    assert_eq!(
+        compressing(1_001, None).history_compression_keep(),
+        Some(1_000)
+    );
 }
 
 #[test]

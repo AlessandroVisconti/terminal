@@ -11,7 +11,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
-use super::{RecordProblem, Recording, SettingsMsg, SettingsState};
+use super::{COMPRESSION_NOTE, RecordProblem, Recording, SettingsMsg, SettingsState};
 use crate::app::Message;
 use crate::chrome::{self, Platform};
 use crate::saved_secrets::{SectionInfo, choice_label, storage_note};
@@ -192,7 +192,7 @@ fn setting<'a>(
     control: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let mut words = column![text(label).font(UI_FONT).size(13).color(if dimmed {
-        t.text_muted
+        dimmed_text(t)
     } else {
         t.text
     })]
@@ -214,6 +214,24 @@ fn setting<'a>(
         .align_y(Alignment::Center)
         .padding(Padding::from([12.0, 16.0]))
         .into()
+}
+
+/// The text color of a dimmed (disabled) row: its label, and the value of its own field.
+fn dimmed_text(t: &Tokens) -> Color {
+    t.text_muted
+}
+
+/// [`ui::input_style`] whose value, while disabled, is dimmed like the row's label.
+fn dimmed_input_style(t: &Tokens, status: text_input::Status) -> text_input::Style {
+    let style = ui::input_style(t, status);
+    if matches!(status, text_input::Status::Disabled) {
+        text_input::Style {
+            value: dimmed_text(t),
+            ..style
+        }
+    } else {
+        style
+    }
 }
 
 fn appearance<'a>(
@@ -574,6 +592,8 @@ fn terminal<'a>(
     .menu_style(move |_| menu_style(t));
     vec![
         scrollback_row(t, state, scrollback),
+        compression_row(t, state, editable),
+        uncompressed_row(t, state, editable),
         setting(
             t,
             "Kitty keyboard protocol",
@@ -806,6 +826,67 @@ fn scrollback_row<'a>(
         Some(e) => column![
             row_,
             container(e).padding(Padding::from([0.0, 16.0]).bottom(12.0))
+        ]
+        .into(),
+        None => row_,
+    }
+}
+
+/// The `Compress old history` switch, with its note.
+fn compression_row<'a>(
+    t: &'static Tokens,
+    state: &'a SettingsState,
+    editable: bool,
+) -> Element<'a, Message> {
+    setting(
+        t,
+        "Compress old history",
+        Some(COMPRESSION_NOTE),
+        false,
+        switch(
+            t,
+            state.values.history_compression,
+            editable,
+            false,
+            SettingsMsg::HistoryCompression,
+        ),
+    )
+}
+
+/// The `Recent lines kept uncompressed` row: disabled (dimmed, not editable) while compression
+/// is off or the scrollback is too small; an out-of-range number shows the valid range under it.
+fn uncompressed_row<'a>(
+    t: &'static Tokens,
+    state: &'a SettingsState,
+    editable: bool,
+) -> Element<'a, Message> {
+    let enabled = editable && state.uncompressed_enabled();
+    let field = row![
+        text_input("10000", &state.uncompressed_text)
+            .on_input_maybe(enabled.then_some(|s| msg(SettingsMsg::UncompressedText(s))))
+            .on_submit_maybe(enabled.then(|| msg(SettingsMsg::UncompressedSubmit)))
+            .font(MONO)
+            .size(12.5)
+            .padding(Padding::from([6.0, 10.0]))
+            .width(110)
+            .align_x(Alignment::End)
+            .style(move |_, s| dimmed_input_style(t, s)),
+        unit(t, "lines", Length::Shrink),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+    let row_ = setting(
+        t,
+        "Recent lines kept uncompressed",
+        state.uncompressed_note(),
+        !state.uncompressed_enabled(),
+        field,
+    );
+    match state.uncompressed_error() {
+        Some(why) => column![
+            row_,
+            container(text(why).font(UI_FONT).size(12).color(t.warning))
+                .padding(Padding::from([0.0, 16.0]).bottom(12.0))
         ]
         .into(),
         None => row_,

@@ -8,7 +8,7 @@ use toml_edit::{DocumentMut, Item, Value};
 use crate::keys::{Action, Overrides};
 use crate::settings::{
     DEFAULT_MAX_FPS, MacosBlurStyle, MaxFps, SecretStorage, Settings, TabBar, ThemeMode,
-    WindowDecorations,
+    UNCOMPRESSED_FLOOR, WindowDecorations,
 };
 use crate::store::{ConfigError, atomic_write, line_of};
 
@@ -17,7 +17,13 @@ use crate::store::{ConfigError, atomic_write, line_of};
 pub enum SettingChange {
     FontFamily(String),
     FontSize(f32),
+    /// Lowering it also lowers a stored `uncompressed_history_lines` that would no longer be
+    /// below it (see [`UNCOMPRESSED_FLOOR`]).
     ScrollbackLines(usize),
+    /// Switching it on also clamps a stored `uncompressed_history_lines` into range (it is kept
+    /// as written while compression is off).
+    HistoryCompression(bool),
+    UncompressedHistoryLines(usize),
     Theme(ThemeMode),
     ColorScheme(String),
     KittyKeyboard(bool),
@@ -51,6 +57,8 @@ impl SettingChange {
             Self::FontFamily(_) => "font_family",
             Self::FontSize(_) => "font_size",
             Self::ScrollbackLines(_) => "scrollback_lines",
+            Self::HistoryCompression(_) => "history_compression",
+            Self::UncompressedHistoryLines(_) => "uncompressed_history_lines",
             Self::Theme(_) => "theme",
             Self::ColorScheme(_) => "color_scheme",
             Self::KittyKeyboard(_) => "kitty_keyboard",
@@ -76,7 +84,20 @@ impl SettingChange {
         match self {
             Self::FontFamily(v) => settings.font_family.clone_from(v),
             Self::FontSize(v) => settings.font_size = *v,
-            Self::ScrollbackLines(v) => settings.scrollback_lines = *v,
+            Self::ScrollbackLines(v) => {
+                settings.scrollback_lines = *v;
+                if let Some(keep) = settings.uncompressed_history_lines {
+                    settings.uncompressed_history_lines = Some(dragged_down(keep, *v));
+                }
+            }
+            Self::HistoryCompression(v) => {
+                settings.history_compression = *v;
+                if *v && let Some(keep) = settings.uncompressed_history_lines {
+                    settings.uncompressed_history_lines =
+                        Some(clamped(keep, settings.scrollback_lines));
+                }
+            }
+            Self::UncompressedHistoryLines(v) => settings.uncompressed_history_lines = Some(*v),
             Self::Theme(v) => settings.theme = *v,
             Self::ColorScheme(v) => settings.color_scheme.clone_from(v),
             Self::KittyKeyboard(v) => settings.kitty_keyboard = *v,
@@ -104,13 +125,16 @@ impl SettingChange {
         match self {
             Self::FontFamily(v) | Self::ColorScheme(v) => Value::from(v.as_str()),
             Self::FontSize(v) | Self::BackgroundOpacity(v) => Value::from(short_f64(*v)),
-            Self::ScrollbackLines(v) => Value::from(i64::try_from(*v).unwrap_or(i64::MAX)),
+            Self::ScrollbackLines(v) | Self::UncompressedHistoryLines(v) => {
+                Value::from(i64::try_from(*v).unwrap_or(i64::MAX))
+            }
             Self::Theme(ThemeMode::Dark) => Value::from("dark"),
             Self::Theme(ThemeMode::Light) => Value::from("light"),
             Self::KittyKeyboard(v)
             | Self::GraphemeClusters(v)
             | Self::Ligatures(v)
             | Self::BackgroundBlur(v)
+            | Self::HistoryCompression(v)
             | Self::CheckUpdates(v) => Value::from(*v),
             // A number for a fixed rate, the string for the display's.
             Self::MaxFps(MaxFps::Fixed(n)) => Value::from(i64::from(*n)),
@@ -125,6 +149,28 @@ impl SettingChange {
             // Written per action by `edit_keys`.
             Self::Keys(_) => Value::from(""),
         }
+    }
+}
+
+/// `keep` (an `uncompressed_history_lines`) after `scrollback_lines` became `scrollback`:
+/// unchanged unless it is no longer below it, then `scrollback - 1`. A scrollback at or below
+/// [`UNCOMPRESSED_FLOOR`] turns compression off whatever the value, so it is left alone.
+fn dragged_down(keep: usize, scrollback: usize) -> usize {
+    if scrollback > UNCOMPRESSED_FLOOR && keep >= scrollback {
+        scrollback - 1
+    } else {
+        keep
+    }
+}
+
+/// `keep` (an `uncompressed_history_lines`) brought into its range for `scrollback`, as when
+/// compression is switched on. A scrollback at or below [`UNCOMPRESSED_FLOOR`] leaves no range
+/// (compression does not apply), so it is left alone.
+fn clamped(keep: usize, scrollback: usize) -> usize {
+    if scrollback > UNCOMPRESSED_FLOOR {
+        keep.clamp(UNCOMPRESSED_FLOOR, scrollback - 1)
+    } else {
+        keep
     }
 }
 
@@ -161,6 +207,27 @@ impl Settings {
 /// shown commented out (`#key = ...`, as in the template) is set on the line right after that
 /// comment. Otherwise the key is added with the other top-level keys.
 pub fn edit_text(text: &str, change: &SettingChange) -> Result<String, (Option<usize>, String)> {
+    let edited = edit_one(text, change)?;
+    // Lowering the scrollback also lowers an `uncompressed_history_lines` that is present and
+    // would no longer be below it; switching compression on clamps one into range. Both read
+    // the edited file, whose `scrollback_lines` is the new one. `edit_one` refused a file that
+    // does not load as settings, so the edited one loads too.
+    let rule: fn(usize, usize) -> usize = match change {
+        SettingChange::ScrollbackLines(_) => dragged_down,
+        SettingChange::HistoryCompression(true) => clamped,
+        _ => return Ok(edited),
+    };
+    if let Ok(s) = toml::from_str::<Settings>(&edited)
+        && let Some(keep) = s.uncompressed_history_lines
+        && let now = rule(keep, s.scrollback_lines)
+        && now != keep
+    {
+        return edit_one(&edited, &SettingChange::UncompressedHistoryLines(now));
+    }
+    Ok(edited)
+}
+
+fn edit_one(text: &str, change: &SettingChange) -> Result<String, (Option<usize>, String)> {
     let mut doc: DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| {
         let line = e.span().map(|s| line_of(text, s.start));
         (line, e.message().to_string())
@@ -389,6 +456,8 @@ mod tests {
             SettingChange::FontFamily("JetBrains Mono".into()),
             SettingChange::FontSize(15.5),
             SettingChange::ScrollbackLines(25_000),
+            SettingChange::HistoryCompression(true),
+            SettingChange::UncompressedHistoryLines(5_000),
             SettingChange::Theme(ThemeMode::Light),
             SettingChange::KittyKeyboard(true),
             SettingChange::GraphemeClusters(true),
@@ -823,6 +892,102 @@ mod tests {
             );
         }
         assert!(toml::from_str::<Settings>("window_decorations = \"none\"\n").is_err());
+    }
+
+    #[test]
+    fn lowering_scrollback_drags_uncompressed_down() {
+        let mut s = Settings {
+            uncompressed_history_lines: Some(8_000),
+            ..Settings::default()
+        };
+        SettingChange::ScrollbackLines(5_000).apply(&mut s);
+        assert_eq!(s.uncompressed_history_lines, Some(4_999));
+        // Absent stays absent; a value that still fits stays.
+        let mut s = Settings::default();
+        SettingChange::ScrollbackLines(5_000).apply(&mut s);
+        assert_eq!(s.uncompressed_history_lines, None);
+        let mut s = Settings {
+            uncompressed_history_lines: Some(2_000),
+            ..Settings::default()
+        };
+        SettingChange::ScrollbackLines(5_000).apply(&mut s);
+        assert_eq!(s.uncompressed_history_lines, Some(2_000));
+        // At or below the floor compression is off anyway: the key is left alone.
+        let mut s = Settings {
+            uncompressed_history_lines: Some(8_000),
+            ..Settings::default()
+        };
+        SettingChange::ScrollbackLines(1_000).apply(&mut s);
+        assert_eq!(s.uncompressed_history_lines, Some(8_000));
+        // In the file: both keys are written, only when the key is present.
+        let text = "scrollback_lines = 20000\nuncompressed_history_lines = 8000\n";
+        let edited = edit_text(text, &SettingChange::ScrollbackLines(5_000)).unwrap();
+        assert_eq!(
+            edited,
+            "scrollback_lines = 5000\nuncompressed_history_lines = 4999\n"
+        );
+        let edited = edit_text(&edited, &SettingChange::ScrollbackLines(50_000)).unwrap();
+        assert_eq!(
+            edited,
+            "scrollback_lines = 50000\nuncompressed_history_lines = 4999\n"
+        );
+        let edited = edit_text("", &SettingChange::ScrollbackLines(5_000)).unwrap();
+        assert!(!edited.contains("uncompressed"), "{edited}");
+    }
+
+    /// Another key in the file is invalid: the whole edit is refused with that key's line, so
+    /// the scrollback is never written without the uncompressed value it drags down (the
+    /// drag-down's own read of the edited file cannot fail where this one passed).
+    #[test]
+    fn lowering_scrollback_beside_an_invalid_key_writes_nothing() {
+        for text in [
+            "theme = \"purple\"\nscrollback_lines = 20000\nuncompressed_history_lines = 8000\n",
+            "scrollback_lines = 20000\nuncompressed_history_lines = \"lots\"\n",
+        ] {
+            let (line, _) = edit_text(text, &SettingChange::ScrollbackLines(5_000)).unwrap_err();
+            assert!(line.is_some(), "{text}");
+        }
+    }
+
+    #[test]
+    fn switching_compression_on_clamps_a_stored_uncompressed_value() {
+        for (keep, want) in [(8_000, 4_999), (200, 1_000), (2_000, 2_000)] {
+            let mut s = Settings {
+                scrollback_lines: 5_000,
+                uncompressed_history_lines: Some(keep),
+                ..Settings::default()
+            };
+            SettingChange::HistoryCompression(true).apply(&mut s);
+            assert_eq!(s.uncompressed_history_lines, Some(want), "{keep}");
+        }
+        // Absent stays absent; off, or a scrollback at the floor, leaves it as written.
+        let mut s = Settings::default();
+        SettingChange::HistoryCompression(true).apply(&mut s);
+        assert_eq!(s.uncompressed_history_lines, None);
+        for (scrollback, on) in [(5_000, false), (1_000, true)] {
+            let mut s = Settings {
+                scrollback_lines: scrollback,
+                uncompressed_history_lines: Some(8_000),
+                ..Settings::default()
+            };
+            SettingChange::HistoryCompression(on).apply(&mut s);
+            assert_eq!(s.uncompressed_history_lines, Some(8_000));
+        }
+        // In the file: the clamped value is written with the switch, and the file then loads
+        // with no problem to report.
+        let text = "scrollback_lines = 5000\nuncompressed_history_lines = 8000\n";
+        let edited = edit_text(text, &SettingChange::HistoryCompression(true)).unwrap();
+        assert_eq!(
+            edited,
+            "scrollback_lines = 5000\nuncompressed_history_lines = 4999\nhistory_compression = true\n"
+        );
+        let mut loaded: Settings = toml::from_str(&edited).unwrap();
+        assert!(loaded.clamp().is_empty());
+        let edited = edit_text(text, &SettingChange::HistoryCompression(false)).unwrap();
+        assert!(
+            edited.contains("uncompressed_history_lines = 8000"),
+            "{edited}"
+        );
     }
 
     #[test]

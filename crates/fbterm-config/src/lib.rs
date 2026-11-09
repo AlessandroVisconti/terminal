@@ -19,7 +19,7 @@ pub use profile::{
 };
 pub use settings::{
     MacosBlurStyle, MaxFps, SETTINGS_TEMPLATE, SecretStorage, Settings, TabBar, ThemeMode,
-    WindowDecorations,
+    UNCOMPRESSED_DEFAULT, UNCOMPRESSED_FLOOR, WindowDecorations,
 };
 pub use settings_edit::SettingChange;
 pub use shells::discover_shells;
