@@ -268,10 +268,11 @@ pub fn modifiers(chord: Chord) -> Modifiers {
 mod tests {
     use super::*;
 
-    const ALL: [Action; 46] = [
+    const ALL: [Action; 47] = [
         Action::NewTab,
         Action::CloseTab,
         Action::CopyPassword,
+        Action::RenameTab,
         Action::NextTab,
         Action::PrevTab,
         Action::SelectTab(1),

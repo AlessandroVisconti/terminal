@@ -3,6 +3,7 @@
 //! either axis, and the right-click that asks for a tab's menu.
 
 use iced::advanced::Shell;
+use iced::advanced::mouse::click;
 use iced::{Event, Point, Rectangle, mouse, window};
 
 use crate::app::{Message, TabBarMsg};
@@ -49,6 +50,9 @@ pub(crate) struct Press {
 #[derive(Default)]
 pub(crate) struct DragState {
     pub press: Option<Press>,
+    /// The last left press on a tab, and which tab: a second one on the same tab soon after
+    /// is a double-click, which renames it.
+    pub last_click: Option<(click::Click, TabId)>,
     /// The tab a carried tab hovers, as last reported.
     pub over: Option<usize>,
     /// Where a carried tile would become a tab, or a carried tab of this strip would move
@@ -78,6 +82,9 @@ pub(crate) struct Strip<'a> {
     /// How far the strip's coordinates are shifted from the window's: the sidebar's scroll
     /// offset (its rows are measured inside the scrollable), 0 for the bar.
     pub scroll: f32,
+    /// The tab showing the rename field: a press on it is the field's (caret, selection),
+    /// never a drag or a double-click.
+    pub renaming: Option<TabId>,
 }
 
 /// Where something dropped at `p` lands between the tabs: before the tab whose first half
@@ -173,17 +180,37 @@ pub(crate) fn drag_event(
     };
     match event {
         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-            state.press = cursor
+            let pressed = cursor
                 .position_over(bounds)
                 .filter(|_| !strip.modal)
                 .and_then(|p| {
-                    let id = *strip.ids.get(under(p)?)?;
-                    Some(Press {
-                        id,
-                        origin: p,
-                        dragging: false,
-                    })
+                    let row = under(p)?;
+                    let id = *strip.ids.get(row)?;
+                    (strip.renaming != Some(id)).then_some((row, id, p))
                 });
+            state.press = pressed.map(|(_, id, p)| Press {
+                id,
+                origin: p,
+                dragging: false,
+            });
+            match pressed {
+                Some((row, id, p)) => {
+                    let previous = state.last_click.map(|(c, _)| c);
+                    let click = click::Click::new(p, mouse::Button::Left, previous);
+                    let again = state.last_click.is_some_and(|(_, last)| last == id);
+                    // A third click is no new rename: it counts as a single again.
+                    if again && click.kind() == click::Kind::Double {
+                        state.last_click = None;
+                        shell.publish(Message::TabBar(
+                            strip.window,
+                            TabBarMsg::Rename(at_window(row)),
+                        ));
+                    } else {
+                        state.last_click = Some((click, id));
+                    }
+                }
+                None => state.last_click = None,
+            }
         }
         // A wheel click on a tab closes it, as in a browser.
         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) if !strip.modal => {
@@ -356,6 +383,7 @@ mod tests {
             hole: Some(0),
             axis: Axis::Y,
             scroll,
+            renaming: None,
         };
         let bounds = Rectangle::new(
             Point::new(0.0, rows[0].y),
@@ -543,6 +571,7 @@ mod tests {
             hole: Some(0),
             axis: Axis::Y,
             scroll: 0.0,
+            renaming: None,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(100.0, 136.0));
         let mut state = DragState::default();
@@ -662,6 +691,63 @@ mod tests {
         );
     }
 
+    /// Drives two presses and releases at `at` over a strip of three rows (window indices
+    /// 0, 2, 3), the row `renaming` showing the rename field. Returns the renames asked for.
+    fn double_click(at: Point, renaming: Option<usize>) -> Vec<usize> {
+        use iced::advanced::Shell;
+        let rows: Vec<Rectangle> = (0..3)
+            .map(|i| Rectangle::new(Point::new(0.0, i as f32 * 34.0), Size::new(100.0, 30.0)))
+            .collect();
+        let ids = vec![TabId::next(), TabId::next(), TabId::next()];
+        let indices = [0, 2, 3];
+        let strip = Strip {
+            window: window::Id::unique(),
+            ids: &ids,
+            indices: &indices,
+            range: None,
+            clamp: false,
+            carry: None,
+            modal: false,
+            hole: Some(0),
+            axis: Axis::Y,
+            scroll: 0.0,
+            renaming: renaming.map(|r| ids[r]),
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(100.0, 102.0));
+        let mut state = DragState::default();
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        for event in [press(), release(), press(), release()] {
+            drag_event(
+                &strip,
+                &mut state,
+                &event,
+                &rows,
+                bounds,
+                mouse::Cursor::Available(at),
+                &mut shell,
+            );
+        }
+        messages
+            .iter()
+            .filter_map(|m| match m {
+                Message::TabBar(_, TabBarMsg::Rename(i)) => Some(*i),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_double_click_on_a_tab_asks_to_rename_it_but_not_on_its_field() {
+        let second_row = Point::new(10.0, 40.0);
+        assert_eq!(double_click(second_row, None), vec![2], "its window index");
+        assert!(double_click(second_row, Some(1)).is_empty());
+        assert!(
+            double_click(Point::new(10.0, 32.0), None).is_empty(),
+            "the gap between rows is no tab"
+        );
+    }
+
     #[test]
     fn a_right_click_reports_the_menu_at_the_pointer_in_window_coordinates() {
         use iced::advanced::Shell;
@@ -685,6 +771,7 @@ mod tests {
             // The rows are measured inside a scrollable scrolled by 400: a pointer at
             // content y 440 is at window y 40.
             scroll: 400.0,
+            renaming: None,
         };
         let mut state = DragState::default();
         let mut messages = Vec::new();

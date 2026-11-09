@@ -48,6 +48,7 @@ These shortcuts cannot be changed; Settings lists them under **Fixed** at the en
 | Show or hide the [file panel](file-panel) | `Cmd+Shift+E` | `Ctrl+Shift+E` |
 | Tabs down the left side, or back along the top ([vertical tabs](tabs#tabs-on-the-left)) | `Cmd+Shift+B` | `Ctrl+Shift+B` |
 | Copy the saved password of the active tab's SSH profile ([copying a password](saved-secrets#copying-a-password)) | `Cmd+Shift+K` | `Ctrl+Shift+K` |
+| Rename the active tab ([renaming a tab](tabs#renaming-a-tab)) | `Cmd+Shift+R` | `Ctrl+Shift+R` |
 
 ## Panes
 
@@ -142,11 +143,12 @@ These actions are listed after your profiles, each with its shortcut when it has
 | Reveal config folder | Show the config folder in your file manager, with `settings.toml` selected on macOS when it exists. The folder is created if it is missing. |
 | Export tab to file… | Save the active tab's text to a file; see [Exporting a tab](#exporting-a-tab). |
 | Copy password | Put the saved password of the active tab's SSH profile on the clipboard, as the [tab menu](tabs#the-tab-menu) does; nothing happens for a key, agent or local profile. |
+| Rename tab | Give the active tab a name of its own; see [Renaming a tab](tabs#renaming-a-tab). |
 | Export profiles… | Open the [export window](export-import#exporting). It has no shortcut by default. |
 | Import profiles… | Open the [import window](export-import#importing). It has no shortcut by default. |
 | Quit | Save the layout and quit. |
 
-While the Profiles or Settings tab is the active tab, the palette leaves out the actions that need a terminal: Split right, Split down, Maximize pane, Merge tab into…, Move tile…, Move tile to new tab, Find in pane, Find in this tab and Export tab to file…. Their shortcuts do nothing there either. Select a terminal tab to use them again.
+While the Profiles or Settings tab is the active tab, the palette leaves out the actions that need a terminal: Split right, Split down, Maximize pane, Merge tab into…, Move tile…, Move tile to new tab, Find in pane, Find in this tab, Rename tab and Export tab to file…. Their shortcuts do nothing there either. Select a terminal tab to use them again.
 
 ## Inside the palette
 
@@ -197,6 +199,7 @@ A shortcut is its modifiers and a key joined by `+`. Modifiers are `ctrl`, `alt`
 | `new_tab`, `close_tab`, `next_tab`, `previous_tab` | New tab, close tab or pane (the focused pane; the tab when it is the last), next and previous tab |
 | `export_tab` | Export tab to file (no default shortcut) |
 | `copy_password` | Copy the saved password of the active tab's SSH profile (`Cmd+Shift+K`, `Ctrl+Shift+K`) |
+| `rename_tab` | Rename the active tab (`Cmd+Shift+R`, `Ctrl+Shift+R`) |
 | `export_profiles`, `import_profiles` | Export and import profiles (no default shortcuts) |
 | `duplicate_profile` | Duplicate profile (no default shortcut) |
 | `split_right`, `split_down`, `maximize_pane` | Split the focused pane, maximize it |
