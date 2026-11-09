@@ -1433,7 +1433,7 @@ pub(crate) fn toggler_style(t: &Tokens, status: toggler::Status, inert: bool) ->
         // Muted like a read-only slider: on reads as the muted text color, off as the border.
         (true, false) if inert => t.text_muted,
         (false, false) if inert => t.border,
-        (true, false) if hovered => t.accent_edge,
+        (true, false) if hovered => t.accent_hover,
         (true, false) => t.accent,
         (false, false) if hovered => t.text_muted,
         (false, false) => t.border,
@@ -1448,7 +1448,7 @@ pub(crate) fn toggler_style(t: &Tokens, status: toggler::Status, inert: bool) ->
             // On, muted: the knob must not vanish into the muted track.
             t.app
         } else {
-            Color::WHITE
+            t.on_accent
         }),
         foreground_border_width: 0.0,
         foreground_border_color: Color::TRANSPARENT,
@@ -1489,5 +1489,33 @@ pub(crate) fn menu_style(t: &Tokens) -> iced::overlay::menu::Style {
         selected_text_color: t.text,
         selected_background: Background::Color(t.accent_soft),
         shadow: iced::Shadow::default(),
+    }
+}
+
+#[cfg(test)]
+mod toggler_tests {
+    use super::*;
+    use crate::tab_look::contrast;
+
+    #[test]
+    fn an_on_knob_stays_visible_on_the_accent_track() {
+        for t in [
+            crate::theme::graphite_tokens(),
+            crate::theme::pale_accent_tokens(),
+        ] {
+            for status in [
+                toggler::Status::Active { is_toggled: true },
+                toggler::Status::Hovered { is_toggled: true },
+            ] {
+                let s = toggler_style(t, status, false);
+                let (Background::Color(track), Background::Color(knob)) =
+                    (s.background, s.foreground)
+                else {
+                    panic!("color backgrounds");
+                };
+                let k = contrast(knob, track);
+                assert!(k >= 4.5, "{status:?} {k}");
+            }
+        }
     }
 }

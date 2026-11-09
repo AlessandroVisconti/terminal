@@ -148,11 +148,11 @@ pub fn primary(t: &Tokens, status: button::Status) -> button::Style {
         background: Some(Background::Color(if disabled {
             t.raised
         } else if hovered(status) {
-            t.accent_edge
+            t.accent_hover
         } else {
             t.accent
         })),
-        text_color: if disabled { t.text_muted } else { Color::WHITE },
+        text_color: if disabled { t.text_muted } else { t.on_accent },
         border: Border {
             color: t.border,
             width: if disabled { 1.0 } else { 0.0 },
@@ -622,5 +622,32 @@ mod profile_icon_tests {
         assert_eq!(profile_icon(None, true), ICON_SERVER);
         assert_eq!(profile_icon(Some("nope"), true), ICON_SERVER);
         assert_eq!(profile_icon(Some("database"), false), PROFILE_ICONS[2].1);
+    }
+}
+
+#[cfg(test)]
+mod primary_tests {
+    use super::*;
+    use crate::tab_look::contrast;
+
+    #[test]
+    fn primary_text_reads_on_the_accent_and_its_hover() {
+        for t in [
+            crate::theme::graphite_tokens(),
+            crate::theme::pale_accent_tokens(),
+        ] {
+            for status in [
+                button::Status::Active,
+                button::Status::Hovered,
+                button::Status::Pressed,
+            ] {
+                let s = primary(t, status);
+                let Some(Background::Color(bg)) = s.background else {
+                    panic!("primary buttons have a color background");
+                };
+                let k = contrast(s.text_color, bg);
+                assert!(k >= 4.5, "{status:?} {k}");
+            }
+        }
     }
 }

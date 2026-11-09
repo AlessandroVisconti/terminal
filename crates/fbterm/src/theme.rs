@@ -27,6 +27,12 @@ pub struct Tokens {
     pub accent_soft: Color,
     /// Edge of the selected row (a lighter violet on dark).
     pub accent_edge: Color,
+    /// Background of an accent-filled control under the pointer (a primary button, an on
+    /// toggler's track).
+    pub accent_hover: Color,
+    /// Text and glyphs drawn on `accent` or `accent_hover` (primary buttons, the current
+    /// search match, a toggler's knob): white or near-black, at least 4.5:1 on both.
+    pub on_accent: Color,
     pub success: Color,
     pub warning: Color,
     pub danger: Color,
@@ -47,6 +53,8 @@ pub const DARK: Tokens = Tokens {
     accent: color!(0x7c49e3),
     accent_soft: Color::from_rgba(165.0 / 255.0, 132.0 / 255.0, 1.0, 0.14),
     accent_edge: color!(0xa584ff),
+    accent_hover: color!(0x6d40c8),
+    on_accent: Color::WHITE,
     success: color!(0x2bbb71),
     warning: color!(0xf2a635),
     danger: color!(0xed4a49),
@@ -66,6 +74,8 @@ pub const LIGHT: Tokens = Tokens {
     accent: color!(0x7c49e3),
     accent_soft: Color::from_rgba(124.0 / 255.0, 73.0 / 255.0, 227.0 / 255.0, 0.09),
     accent_edge: color!(0x7c49e3),
+    accent_hover: color!(0x6d40c8),
+    on_accent: Color::WHITE,
     success: color!(0x00884b),
     warning: color!(0xbe7100),
     danger: color!(0xc52b30),
@@ -88,13 +98,6 @@ fn theme_named(name: &str, t: &Tokens) -> Theme {
         warning: t.warning,
         danger: t.danger,
     };
-    // Text on the accent: white or the Graphite app color, whichever reads better.
-    let ink = color!(0x101013);
-    let on_accent = if contrast(Color::WHITE, t.accent) >= contrast(ink, t.accent) {
-        Color::WHITE
-    } else {
-        ink
-    };
     Theme::custom_with_fn(name.to_string(), base, move |p| {
         let mut ext = palette::Extended::generate(p);
         ext.background.weak = palette::Pair::new(t.surface, t.text);
@@ -103,7 +106,7 @@ fn theme_named(name: &str, t: &Tokens) -> Theme {
         // A literal pair: `Pair::new` would nudge the text color away from the exact choice.
         ext.primary.base = palette::Pair {
             color: t.accent,
-            text: on_accent,
+            text: t.on_accent,
         };
         ext
     })
@@ -119,6 +122,10 @@ const SECONDARY_STEP: f32 = 0.73;
 const MUTED_STEP: f32 = 0.575;
 
 const VIOLET: Color = color!(0x7c49e3);
+/// Dark text on a pale accent: the Graphite app color.
+const INK: Color = color!(0x101013);
+/// How far `accent_hover` moves from `accent`, away from the text drawn on it.
+const HOVER_STEP: f32 = 0.12;
 
 /// `t` of the way from `from` to `to`, opaque.
 fn toward(from: Color, to: Color, t: f32) -> Color {
@@ -164,6 +171,31 @@ fn roomy(bg: Color) -> Color {
         .unwrap_or(other)
 }
 
+/// Text on `accent`: white or [`INK`], whichever contrasts more; when neither reaches 4.5:1
+/// (accents of middle luminance), pure white or black, one of which always does.
+fn on_accent(accent: Color) -> Color {
+    let best = if contrast(Color::WHITE, accent) >= contrast(INK, accent) {
+        Color::WHITE
+    } else {
+        INK
+    };
+    if contrast(best, accent) >= 4.5 {
+        best
+    } else {
+        far_end(accent)
+    }
+}
+
+/// `accent` under the pointer: moved away from `ink`, so `ink` reads at least as well on it.
+fn accent_hover(accent: Color, ink: Color) -> Color {
+    let away = if ink == Color::WHITE {
+        Color::BLACK
+    } else {
+        Color::WHITE
+    };
+    toward(accent, away, HOVER_STEP)
+}
+
 fn with_alpha(c: Color, a: f32) -> Color {
     Color { a, ..c }
 }
@@ -199,6 +231,7 @@ pub fn derive(colors: &SchemeColors) -> Tokens {
         let c = if contrast(c, app) >= 3.0 { c } else { fallback };
         ensure(c, app, 3.0)
     };
+    let ink = on_accent(accent);
     let success = status(2, reference.success);
     let warning = status(3, reference.warning);
     let danger = status(1, reference.danger);
@@ -219,6 +252,8 @@ pub fn derive(colors: &SchemeColors) -> Tokens {
         } else {
             accent
         },
+        accent_hover: accent_hover(accent, ink),
+        on_accent: ink,
         success,
         warning,
         danger,
@@ -263,6 +298,25 @@ pub fn graphite_tokens() -> &'static Tokens {
         .find(|s| s.id == "graphite")
         .expect("Graphite is built in");
     tokens_for("graphite", &graphite.colors)
+}
+
+/// Tokens derived from Graphite with a pale cursor (Gruvbox's `#ebdbb2`) as the accent, for
+/// tests that check text drawn on the accent.
+#[cfg(test)]
+pub fn pale_accent_tokens() -> &'static Tokens {
+    let mut colors = schemes::builtins()
+        .into_iter()
+        .find(|s| s.id == "graphite")
+        .expect("Graphite is built in")
+        .colors;
+    colors.cursor = fbterm_config::profile::Rgb {
+        r: 0xeb,
+        g: 0xdb,
+        b: 0xb2,
+    };
+    let t = tokens_for("pale-accent-test", &colors);
+    assert_eq!(t.accent, color!(0xebdbb2));
+    t
 }
 
 #[cfg(test)]
@@ -340,6 +394,10 @@ mod tests {
         assert!(c(t.text) >= 7.0, "{label} text {}", c(t.text));
         assert!(c(t.text_secondary) >= 4.5, "{label} secondary");
         assert!(c(t.text_muted) >= 4.5, "{label} muted");
+        for (n, bg) in [("accent", t.accent), ("accent_hover", t.accent_hover)] {
+            let k = contrast(t.on_accent, bg);
+            assert!(k >= 4.5, "{label} on_accent on {n} {k}");
+        }
         for (n, x) in [
             ("accent", t.accent),
             ("success", t.success),
@@ -360,6 +418,8 @@ mod tests {
             t.accent,
             t.accent_soft,
             t.accent_edge,
+            t.accent_hover,
+            t.on_accent,
             t.success,
             t.warning,
             t.danger,
@@ -458,6 +518,44 @@ mod tests {
                 Color::WHITE
             };
             assert!(contrast(p.text, t.accent) >= contrast(other, t.accent));
+        }
+    }
+
+    #[test]
+    fn pale_accents_take_dark_ink() {
+        // Gruvbox, Catppuccin Frappe, Tokyo Night, Dracula and Nord cursors or blues.
+        for v in [0xebdbb2, 0xf2d5cf, 0xc0caf5, 0xbd93f9, 0x81a1c1] {
+            let t = derive(&accent_scheme(v, 0x70b3f7, 0x8ec5ff));
+            assert_eq!(t.on_accent, color!(0x101013), "{v:06x}");
+            assert_floors(&format!("{v:06x}"), &t);
+        }
+    }
+
+    #[test]
+    fn mid_luminance_accents_still_reach_the_floor() {
+        // Neither white nor #101013 reaches 4.5:1 on these; the ink falls back to black.
+        for v in [0x7a6fc8, 0x8a7a4a, 0x9a6a8a] {
+            let t = derive(&accent_scheme(v, 0x70b3f7, 0x8ec5ff));
+            assert_eq!(t.on_accent, Color::BLACK, "{v:06x}");
+            assert_floors(&format!("{v:06x}"), &t);
+        }
+    }
+
+    #[test]
+    fn graphite_keeps_white_on_violet() {
+        for t in [&DARK, &LIGHT] {
+            assert_eq!(t.on_accent, Color::WHITE);
+            assert_eq!(t.accent, color!(0x7c49e3));
+            assert_floors("graphite", t);
+        }
+    }
+
+    #[test]
+    fn palette_primary_text_is_on_accent() {
+        for t in [&DARK, &LIGHT, pale_accent_tokens()] {
+            let p = chrome_theme(t).extended_palette().primary.base;
+            assert_eq!(p.color, t.accent);
+            assert_eq!(p.text, t.on_accent);
         }
     }
 
