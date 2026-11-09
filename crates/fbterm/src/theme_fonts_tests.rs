@@ -630,7 +630,6 @@ fn use_font_is_off_while_in_use() {
 /// The restart gap: a font installed while fbterm runs is loaded into the renderer on the next
 /// user action, after which the line, `Use font` and the panes agree.
 #[test]
-#[ignore = "restored by Task 5: scan on tab shown"]
 fn a_font_installed_while_running_is_loaded_on_the_next_showing() {
     let ocean = suggesting("Ocean", 0x102030, "Sample Mono");
     let a = with_scheme(&profile("a"), &ocean.id);
@@ -662,6 +661,67 @@ fn a_font_installed_while_running_is_loaded_on_the_next_showing() {
     finish_scan(&mut app);
     assert_eq!(*fake.scans.lock(), 2);
     assert_eq!(*fake.loaded.lock(), strings(&["Sample Mono"]));
+}
+
+/// Select the first tab of the window (not the Color schemes page).
+fn select_first_tab(app: &mut App, wid: iced::window::Id) {
+    app.windows.get_mut(&wid).unwrap().select(0);
+}
+
+#[test]
+fn selecting_the_schemes_tab_scans() {
+    let ocean = suggesting("Ocean", 0x102030, "Sample Mono");
+    let (mut app, _, wid, _) = app_with(&[profile("a")], "", std::slice::from_ref(&ocean));
+    let fake = fake_fonts(&mut app, &[], &[]);
+    send(&mut app, SchemesMsg::Open);
+    assert!(app.fonts_scanning);
+    assert!(!app.fonts_rescan, "one open starts one scan, no follow-up");
+    finish_scan(&mut app);
+    assert_eq!(*fake.scans.lock(), 1);
+    select_first_tab(&mut app, wid);
+    fake.system.lock().push("Sample Mono".into());
+    send(&mut app, SchemesMsg::Open);
+    assert!(app.fonts_scanning);
+    finish_scan(&mut app);
+    assert_eq!(*fake.scans.lock(), 2);
+    let line = win(&app)
+        .font_line(win(&app).draft(&ocean.id).unwrap())
+        .unwrap();
+    assert_ne!(line.state, FontState::NotInstalled);
+}
+
+#[test]
+fn focusing_the_window_with_the_tab_active_scans() {
+    let ocean = suggesting("Ocean", 0x102030, "Sample Mono");
+    let (mut app, _, wid, _) = app_with(&[profile("a")], "", std::slice::from_ref(&ocean));
+    let fake = fake_fonts(&mut app, &[], &[]);
+    send(&mut app, SchemesMsg::Open);
+    finish_scan(&mut app);
+    assert_eq!(*fake.scans.lock(), 1);
+    let _ = app.update(Message::WindowFocused(wid));
+    assert!(app.fonts_scanning, "focus with the tab active scans");
+    finish_scan(&mut app);
+    assert_eq!(*fake.scans.lock(), 2);
+    select_first_tab(&mut app, wid);
+    let _ = app.update(Message::WindowFocused(wid));
+    assert!(!app.fonts_scanning, "another tab active: no scan");
+    assert_eq!(*fake.scans.lock(), 2);
+}
+
+#[test]
+fn nothing_missing_means_no_scan_on_show() {
+    let (mut app, _, wid, _) = app_with(&[profile("a")], "", &[]);
+    let fake = fake_fonts(
+        &mut app,
+        &["Geist Mono", "JetBrains Mono", "IBM Plex Mono"],
+        &[],
+    );
+    send(&mut app, SchemesMsg::Open);
+    select_first_tab(&mut app, wid);
+    send(&mut app, SchemesMsg::Open);
+    let _ = app.update(Message::WindowFocused(wid));
+    assert!(!app.fonts_scanning);
+    assert_eq!(*fake.scans.lock(), 0);
 }
 
 #[test]

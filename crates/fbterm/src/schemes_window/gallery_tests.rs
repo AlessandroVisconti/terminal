@@ -161,7 +161,6 @@ fn scheme_files(app: &App) -> Vec<String> {
 }
 
 #[test]
-#[ignore = "restored by Task 5: scan on tab shown"]
 fn opening_gallery_fetches_once() {
     let (mut app, _, _, _) = app_with(&[profile("a")], "", &[]);
     let calls = fake_io(&mut app, Ok(catalog(&[entry("x", 1, "#101010", false)])));
@@ -574,7 +573,6 @@ fn theme_names(app: &App) -> Vec<String> {
 }
 
 #[test]
-#[ignore = "restored by Task 5: scan on tab shown"]
 fn reopen_during_loading_and_stale_results() {
     let (mut app, _, _, _) = app_with(&[profile("a")], "", &[]);
     let _ = fake_io(&mut app, Ok(catalog(&[entry("a", 1, "#101010", false)])));

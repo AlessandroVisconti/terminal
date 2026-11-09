@@ -311,6 +311,17 @@ impl App {
             return Task::none();
         };
         tabs::on_shown(window);
+        let schemes = if window
+            .active_tab()
+            .is_some_and(|t| t.page == Some(Page::Schemes))
+        {
+            self.schemes_shown()
+        } else {
+            Task::none()
+        };
+        let Some(window) = self.windows.get(&wid) else {
+            return schemes;
+        };
         let waiting: Vec<_> = window
             .active_tab()
             .map(|t| {
@@ -321,12 +332,9 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
-        Task::batch(
-            waiting
-                .into_iter()
-                .map(|id| self.start(wid, id))
-                .collect::<Vec<_>>(),
-        )
+        let mut tasks: Vec<_> = waiting.into_iter().map(|id| self.start(wid, id)).collect();
+        tasks.push(schemes);
+        Task::batch(tasks)
     }
 
     /// Write `state.toml`: windows, tabs, selection, sizes and recency. Does nothing for debug

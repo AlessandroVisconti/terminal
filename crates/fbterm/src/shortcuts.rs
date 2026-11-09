@@ -301,6 +301,7 @@ fn press_message(
                 Action::Quit
                 | Action::Settings
                 | Action::EditProfiles
+                | Action::EditSchemes
                 | Action::Tunnels
                 | Action::VerticalTabs
                     if !repeat =>
@@ -1206,6 +1207,29 @@ mod tests {
         assert!(matches!(
             press(Mode::Schemes, ",", true),
             Some(Some(Message::Shortcut(_, Action::EditProfiles)))
+        ));
+        // The shortcut that opens the tab reselects it.
+        let mut overrides = fbterm_config::keys::Overrides::new();
+        overrides.insert(
+            Action::EditSchemes,
+            Some(parse_chord(if cfg!(target_os = "macos") {
+                "cmd+shift+j"
+            } else {
+                "ctrl+shift+j"
+            })),
+        );
+        let (key, mods) = chord("j", true);
+        assert!(matches!(
+            key_message(
+                &Bindings::current(&overrides),
+                Mode::Schemes,
+                window::Id::unique(),
+                &key,
+                mods,
+                false,
+                None
+            ),
+            Some(Some(Message::Shortcut(_, Action::EditSchemes)))
         ));
         // A tab like the others: tab shortcuts work there.
         assert!(matches!(
