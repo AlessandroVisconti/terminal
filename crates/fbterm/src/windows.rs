@@ -182,7 +182,8 @@ impl App {
     }
 
     /// What a closed page tab leaves behind: the editor's drafts go, Settings applies a value
-    /// still typed (as Enter would) and writes what is still waiting, the Welcome tab answers its open questions with the defaults.
+    /// still typed (as Enter would) and writes what is still waiting, the Welcome tab answers
+    /// its open questions with the defaults.
     pub(crate) fn page_closed(&mut self, page: Page) -> Task<Message> {
         match page {
             Page::Profiles => {

@@ -200,26 +200,20 @@ impl Settings {
 pub fn edit_text(text: &str, change: &SettingChange) -> Result<String, (Option<usize>, String)> {
     let edited = edit_one(text, change)?;
     // Lowering the scrollback also lowers an `uncompressed_history_lines` that is present and
-    // would no longer be below it; switching compression on clamps one into range. `edit_one`
-    // refused a file that does not load as settings, so the edited one loads too.
-    let follow = |s: Settings| match change {
-        SettingChange::ScrollbackLines(v) => s
-            .uncompressed_history_lines
-            .map(|k| (k, dragged_down(k, *v))),
-        SettingChange::HistoryCompression(true) => s
-            .uncompressed_history_lines
-            .map(|k| (k, clamped(k, s.scrollback_lines))),
-        _ => None,
+    // would no longer be below it; switching compression on clamps one into range. Both read
+    // the edited file, whose `scrollback_lines` is the new one. `edit_one` refused a file that
+    // does not load as settings, so the edited one loads too.
+    let rule: fn(usize, usize) -> usize = match change {
+        SettingChange::ScrollbackLines(_) => dragged_down,
+        SettingChange::HistoryCompression(true) => clamped,
+        _ => return Ok(edited),
     };
-    if matches!(
-        change,
-        SettingChange::ScrollbackLines(_) | SettingChange::HistoryCompression(true)
-    ) && let Some((_, keep)) = toml::from_str::<Settings>(&edited)
-        .ok()
-        .and_then(follow)
-        .filter(|(was, now)| was != now)
+    if let Ok(s) = toml::from_str::<Settings>(&edited)
+        && let Some(keep) = s.uncompressed_history_lines
+        && let now = rule(keep, s.scrollback_lines)
+        && now != keep
     {
-        return edit_one(&edited, &SettingChange::UncompressedHistoryLines(keep));
+        return edit_one(&edited, &SettingChange::UncompressedHistoryLines(now));
     }
     Ok(edited)
 }

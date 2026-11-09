@@ -525,6 +525,7 @@ fn pending(t: &mut Terminal) -> usize {
 
 /// Run every pending history job of `t` as the worker does (take, run off the terminal,
 /// install), asserting every result was installed and none is left. Returns how many ran.
+/// (A copy of `cold_tests::run_jobs`, which an integration test cannot reach.)
 fn run_jobs(t: &mut Terminal) -> usize {
     let jobs = t.next_history_jobs(usize::MAX);
     let n = jobs.len();

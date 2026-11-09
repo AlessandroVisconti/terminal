@@ -960,9 +960,9 @@ fn shown(t: &fbterm_term::SharedTerminal) -> (Vec<String>, usize) {
     (rows, grid.history_size())
 }
 
-/// A tab with the alternate screen up when compression is switched on and off: the worker
-/// compresses (and then decompresses) the normal screen's history behind it, and the
-/// alternate screen keeps its content and stays without history.
+/// A tab with the alternate screen up when compression is switched on and off: the
+/// process-wide worker compresses (and then decompresses) the normal screen's history behind
+/// it, and the alternate screen keeps its content and stays without history.
 #[test]
 fn compression_leaves_an_alternate_screen_alone() {
     let (mut app, terms) = app_with_two_tabs(0);
@@ -982,22 +982,24 @@ fn compression_leaves_an_alternate_screen_alone() {
     assert_eq!(before.1, 0);
     assert!(before.0.iter().any(|r| r.starts_with("alt line 59")));
 
-    let worker = fbterm_term::history_worker::Worker::new();
     for on in [true, false] {
+        // The switch queues the terminal on the process-wide worker; everything is read once
+        // that worker has drained, so nothing races its thread.
         apply(&mut app, |s| {
             s.history_compression = on;
             s.uncompressed_history_lines = Some(1_000);
         });
-        assert!(
-            t.lock().has_history_jobs(),
-            "work behind the alternate screen"
-        );
-        worker.enqueue(t);
-        worker.run_until_idle();
         assert!(fbterm_term::history_worker::wait_idle_for(
             std::time::Duration::from_secs(10)
         ));
-        assert!(!t.lock().has_history_jobs());
+        let mut g = t.lock();
+        assert_eq!(g.history_compression(), on.then_some(1_000));
+        assert!(
+            g.next_history_jobs(usize::MAX).is_empty(),
+            "the worker drained it"
+        );
+        assert!(!g.has_history_jobs());
+        drop(g);
         assert_eq!(shown(t), before, "compression {on}");
     }
 }
