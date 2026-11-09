@@ -193,6 +193,10 @@ pub struct SearchRequest {
     /// Stop after this many hits (whole lines at a time, so a few more can come back).
     pub limit: usize,
     pub snippets: bool,
+    /// Drop the terminal's history read cache when done: a sweep the user asked for (typing,
+    /// moving, a resize, find in all tabs). A find bar's refresh for program output leaves it
+    /// off, so a program's output never causes the drop.
+    pub drop_cache: bool,
 }
 
 /// What a search found, newest match first.
@@ -516,7 +520,7 @@ pub struct Cover {
 }
 
 /// Search `term` for `req`, locking it one chunk at a time. Checks `cancel` between chunks.
-/// Drops the terminal's history read cache when done.
+/// Drops the terminal's history read cache when done if `req.drop_cache`.
 /// Meant for a worker thread: a full 10,000-line scrollback takes a few milliseconds.
 pub fn search(term: &SharedTerminal, req: &SearchRequest, cancel: &AtomicBool) -> SearchOutcome {
     search_with_budget(term, req, cancel, CHUNK_BUDGET)
@@ -552,8 +556,11 @@ fn search_with_budget(
             None => break,
         }
     }
-    // The search read the history it covered: let go of the blocks the read cache kept, once.
-    term.lock().drop_history_cache();
+    // A search the user asked for read the history it covered: let go of the blocks the read
+    // cache kept, once. A refresh for program output keeps them.
+    if req.drop_cache {
+        term.lock().drop_history_cache();
+    }
     out
 }
 
@@ -591,6 +598,7 @@ mod tests {
             below: None,
             limit: MATCH_CAP,
             snippets: true,
+            drop_cache: true,
         }
     }
 
@@ -1043,8 +1051,8 @@ mod tests {
         );
     }
 
-    /// A search sweeps the history; it lets go of the read cache once per call (so once per
-    /// page), never per chunk.
+    /// A search the user asked for sweeps the history; it lets go of the read cache once per
+    /// call (so once per page), never per chunk. A refresh for program output does not.
     #[test]
     fn search_drops_the_history_read_cache_when_done() {
         let mut bytes = Vec::new();
@@ -1063,6 +1071,11 @@ mod tests {
         assert_eq!(on.lock().cache_drops, 2);
         // Cancelled before the first chunk: it still lets go.
         search(&on, &r, &AtomicBool::new(true));
+        assert_eq!(on.lock().cache_drops, 3);
+        // A refresh for program output asks for no drop.
+        r.drop_cache = false;
+        r.below = None;
+        find(&on, &r);
         assert_eq!(on.lock().cache_drops, 3);
     }
 

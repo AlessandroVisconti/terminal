@@ -476,6 +476,7 @@ fn finish_search(app: &mut App, wid: iced::window::Id, term: &fbterm_term::Share
             below: None,
             limit: fbterm_term::MATCH_CAP,
             snippets: false,
+            drop_cache: true,
         },
         &std::sync::atomic::AtomicBool::new(false),
     );

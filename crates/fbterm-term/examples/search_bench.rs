@@ -54,6 +54,7 @@ fn req(text: &str, regex: bool, limit: usize, snippets: bool) -> SearchRequest {
         below: None,
         limit,
         snippets,
+        drop_cache: true,
     }
 }
 

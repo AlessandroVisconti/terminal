@@ -300,6 +300,7 @@ fn run_search(
             below: None,
             limit,
             snippets,
+            drop_cache: true,
         },
         &AtomicBool::new(false),
     )
@@ -606,6 +607,7 @@ fn reads_json(shared: &SharedTerminal) -> Value {
                     below,
                     limit: MATCH_CAP,
                     snippets: true,
+                    drop_cache: true,
                 },
                 &AtomicBool::new(false),
             );

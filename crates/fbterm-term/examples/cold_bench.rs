@@ -269,6 +269,7 @@ fn main() {
             below: None,
             limit: MATCH_CAP,
             snippets: false,
+            drop_cache: true,
         };
         let (mut a, mut b, mut q) = (Vec::new(), Vec::new(), Vec::new());
         for run in 0..runs {
