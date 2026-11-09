@@ -3,7 +3,9 @@
 
 use fbterm_config::keys::{Action, ActionGroup, Bindings, FixedShortcut, fixed_shortcuts, risk};
 use fbterm_config::settings::{FONT_SIZE_RANGE, OPACITY_RANGE};
-use fbterm_config::{SecretStorage, Settings, TabBar, ThemeMode, WindowDecorations};
+use fbterm_config::{
+    MacosBlurStyle, SecretStorage, Settings, TabBar, ThemeMode, WindowDecorations,
+};
 use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, slider, text, text_input, toggler,
 };
@@ -366,6 +368,19 @@ fn appearance<'a>(
         setting(t, "Font size", None, false, size),
         setting(
             t,
+            THEME_FONTS_LABEL,
+            Some(THEME_FONTS_HINT),
+            false,
+            switch(
+                t,
+                v.use_theme_fonts,
+                editable,
+                false,
+                SettingsMsg::UseThemeFonts,
+            ),
+        ),
+        setting(
+            t,
             "Ligatures",
             Some("Draws sequences such as -> and != as one symbol when the font has them."),
             false,
@@ -380,6 +395,14 @@ fn appearance<'a>(
             v.background_opacity,
         ),
     ];
+    if shows_blur_style_row(Platform::current()) {
+        rows.push(blur_style_setting(
+            t,
+            &v.macos_blur_style,
+            editable,
+            blur_style_enabled(v.background_blur, chrome::blur_here(), v.background_opacity),
+        ));
+    }
     // Where open sessions are listed; an unanswered setting shows `Top`.
     let tabs = row![
         segment(
@@ -430,6 +453,12 @@ fn appearance<'a>(
     rows
 }
 
+/// The label of the `use_theme_fonts` row; the Color schemes window's checkbox says the same.
+pub const THEME_FONTS_LABEL: &str = "Use each theme's suggested font";
+/// The line under it.
+pub const THEME_FONTS_HINT: &str =
+    "When the font is installed. A scheme that sets its own font keeps it.";
+
 /// The line under `Background opacity` at `opacity` when `opaque_windows` (an open terminal
 /// window was created opaque, which never happens on macOS): such a window shows a lower
 /// opacity only once fbterm restarts; windows opened from now on show it at once.
@@ -459,6 +488,54 @@ pub(super) fn blur_setting<'a>(
             blur.inert,
             SettingsMsg::Blur,
         ),
+    )
+}
+
+/// Whether the Settings tab offers the `Blur style` choice: only on macOS, the one system
+/// whose blur view has more than one look (`macos_blur_style` is ignored elsewhere).
+pub fn shows_blur_style_row(platform: Platform) -> bool {
+    platform == Platform::MacOs
+}
+
+/// Whether the `Blur style` choice can be used: only while blur shows, by the blur switch's
+/// own rule (blur on, on a system that blurs, below full opacity).
+pub fn blur_style_enabled(blur_on: bool, supported: bool, opacity: f32) -> bool {
+    blur_on && supported && opacity < 1.0
+}
+
+/// The `Blur style` row under `Background blur`: `Native` or `Classic` for `style`, pressable
+/// when `editable` and `enabled` (see [`blur_style_enabled`]), muted otherwise. A change
+/// re-tunes the blur of open windows at once.
+pub(super) fn blur_style_setting<'a>(
+    t: &'static Tokens,
+    style: &MacosBlurStyle,
+    editable: bool,
+    enabled: bool,
+) -> Element<'a, Message> {
+    let usable = editable && enabled;
+    let classic = *style == MacosBlurStyle::Classic;
+    let choice = row![
+        segment(
+            t,
+            "Native",
+            !classic,
+            usable.then(|| msg(SettingsMsg::BlurStyle(MacosBlurStyle::Native))),
+        ),
+        segment(
+            t,
+            "Classic",
+            classic,
+            usable.then(|| msg(SettingsMsg::BlurStyle(MacosBlurStyle::Classic))),
+        ),
+    ]
+    .spacing(2);
+    let choice = container(choice).padding(2).style(move |_| well(t));
+    setting(
+        t,
+        "Blur style",
+        Some("Native uses the macOS look. Classic is fbterm's earlier, clearer blur."),
+        !enabled,
+        choice,
     )
 }
 

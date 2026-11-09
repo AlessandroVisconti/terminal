@@ -13,9 +13,16 @@ use super::gallery::{
     EDITED_HERE, GalleryIo, GalleryLoad, GalleryRow, NO_LONGER_OFFERED, RowButton, UpdateChoice,
     clip_chars, credit_line, gallery_rows,
 };
-use super::{Entry, SchemesMsg, SchemesState};
+use super::{Entry, FontContext, SchemesMsg, SchemesState};
 use crate::app::{App, Message};
 use crate::schemes_tests::{app_with, rgb, style, with_scheme};
+
+/// No installed fonts beyond the bundled one, the default font, theme fonts off.
+const FONTS: FontContext<'static> = FontContext {
+    installed: &[],
+    global_font: "Geist Mono",
+    use_theme_fonts: false,
+};
 
 /// What the fake fetch and opener saw.
 #[derive(Default)]
@@ -697,7 +704,7 @@ fn four() -> Catalog {
 #[test]
 fn gallery_rows_sorted_by_name_ignoring_case() {
     let (app, _, _, _) = app_with(&[profile("a")], "", &[]);
-    let rows = gallery_rows(&four(), &app.schemes, "", None);
+    let rows = gallery_rows(&four(), &app.schemes, "", None, &FONTS);
     assert_eq!(row_ids(&rows), ["ash", "dune", "oat", "pine"]);
     let ash = &rows[0];
     assert_eq!(ash.name, "Ash");
@@ -714,7 +721,7 @@ fn gallery_filter_matches_name_project_and_author() {
     let (app, _, _, _) = app_with(&[profile("a")], "", &[]);
     let cat = four();
     let ids = |filter: &str, variant| {
-        row_ids(&gallery_rows(&cat, &app.schemes, filter, variant))
+        row_ids(&gallery_rows(&cat, &app.schemes, filter, variant, &FONTS))
             .into_iter()
             .map(str::to_owned)
             .collect::<Vec<_>>()
@@ -749,7 +756,7 @@ fn gallery_row_buttons_follow_install_state() {
         entry("v", 1, "#101010", true),
     ]))
     .unwrap();
-    let rows = gallery_rows(&cat, &app.schemes, "", None);
+    let rows = gallery_rows(&cat, &app.schemes, "", None, &FONTS);
     let by = |id: &str| rows.iter().find(|r| r.id == id);
     assert_eq!(by("x").unwrap().button, Some(RowButton::Update));
     assert_eq!(by("y").unwrap().button, Some(RowButton::Installed));
@@ -825,7 +832,7 @@ fn demo_gallery_shows_every_row_kind() {
     let (catalog, installed) = super::gallery::demo_catalog();
     assert!(catalog.skipped.is_empty(), "{:?}", catalog.skipped);
     let (app, _, _, _) = app_with(&[profile("a")], "", &installed);
-    let rows = gallery_rows(&catalog, &app.schemes, "", None);
+    let rows = gallery_rows(&catalog, &app.schemes, "", None, &FONTS);
     assert_eq!(rows.len(), 5);
     assert_eq!(rows[0].button, Some(RowButton::Install));
     let kinds: Vec<_> = rows

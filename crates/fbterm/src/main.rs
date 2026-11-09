@@ -73,6 +73,10 @@ mod archive_import;
 #[cfg(test)]
 mod archive_import_tests;
 mod archive_window;
+// The pure layer logic builds and is tested everywhere; only macOS uses it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod blur_layers;
+mod blur_style;
 mod chrome;
 mod config_files;
 mod context_menu;
@@ -117,6 +121,9 @@ mod tab_menu;
 mod tab_sidebar;
 mod tabs;
 mod theme;
+mod theme_fonts;
+#[cfg(test)]
+mod theme_fonts_tests;
 mod tiles;
 mod tooltip;
 mod tunnels;

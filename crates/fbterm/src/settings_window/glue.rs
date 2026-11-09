@@ -50,7 +50,8 @@ pub(crate) fn terminal_style(settings: &Settings) -> TerminalStyle {
 
 impl App {
     /// The look of one pane: the colors of its scheme ([`App::scheme_for`]), the scheme's font
-    /// and size where it sets them (else the settings'), at the pane's own zoom; focused (keys
+    /// (its own, or with `use_theme_fonts` its installed suggestion: [`App::scheme_font`]) and
+    /// size where it sets them (else the settings'), at the pane's own zoom; focused (keys
     /// go to it, solid cursor) only for the focused pane of the focused window while its find
     /// bar is closed and neither docked panel has the keyboard. No accent border: the tiles
     /// draw the focus outline.
@@ -63,7 +64,7 @@ impl App {
         TerminalStyle {
             scheme: ColorScheme::from(&scheme.colors),
             features: self.style.features.clone(),
-            font: match &scheme.font_family {
+            font: match self.scheme_font(scheme) {
                 Some(family) => Font::with_name(intern(family)),
                 None => self.style.font,
             },
@@ -344,9 +345,13 @@ impl App {
     /// terminals and after a reset or restart; a running program's mode is never flipped.
     /// `color_scheme` recolors the open panes that follow it (those without a scheme of their
     /// own, or whose own is not found).
+    /// `use_theme_fonts` changes the font of the panes whose scheme suggests an installed font
+    /// (read each frame, like a scheme font: the views measure again and report their grids).
     /// `background_opacity` is read each frame too; a window can only show through if it was
     /// created transparent (always on macOS, see [`Chrome::backdrop`]), and `background_blur`
     /// is fixed when a window opens, so those apply to windows opened from now on.
+    /// `macos_blur_style` re-tunes the blur view of every open window that has one, in place
+    /// (the post-update `sync_blur_views`, which also follows scheme and tab changes).
     /// `window_decorations` (Linux) switches every open window's title bar at once.
     /// `check_updates` starts or stops the update check (its subscription); off also drops
     /// what it found.
@@ -440,7 +445,21 @@ impl App {
         let decorations_changed = new.window_decorations != self.settings.window_decorations;
         let scheme_changed = new.color_scheme != self.settings.color_scheme;
         let before = scheme_changed.then(|| self.pane_colors());
+        let theme_fonts_changed = new.use_theme_fonts != self.settings.use_theme_fonts;
         self.settings = new;
+        if let Some((_, state)) = &mut self.schemes_win {
+            state.sync_settings(&self.settings);
+        }
+        let mut task = task;
+        if theme_fonts_changed && self.settings.use_theme_fonts {
+            // Turned on (a user action): read what is installed, and look for suggested fonts
+            // installed since fbterm started.
+            self.refresh_installed_fonts();
+            self.warm_ligature_sets();
+            task = Task::batch([task, self.scan_fonts()]);
+        } else if theme_fonts_changed {
+            self.rebuild_scheme_fonts();
+        }
         self.refresh_feature_notices();
         if restyle {
             self.warm_ligature_sets();
@@ -600,7 +619,7 @@ impl App {
         }
         let mut fonts = vec![self.style.font];
         for scheme in self.schemes.all() {
-            if let Some(family) = &scheme.font_family {
+            if let Some(family) = self.scheme_font(scheme) {
                 let font = Font::with_name(intern(family));
                 if !fonts.contains(&font) {
                     fonts.push(font);

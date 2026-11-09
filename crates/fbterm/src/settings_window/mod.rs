@@ -12,7 +12,7 @@ use fbterm_config::settings::{
     TUNNEL_RETRIES_RANGE,
 };
 use fbterm_config::{
-    ConfigError, MaxFps, SecretStorage, SettingChange, Settings, TabBar, ThemeMode,
+    ConfigError, MacosBlurStyle, MaxFps, SecretStorage, SettingChange, Settings, TabBar, ThemeMode,
     UNCOMPRESSED_DEFAULT, UNCOMPRESSED_FLOOR, WindowDecorations,
 };
 
@@ -22,7 +22,7 @@ pub(crate) use glue::release_when_worker_idle;
 pub mod view;
 
 pub use fonts::FontChoice;
-pub(crate) use fonts::{BUNDLED as BUNDLED_FONT, choices as font_choices, installed_monospace};
+pub(crate) use fonts::{BUNDLED as BUNDLED_FONT, choices as font_choices};
 pub(crate) use glue::{intern, terminal_style};
 
 /// Quiet period after the last slider or typing change before the file is written.
@@ -55,6 +55,8 @@ pub enum SettingsMsg {
     OpacityText(String),
     OpacitySubmit,
     Blur(bool),
+    /// The `Blur style` row (macOS): how blur looks.
+    BlurStyle(MacosBlurStyle),
     /// Who draws the title bar (Linux).
     TitleBar(WindowDecorations),
     /// The Appearance card's `Tabs` row: where open sessions are listed.
@@ -78,6 +80,9 @@ pub enum SettingsMsg {
     Clusters(bool),
     /// `Ligatures`.
     Ligatures(bool),
+    /// `Use each theme's suggested font`, the same setting as the Color schemes window's
+    /// checkbox.
+    UseThemeFonts(bool),
     MaxFps(MaxFps),
     /// `Check for updates automatically`.
     CheckUpdates(bool),
@@ -503,12 +508,14 @@ impl SettingsState {
             SettingsMsg::Font(f) => self.change(SettingChange::FontFamily(f.family), false),
             SettingsMsg::ColorScheme(id) => self.change(SettingChange::ColorScheme(id), false),
             SettingsMsg::Blur(v) => self.change(SettingChange::BackgroundBlur(v), false),
+            SettingsMsg::BlurStyle(v) => self.change(SettingChange::MacosBlurStyle(v), false),
             SettingsMsg::TitleBar(v) => self.change(SettingChange::WindowDecorations(v), false),
             SettingsMsg::TabBar(v) => self.change(SettingChange::TabBar(v), false),
             SettingsMsg::TabGroups(v) => self.change(SettingChange::TabGroups(v), false),
             SettingsMsg::Kitty(v) => self.change(SettingChange::KittyKeyboard(v), false),
             SettingsMsg::Clusters(v) => self.change(SettingChange::GraphemeClusters(v), false),
             SettingsMsg::Ligatures(v) => self.change(SettingChange::Ligatures(v), false),
+            SettingsMsg::UseThemeFonts(v) => self.change(SettingChange::UseThemeFonts(v), false),
             SettingsMsg::MaxFps(v) => self.change(SettingChange::MaxFps(v), false),
             SettingsMsg::CheckUpdates(v) => self.change(SettingChange::CheckUpdates(v), false),
             SettingsMsg::Record(action)

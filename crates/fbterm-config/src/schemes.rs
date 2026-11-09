@@ -39,6 +39,10 @@ pub struct Scheme {
     pub credit: Option<Credit>,
     /// Gallery bookkeeping for an installed gallery scheme; written as `[gallery]`.
     pub gallery: Option<GalleryInfo>,
+    /// A font that suits the scheme, with its official download page; written as
+    /// `[suggested_font]`. It applies nothing by itself (unlike `font_family`): the user picks
+    /// it, or turns on `use_theme_fonts`. Not part of [`install_hash`].
+    pub suggested_font: Option<SuggestedFont>,
     /// True for the schemes shipped in code; never written to a file.
     pub builtin: bool,
 }
@@ -55,6 +59,165 @@ pub struct Credit {
     pub license_file: String,
     pub description: String,
     pub derived: bool,
+}
+
+/// The `[suggested_font]` table: a font family that suits a scheme, the font's official
+/// download page and its license. fbterm never downloads it; the page opens in the browser on
+/// a click. Each field follows the credit character rule and [`MAX_FONT_FIELD_CHARS`].
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct SuggestedFont {
+    /// The family name exactly as the font database reports it once installed.
+    pub family: String,
+    /// The font's official page (`https://` only).
+    pub url: String,
+    /// SPDX id of the font's license, one of [`FONT_LICENSES`].
+    pub license: String,
+}
+
+/// SPDX ids of the licenses a suggested font may carry: free to use, as `terminal-themes`
+/// requires.
+pub const FONT_LICENSES: [&str; 9] = [
+    "OFL-1.1",
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unlicense",
+    "CC0-1.0",
+    "Zlib",
+];
+
+/// The longest `[suggested_font]` field, in characters (the catalog's field cap).
+pub const MAX_FONT_FIELD_CHARS: usize = 2_000;
+
+/// An `https://` URL with a host and no whitespace or control characters.
+pub fn is_https_url(url: &str) -> bool {
+    url.strip_prefix("https://").is_some_and(|rest| {
+        !rest.is_empty()
+            && !rest.starts_with('/')
+            && !rest.chars().any(|c| c.is_whitespace() || c.is_control())
+    })
+}
+
+/// An `https://` URL whose authority is a plain host name (letters, digits and `-` in
+/// dot-separated labels) with an optional numeric port: no user part, percent-encoding,
+/// IP-literal brackets or backslash, and nothing but visible ASCII after it. A browser opens
+/// exactly the host such a URL shows, so a label taken from it cannot lie.
+pub fn is_plain_https_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    if url
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
+    {
+        return false;
+    }
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let (host, port) = match authority.split_once(':') {
+        Some((host, port)) => (host, Some(port)),
+        None => (authority, None),
+    };
+    let port_ok =
+        port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()));
+    let host_ok = !host.is_empty()
+        && host.len() <= 253
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        });
+    port_ok && host_ok && tail.bytes().all(|b| b.is_ascii_graphic())
+}
+
+/// Why `font` may not be shown or used, if it may not: a blank or overlong field, a character
+/// of [`is_unsafe_char`] anywhere (no field may span lines), a URL that is not `https://`, or
+/// a license off [`FONT_LICENSES`].
+pub fn suggested_font_problem(font: &SuggestedFont) -> Option<String> {
+    let fields = [
+        ("family", &font.family),
+        ("url", &font.url),
+        ("license", &font.license),
+    ];
+    for (field, text) in fields {
+        if text.trim().is_empty() {
+            return Some(format!("{field} is empty"));
+        }
+        if text.chars().count() > MAX_FONT_FIELD_CHARS {
+            return Some(format!(
+                "{field} is longer than {MAX_FONT_FIELD_CHARS} characters"
+            ));
+        }
+        if text.chars().any(is_unsafe_char) {
+            return Some(format!("{field} has control or invisible characters"));
+        }
+    }
+    if !is_plain_https_url(&font.url) {
+        return Some("url is not a plain https:// link".into());
+    }
+    if !FONT_LICENSES.contains(&font.license.as_str()) {
+        return Some(format!(
+            "license {:?} is not on the allowlist",
+            font.license
+        ));
+    }
+    None
+}
+
+/// A `[suggested_font]` table as read from a file or catalog: the font, or why it is dropped
+/// (not a table, a missing key, a value of the wrong type, or [`suggested_font_problem`]).
+/// Keys it does not know are ignored.
+pub fn suggested_font_from(value: &toml::Value) -> Result<SuggestedFont, String> {
+    let Some(table) = value.as_table() else {
+        return Err("not a table".into());
+    };
+    let text = |key: &str| match table.get(key) {
+        None => Err(format!("{key} is missing")),
+        Some(toml::Value::String(s)) => Ok(s.clone()),
+        Some(_) => Err(format!("{key} is not text")),
+    };
+    let font = SuggestedFont {
+        family: text("family")?,
+        url: text("url")?,
+        license: text("license")?,
+    };
+    match suggested_font_problem(&font) {
+        Some(why) => Err(why),
+        None => Ok(font),
+    }
+}
+
+/// Drop a `[suggested_font]` that could not be shown or opened safely; the colors stay.
+pub fn sanitize_suggested_font(scheme: &mut Scheme) {
+    if scheme
+        .suggested_font
+        .as_ref()
+        .is_some_and(|f| suggested_font_problem(f).is_some())
+    {
+        scheme.suggested_font = None;
+    }
+}
+
+/// The font family a pane using `scheme` is drawn with, when not the global `font_family`:
+/// the scheme's own `font_family` if it sets one, else (with `use_theme_fonts` on) its
+/// suggested font when `installed` says that family is installed. `None`: the global font.
+pub fn theme_font(
+    scheme: &Scheme,
+    use_theme_fonts: bool,
+    installed: impl Fn(&str) -> bool,
+) -> Option<&str> {
+    if let Some(own) = &scheme.font_family {
+        return Some(own);
+    }
+    scheme
+        .suggested_font
+        .as_ref()
+        .filter(|f| use_theme_fonts && installed(&f.family))
+        .map(|f| f.family.as_str())
 }
 
 /// The `[gallery]` table: which catalog entry a scheme was installed from.
@@ -242,6 +405,31 @@ struct SchemeFile {
     credit: Option<Credit>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     gallery: Option<GalleryInfo>,
+    /// Read as any value so a malformed table drops only itself (see
+    /// [`suggested_font_from`]), never the scheme.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    suggested_font: Option<FontSlot>,
+}
+
+/// A `[suggested_font]` value: the table in its own shape (written in field order), or
+/// anything else, which is dropped with a notice.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum FontSlot {
+    Font(SuggestedFont),
+    Other(toml::Value),
+}
+
+impl FontSlot {
+    fn check(&self) -> Result<SuggestedFont, String> {
+        match self {
+            Self::Font(font) => match suggested_font_problem(font) {
+                Some(why) => Err(why),
+                None => Ok(font.clone()),
+            },
+            Self::Other(value) => suggested_font_from(value),
+        }
+    }
 }
 
 impl From<Scheme> for SchemeFile {
@@ -254,6 +442,7 @@ impl From<Scheme> for SchemeFile {
             font_size: scheme.font_size,
             credit: scheme.credit,
             gallery: scheme.gallery,
+            suggested_font: scheme.suggested_font.map(FontSlot::Font),
         }
     }
 }
@@ -277,6 +466,7 @@ impl TryFrom<SchemeFile> for Scheme {
             font_size: file.font_size,
             credit: file.credit,
             gallery: file.gallery,
+            suggested_font: file.suggested_font.and_then(|v| v.check().ok()),
             builtin: false,
         })
     }
@@ -347,9 +537,11 @@ const fn hex(v: u32) -> Rgb {
     }
 }
 
+/// A built-in scheme: `(id, name)`, its suggested font `(family, page)` (all OFL-1.1) and
+/// its colors.
 fn builtin(
-    id: &str,
-    name: &str,
+    (id, name): (&str, &str),
+    font: (&str, &str),
     foreground: u32,
     background: u32,
     cursor: u32,
@@ -370,6 +562,11 @@ fn builtin(
         font_size: None,
         credit: None,
         gallery: None,
+        suggested_font: Some(SuggestedFont {
+            family: font.0.to_string(),
+            url: font.1.to_string(),
+            license: "OFL-1.1".to_string(),
+        }),
         builtin: true,
     }
 }
@@ -380,8 +577,9 @@ pub fn builtins() -> Vec<Scheme> {
         // The design system's dark Graphite palette; selection is violet-400 at 30%
         // over the background.
         builtin(
-            "graphite",
-            "Graphite",
+            ("graphite", "Graphite"),
+            // fbterm's own font, the design system's mono.
+            ("Geist Mono", "https://vercel.com/font"),
             0xf5f5f7,
             0x0b0b0e,
             0xa584ff,
@@ -395,8 +593,9 @@ pub fn builtins() -> Vec<Scheme> {
         // usual on a light ground. The design system's light tokens: app canvas, ink text, violet-600 cursor;
         // status colors darkened until they pass on the light canvas.
         builtin(
-            "graphite-light",
-            "Graphite Light",
+            ("graphite-light", "Graphite Light"),
+            // The same design system, so the same font.
+            ("Geist Mono", "https://vercel.com/font"),
             0x1c1c22,
             0xfafafb,
             0x7c49e3,
@@ -408,8 +607,9 @@ pub fn builtins() -> Vec<Scheme> {
         ),
         // Cool blue-green: deep teal-black ground, aqua cursor.
         builtin(
-            "harbor",
-            "Harbor",
+            ("harbor", "Harbor"),
+            // A crisp, cool modern mono for the blue-green palette.
+            ("JetBrains Mono", "https://www.jetbrains.com/lp/mono/"),
             0xe3f2f4,
             0x0a1a20,
             0x4fd1c5,
@@ -422,8 +622,9 @@ pub fn builtins() -> Vec<Scheme> {
         // Warm red-orange on a coal-brown ground; its look makes a production host
         // stand out.
         builtin(
-            "ember",
-            "Ember",
+            ("ember", "Ember"),
+            // A warm, humanist mono for the coal and ember palette.
+            ("IBM Plex Mono", "https://github.com/IBM/plex"),
             0xf6ece4,
             0x1a0f0c,
             0xff8a4c,
@@ -446,6 +647,19 @@ fn luminance(c: Rgb) -> f32 {
         }
     };
     0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+}
+
+/// Whether a scheme is a dark one: its background contrasts more with white than with black
+/// (relative luminance below about 0.18). Schemes carry no variant of their own; this is the
+/// one place that decides it.
+pub fn is_dark(colors: &SchemeColors) -> bool {
+    let white = Rgb {
+        r: 255,
+        g: 255,
+        b: 255,
+    };
+    let black = Rgb { r: 0, g: 0, b: 0 };
+    contrast_ratio(colors.background, white) > contrast_ratio(colors.background, black)
 }
 
 /// WCAG 2 contrast ratio between two colors (1.0 to 21.0).
@@ -486,6 +700,12 @@ fn read_capped(reader: impl std::io::Read) -> std::io::Result<Option<Vec<u8>>> {
 
 /// Read one scheme file. The result is never marked built-in.
 pub fn read_file(path: &Path) -> Result<Scheme, ConfigError> {
+    read_file_noted(path).map(|(scheme, _)| scheme)
+}
+
+/// [`read_file`], with the notice for a `[suggested_font]` table that was dropped (the
+/// scheme itself loads).
+pub fn read_file_noted(path: &Path) -> Result<(Scheme, Option<ConfigError>), ConfigError> {
     let err = |m: String| ConfigError::new(path, None, m);
     let meta = std::fs::metadata(path).map_err(|e| err(e.to_string()))?;
     // A pipe, device or socket reports no size and can be endless: never read one.
@@ -503,10 +723,15 @@ pub fn read_file(path: &Path) -> Result<Scheme, ConfigError> {
         let line = e.span().map(|s| line_of(&text, s.start));
         ConfigError::new(path, line, e.message().to_string())
     })?;
+    let note = file
+        .suggested_font
+        .as_ref()
+        .and_then(|v| v.check().err())
+        .map(|why| ConfigError::new(path, None, format!("suggested_font ignored: {why}")));
     let mut scheme = Scheme::try_from(file).map_err(|m| ConfigError::new(path, None, m))?;
     sanitize_gallery(&mut scheme);
     sanitize_credit(&mut scheme);
-    Ok(scheme)
+    Ok((scheme, note))
 }
 
 /// Write a scheme file atomically. The `builtin` flag is never written.
@@ -597,10 +822,21 @@ pub struct SchemeSet {
 impl SchemeSet {
     /// Load the built-ins and every `*.toml` file in `dir`, sorted by file name. A
     /// missing directory means no user schemes. A file that does not parse, uses a
-    /// built-in id or repeats an earlier id is skipped with an error.
+    /// built-in id or repeats an earlier id is skipped with an error. A scheme whose
+    /// `[suggested_font]` table was dropped loads, with an error saying so (see
+    /// [`SchemeSet::load_noted`] to tell the two apart).
     pub fn load(dir: &Path) -> (Self, Vec<ConfigError>) {
+        let (set, mut errors, notes) = Self::load_noted(dir);
+        errors.extend(notes);
+        (set, errors)
+    }
+
+    /// [`SchemeSet::load`], with the files that did not load (`errors`) apart from the notes
+    /// about schemes that loaded without part of their file (a dropped `[suggested_font]`).
+    pub fn load_noted(dir: &Path) -> (Self, Vec<ConfigError>, Vec<ConfigError>) {
         let mut schemes = builtins();
         let mut errors = Vec::new();
+        let mut notes = Vec::new();
         let mut files: Vec<PathBuf> = match std::fs::read_dir(dir) {
             Ok(entries) => entries
                 .filter_map(Result::ok)
@@ -615,7 +851,11 @@ impl SchemeSet {
         };
         files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
         for path in files {
-            match read_file(&path) {
+            let read = read_file_noted(&path).map(|(scheme, note)| {
+                notes.extend(note);
+                scheme
+            });
+            match read {
                 Err(e) => errors.push(e),
                 Ok(s) if BUILTIN_IDS.contains(&s.id.as_str()) => errors.push(ConfigError::new(
                     &path,
@@ -640,7 +880,7 @@ impl SchemeSet {
                 },
             }
         }
-        (Self { schemes }, errors)
+        (Self { schemes }, errors, notes)
     }
 
     pub fn get(&self, id: &str) -> Option<&Scheme> {
@@ -931,5 +1171,243 @@ mod tests {
     #[test]
     fn is_valid_user_accepts_gallery_ids() {
         assert!(is_valid_user(&gallery_scheme()));
+    }
+
+    fn sample_font() -> SuggestedFont {
+        SuggestedFont {
+            family: "JetBrains Mono".into(),
+            url: "https://www.jetbrains.com/lp/mono/".into(),
+            license: "OFL-1.1".into(),
+        }
+    }
+
+    /// A user scheme file's text with `table` as its `[suggested_font]` body.
+    fn file_with_font(table: &str) -> String {
+        let mut s = builtins().remove(0);
+        s.builtin = false;
+        s.id = "user-font".into();
+        s.suggested_font = None;
+        format!(
+            "{}\n[suggested_font]\n{table}\n",
+            toml::to_string_pretty(&s).unwrap()
+        )
+    }
+
+    #[test]
+    fn suggested_font_parses_and_round_trips() {
+        let text = file_with_font(
+            "family = \"JetBrains Mono\"\nurl = \"https://www.jetbrains.com/lp/mono/\"\n\
+             license = \"OFL-1.1\"",
+        );
+        let scheme: Scheme = toml::from_str(&text).unwrap();
+        assert_eq!(scheme.suggested_font, Some(sample_font()));
+        let again = toml::to_string_pretty(&scheme).unwrap();
+        assert!(again.contains("[suggested_font]"), "{again}");
+        assert_eq!(toml::from_str::<Scheme>(&again).unwrap(), scheme);
+        assert!(is_valid_user(&scheme));
+        // A future key in the table is ignored, as elsewhere in scheme files.
+        let future = file_with_font(
+            "family = \"JetBrains Mono\"\nurl = \"https://www.jetbrains.com/lp/mono/\"\n\
+             license = \"OFL-1.1\"\nweight = 400",
+        );
+        let scheme: Scheme = toml::from_str(&future).unwrap();
+        assert_eq!(scheme.suggested_font, Some(sample_font()));
+    }
+
+    /// `Download (<host>)` must name where the link really goes, so the authority must be a
+    /// plain host (and port): nothing a browser reads as a separator or rewrites.
+    #[test]
+    fn suggested_font_url_must_be_a_plain_https_url() {
+        let with_url = |url: &str| SuggestedFont {
+            url: url.into(),
+            ..sample_font()
+        };
+        for bad in [
+            "https://evil.example\\@github.com/",
+            "https://github.com\\evil.example/",
+            "https://evil.example/\\x",
+            "https://user@github.com/IBM/plex",
+            "https://user:pw@github.com/",
+            "https://gith%75b.com/",
+            "https://[::1]/",
+            "https://github.com:/x",
+            "https://github.com:44x/x",
+            "https://.github.com/",
+            "https://github..com/",
+            "https://git hub.com/",
+            "https://github.com/\tx",
+            "https://github.com/x y",
+            "https://ex_ample.com/",
+        ] {
+            assert!(suggested_font_problem(&with_url(bad)).is_some(), "{bad}");
+        }
+        for good in [
+            "https://github.com/IBM/plex",
+            "https://www.jetbrains.com/lp/mono/",
+            "https://vercel.com/font",
+            "https://a.example:8443/x?y=1&z=%20#top",
+            "https://github.com",
+            "https://monaspace.githubnext.com/",
+        ] {
+            assert_eq!(suggested_font_problem(&with_url(good)), None, "{good}");
+        }
+        let text = file_with_font(
+            "family = \"A\"\nurl = \"https://evil.example\\\\@github.com/\"\nlicense = \"OFL-1.1\"",
+        );
+        let scheme: Scheme = toml::from_str(&text).unwrap();
+        assert!(scheme.suggested_font.is_none());
+    }
+
+    #[test]
+    fn dropped_tables_are_notes_not_load_errors() {
+        let dir = std::env::temp_dir().join(format!("fbterm-notes-{}", new_user_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("user-font.toml"),
+            file_with_font("family = \"A\"\nurl = \"http://a.example/\"\nlicense = \"OFL-1.1\""),
+        )
+        .unwrap();
+        std::fs::write(dir.join("user-bad.toml"), "id = 1\n").unwrap();
+        let (set, errors, notes) = SchemeSet::load_noted(&dir);
+        assert!(set.get("user-font").is_some());
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].path.ends_with("user-bad.toml"), "{errors:?}");
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].message.contains("suggested_font"), "{notes:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn bad_suggested_font_is_dropped_and_the_scheme_kept() {
+        let long = "y".repeat(MAX_FONT_FIELD_CHARS + 1);
+        let bad_tables = [
+            // A missing key.
+            "family = \"JetBrains Mono\"\nurl = \"https://www.jetbrains.com/lp/mono/\"".to_owned(),
+            "url = \"https://a.example/\"\nlicense = \"OFL-1.1\"".to_owned(),
+            // Not https.
+            "family = \"A\"\nurl = \"http://a.example/\"\nlicense = \"OFL-1.1\"".to_owned(),
+            "family = \"A\"\nurl = \"javascript:alert(1)\"\nlicense = \"OFL-1.1\"".to_owned(),
+            "family = \"A\"\nurl = \"https://\"\nlicense = \"OFL-1.1\"".to_owned(),
+            // Wrong types.
+            "family = 1\nurl = \"https://a.example/\"\nlicense = \"OFL-1.1\"".to_owned(),
+            "family = \"A\"\nurl = [\"https://a.example/\"]\nlicense = \"OFL-1.1\"".to_owned(),
+            // A license off the list, a blank family, hidden characters, too long.
+            "family = \"A\"\nurl = \"https://a.example/\"\nlicense = \"GPL-3.0-only\"".to_owned(),
+            "family = \" \"\nurl = \"https://a.example/\"\nlicense = \"OFL-1.1\"".to_owned(),
+            "family = \"A\\u202eB\"\nurl = \"https://a.example/\"\nlicense = \"OFL-1.1\""
+                .to_owned(),
+            "family = \"A\\nB\"\nurl = \"https://a.example/\"\nlicense = \"OFL-1.1\"".to_owned(),
+            format!("family = \"{long}\"\nurl = \"https://a.example/\"\nlicense = \"OFL-1.1\""),
+        ];
+        let dir = std::env::temp_dir().join(format!("fbterm-font-{}", new_user_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("user-font.toml");
+        for table in &bad_tables {
+            let text = file_with_font(table);
+            let scheme: Scheme = toml::from_str(&text).expect(table);
+            assert!(scheme.suggested_font.is_none(), "{table}");
+            std::fs::write(&path, &text).unwrap();
+            let (read, note) = read_file_noted(&path).unwrap();
+            assert!(read.suggested_font.is_none(), "{table}");
+            assert_eq!(read.colors, builtins()[0].colors);
+            let note = note.expect(table);
+            assert!(note.message.contains("suggested_font"), "{}", note.message);
+            // The set keeps the scheme and reports the dropped table.
+            let (set, errors) = SchemeSet::load(&dir);
+            assert!(set.get("user-font").is_some(), "{table}");
+            assert_eq!(errors.len(), 1, "{errors:?}");
+        }
+        // Not a table at all.
+        let mut s = builtins().remove(0);
+        s.builtin = false;
+        s.id = "user-font".into();
+        s.suggested_font = None;
+        let text = toml::to_string_pretty(&s).unwrap().replacen(
+            "name = ",
+            "suggested_font = \"Fira Code\"\nname = ",
+            1,
+        );
+        let scheme: Scheme = toml::from_str(&text).unwrap();
+        assert!(scheme.suggested_font.is_none());
+        // Every license on the list is accepted.
+        for license in FONT_LICENSES {
+            let text = file_with_font(&format!(
+                "family = \"A\"\nurl = \"https://a.example/\"\nlicense = \"{license}\""
+            ));
+            let scheme: Scheme = toml::from_str(&text).unwrap();
+            assert!(scheme.suggested_font.is_some(), "{license}");
+        }
+        // A good table gives no note.
+        std::fs::write(
+            &path,
+            file_with_font("family = \"A\"\nurl = \"https://a.example/\"\nlicense = \"OFL-1.1\""),
+        )
+        .unwrap();
+        assert!(read_file_noted(&path).unwrap().1.is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn sanitize_suggested_font_drops_an_unsafe_table() {
+        let mut s = gallery_scheme();
+        s.suggested_font = Some(SuggestedFont {
+            family: "Fira\u{200B}Code".into(),
+            ..sample_font()
+        });
+        sanitize_suggested_font(&mut s);
+        assert!(s.suggested_font.is_none());
+        let mut ok = gallery_scheme();
+        ok.suggested_font = Some(sample_font());
+        sanitize_suggested_font(&mut ok);
+        assert_eq!(ok.suggested_font, Some(sample_font()));
+    }
+
+    #[test]
+    fn builtins_have_suggestions() {
+        for s in builtins() {
+            let font = s
+                .suggested_font
+                .as_ref()
+                .unwrap_or_else(|| panic!("{}", s.id));
+            assert_eq!(suggested_font_problem(font), None, "{}", s.id);
+            assert!(FONT_LICENSES.contains(&font.license.as_str()));
+        }
+        let graphite = builtins().remove(0);
+        assert_eq!(
+            graphite.suggested_font.unwrap().family,
+            crate::settings::Settings::default().font_family,
+            "the default scheme suggests the default font"
+        );
+    }
+
+    #[test]
+    fn install_hash_ignores_the_suggestion() {
+        let base = gallery_scheme();
+        let mut suggested = base.clone();
+        suggested.suggested_font = Some(sample_font());
+        assert_eq!(install_hash(&suggested), install_hash(&base));
+        assert!(!is_edited(&suggested));
+    }
+
+    #[test]
+    fn theme_font_resolution() {
+        let mut s = gallery_scheme();
+        s.suggested_font = Some(sample_font());
+        let installed = |f: &str| f == "JetBrains Mono";
+        let missing = |_: &str| false;
+        // Off: never the suggestion.
+        assert_eq!(theme_font(&s, false, installed), None);
+        // On and installed: the suggestion.
+        assert_eq!(theme_font(&s, true, installed), Some("JetBrains Mono"));
+        // On but missing: the global font (none from the scheme).
+        assert_eq!(theme_font(&s, true, missing), None);
+        // The scheme's own font wins either way.
+        s.font_family = Some("Fira Code".into());
+        assert_eq!(theme_font(&s, true, installed), Some("Fira Code"));
+        assert_eq!(theme_font(&s, false, installed), Some("Fira Code"));
+        // No suggestion: only the own font counts.
+        let mut plain = gallery_scheme();
+        plain.suggested_font = None;
+        assert_eq!(theme_font(&plain, true, installed), None);
     }
 }

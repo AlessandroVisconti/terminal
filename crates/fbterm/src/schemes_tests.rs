@@ -51,6 +51,7 @@ pub(crate) fn user_scheme(name: &str, bg: u32) -> Scheme {
         font_size: None,
         credit: None,
         gallery: None,
+        suggested_font: None,
         builtin: false,
     }
 }
