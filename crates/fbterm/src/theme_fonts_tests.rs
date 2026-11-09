@@ -49,6 +49,8 @@ struct FakeFonts {
     lists: Arc<Mutex<usize>>,
     scans: Arc<Mutex<usize>>,
     loaded: Arc<Mutex<Vec<String>>>,
+    /// How many times the app told the terminal views that fonts were loaded.
+    notified: Arc<Mutex<usize>>,
 }
 
 fn strings(families: &[&str]) -> Vec<String> {
@@ -61,7 +63,7 @@ fn fake_fonts(app: &mut App, renderer: &[&str], system: &[&str]) -> FakeFonts {
     let fake = FakeFonts::default();
     *fake.renderer.lock() = strings(renderer);
     *fake.system.lock() = strings(system);
-    let (f1, f2, f3) = (fake.clone(), fake.clone(), fake.clone());
+    let (f1, f2, f3, f4) = (fake.clone(), fake.clone(), fake.clone(), fake.clone());
     app.font_io = FontIo {
         list: Arc::new(move |_suggested| {
             *f1.lists.lock() += 1;
@@ -86,6 +88,7 @@ fn fake_fonts(app: &mut App, renderer: &[&str], system: &[&str]) -> FakeFonts {
                 f3.loaded.lock().push(face.family.clone());
             }
         }),
+        loaded: Arc::new(move || *f4.notified.lock() += 1),
     };
     fake
 }
@@ -478,11 +481,11 @@ fn gallery_rows_carry_the_suggestion_and_install_keeps_it() {
 #[test]
 fn new_faces_are_only_new_suggested_families() {
     let faces = [
-        ("Sample Mono", 400, false, "/fonts/sample-regular.ttf"),
-        ("Sample Mono", 700, false, "/fonts/sample-bold.ttf"),
-        ("Sample Mono", 400, false, "/fonts/sample-regular.ttf"),
-        ("Known Mono", 400, false, "/fonts/known.ttf"),
-        ("Unrelated Sans", 400, false, "/fonts/unrelated.ttf"),
+        ("Sample Mono", 400, false, 5, "/fonts/sample-regular.ttf"),
+        ("Sample Mono", 700, false, 5, "/fonts/sample-bold.ttf"),
+        ("Sample Mono", 400, false, 5, "/fonts/sample-regular.ttf"),
+        ("Known Mono", 400, false, 5, "/fonts/known.ttf"),
+        ("Unrelated Sans", 400, false, 5, "/fonts/unrelated.ttf"),
     ];
     let known = ["Known Mono".to_owned()].into_iter().collect();
     let suggested = ["Sample Mono".to_owned(), "Known Mono".to_owned()]
@@ -501,18 +504,18 @@ fn new_faces_are_only_new_suggested_families() {
 #[test]
 fn only_the_four_terminal_faces_of_a_family_load() {
     let faces = [
-        ("Big Mono", 100, false, "thin"),
-        ("Big Mono", 300, false, "light"),
-        ("Big Mono", 400, false, "regular"),
-        ("Big Mono", 500, false, "medium"),
-        ("Big Mono", 600, false, "semibold"),
-        ("Big Mono", 700, false, "bold"),
-        ("Big Mono", 800, false, "extrabold"),
-        ("Big Mono", 300, true, "light-italic"),
-        ("Big Mono", 450, true, "book-italic"),
-        ("Big Mono", 800, true, "extrabold-italic"),
-        ("Odd Mono", 350, false, "odd-light"),
-        ("Odd Mono", 650, false, "odd-heavy"),
+        ("Big Mono", 100, false, 5, "thin"),
+        ("Big Mono", 300, false, 5, "light"),
+        ("Big Mono", 400, false, 5, "regular"),
+        ("Big Mono", 500, false, 5, "medium"),
+        ("Big Mono", 600, false, 5, "semibold"),
+        ("Big Mono", 700, false, 5, "bold"),
+        ("Big Mono", 800, false, 5, "extrabold"),
+        ("Big Mono", 300, true, 5, "light-italic"),
+        ("Big Mono", 450, true, 5, "book-italic"),
+        ("Big Mono", 800, true, 5, "extrabold-italic"),
+        ("Odd Mono", 350, false, 5, "odd-light"),
+        ("Odd Mono", 650, false, 5, "odd-heavy"),
     ];
     let suggested = ["Big Mono".to_owned(), "Odd Mono".to_owned()]
         .into_iter()
@@ -528,6 +531,29 @@ fn only_the_four_terminal_faces_of_a_family_load() {
             "odd-light",
             "odd-heavy",
         ]
+    );
+}
+
+/// Condensed and expanded faces sharing the family name never stand in for the normal width,
+/// whatever the scan order; a family with no normal width gets its closest one.
+#[test]
+fn normal_width_faces_are_preferred() {
+    let faces = [
+        ("Wide Mono", 400, false, 3, "condensed"),
+        ("Wide Mono", 700, false, 3, "condensed-bold"),
+        ("Wide Mono", 400, true, 7, "expanded-italic"),
+        ("Wide Mono", 400, false, 5, "regular"),
+        ("Wide Mono", 600, false, 5, "semibold"),
+        ("Wide Mono", 400, true, 5, "italic"),
+        ("Narrow Only", 400, false, 2, "extra-condensed"),
+        ("Narrow Only", 400, false, 4, "semi-condensed"),
+    ];
+    let suggested = ["Wide Mono".to_owned(), "Narrow Only".to_owned()]
+        .into_iter()
+        .collect();
+    assert_eq!(
+        pick_new_faces(faces, &Default::default(), &suggested),
+        vec!["regular", "semibold", "italic", "semi-condensed"]
     );
 }
 
@@ -667,6 +693,37 @@ fn long_hosts_keep_their_end() {
     );
 }
 
+/// The label never shrinks to a bare public suffix (`…com`, `…github.io`): it keeps the last
+/// two labels (three under a two-label public suffix), and shows the whole host when even
+/// those do not fit, leaving the cut to the layout.
+#[test]
+fn host_labels_keep_the_owner() {
+    let e = '\u{2026}';
+    // A tail that starts exactly at a label boundary keeps that label.
+    let boundary = format!("fonts.{}.com", "a".repeat(27));
+    assert_eq!(
+        host_label(&boundary, 32),
+        format!("{e}{}.com", "a".repeat(27))
+    );
+    // A long owner name: the whole host, never `…com`.
+    let long_owner = format!("{}.com", "b".repeat(40));
+    assert_eq!(host_label(&long_owner, 32), long_owner);
+    let long_sub = format!("fonts.{}.com", "b".repeat(40));
+    assert_eq!(host_label(&long_sub, 32), long_sub);
+    // Under github.io (and co.uk style suffixes) the tenant label stays.
+    let pages = format!("fonts.{}.github.io", "c".repeat(20));
+    assert_eq!(
+        host_label(&pages, 32),
+        format!("{e}{}.github.io", "c".repeat(20))
+    );
+    let long_tenant = format!("{}.github.io", "d".repeat(30));
+    assert_eq!(host_label(&long_tenant, 32), long_tenant);
+    let uk = format!("fonts.{}.foundry.co.uk", "x".repeat(20));
+    assert_eq!(host_label(&uk, 32), format!("{e}foundry.co.uk"));
+    // Short hosts stay whole.
+    assert_eq!(host_label("vercel.com", 32), "vercel.com");
+}
+
 /// A scheme built in code with a crafted URL (validation would drop it) still never gets a
 /// `Download` button or a host label.
 #[test]
@@ -696,18 +753,19 @@ fn a_crafted_url_gets_no_download() {
 #[test]
 fn a_load_makes_the_views_measure_again() {
     let (mut app, _, _, _) = app_with(&[profile("a")], "", &[]);
-    let before = fbterm_term::font_epoch();
+    // This app's own hook, so tests running in parallel cannot disturb the count.
+    let fake = fake_fonts(&mut app, &[], &[]);
     let _ = app.update(Message::FontsScanned(Arc::new(Vec::new())));
     assert_eq!(
-        fbterm_term::font_epoch(),
-        before,
+        *fake.notified.lock(),
+        0,
         "nothing loaded, nothing to measure"
     );
     let _ = app.update(Message::FontsScanned(Arc::new(vec![NewFace {
         family: "Sample Mono".into(),
         path: std::path::PathBuf::new(),
     }])));
-    assert!(fbterm_term::font_epoch() > before);
+    assert_eq!(*fake.notified.lock(), 1);
 }
 
 #[test]

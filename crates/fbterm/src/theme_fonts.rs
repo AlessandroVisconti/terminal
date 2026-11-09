@@ -46,6 +46,8 @@ pub(crate) type ListFn = dyn Fn(&HashSet<String>) -> Vec<String> + Send + Sync;
 pub(crate) type ScanFn = dyn Fn(&HashSet<String>) -> Vec<NewFace> + Send + Sync;
 /// Adds faces to the renderer.
 pub(crate) type LoadFn = dyn Fn(&[NewFace]) + Send + Sync;
+/// Tells every terminal view that fonts were added (`fbterm_term::fonts_loaded`).
+pub(crate) type LoadedFn = dyn Fn() + Send + Sync;
 
 /// How the app reaches fonts; replaced in tests, which never read the machine's fonts.
 #[derive(Clone)]
@@ -53,6 +55,7 @@ pub(crate) struct FontIo {
     pub list: Arc<ListFn>,
     pub scan: Arc<ScanFn>,
     pub load: Arc<LoadFn>,
+    pub loaded: Arc<LoadedFn>,
 }
 
 impl Default for FontIo {
@@ -62,12 +65,14 @@ impl Default for FontIo {
                 list: Arc::new(|_| Vec::new()),
                 scan: Arc::new(|_| Vec::new()),
                 load: Arc::new(|_| {}),
+                loaded: Arc::new(|| {}),
             };
         }
         Self {
             list: Arc::new(renderer_families),
             scan: Arc::new(scan_system),
             load: Arc::new(load_into_renderer),
+            loaded: Arc::new(fbterm_term::fonts_loaded),
         }
     }
 }
@@ -91,25 +96,29 @@ pub(crate) fn installed_families<'a>(
 /// The faces a terminal draws with: (weight, italic) for regular, bold, italic, bold italic.
 const TERMINAL_FACES: [(u16, bool); 4] = [(400, false), (700, false), (400, true), (700, true)];
 
-/// Of `faces` (family, weight, italic, key) found by a scan, the keys to load: for each
-/// suggested family not `known` to the renderer yet, the closest face to each of
-/// [`TERMINAL_FACES`] (the same slant when the family has it, then the nearest weight, the
-/// first on a tie). Each key once, by family in scan order.
+/// fontdb's normal width (`Stretch::Normal.to_number()`).
+pub(crate) const NORMAL_WIDTH: u16 = 5;
+
+/// Of `faces` (family, weight, italic, width 1 to 9, key) found by a scan, the keys to load:
+/// for each suggested family not `known` to the renderer yet, the closest face to each of
+/// [`TERMINAL_FACES`]: the same slant when the family has it, then the normal width (the
+/// closest width only when the family has no normal-width face of that slant), then the
+/// nearest weight, the first on a tie. Each key once, by family in scan order.
 pub(crate) fn pick_new_faces<'a, K: Clone + PartialEq>(
-    faces: impl IntoIterator<Item = (&'a str, u16, bool, K)>,
+    faces: impl IntoIterator<Item = (&'a str, u16, bool, u16, K)>,
     known: &HashSet<String>,
     suggested: &HashSet<String>,
 ) -> Vec<K> {
-    /// One family's faces: (weight, italic, key).
-    type Faces<K> = Vec<(u16, bool, K)>;
+    /// One family's faces: (weight, italic, width, key).
+    type Faces<K> = Vec<(u16, bool, u16, K)>;
     let mut families: Vec<(&str, Faces<K>)> = Vec::new();
-    for (family, weight, italic, key) in faces {
+    for (family, weight, italic, width, key) in faces {
         if !suggested.contains(family) || known.contains(family) {
             continue;
         }
         match families.iter_mut().find(|(f, _)| *f == family) {
-            Some((_, list)) => list.push((weight, italic, key)),
-            None => families.push((family, vec![(weight, italic, key)])),
+            Some((_, list)) => list.push((weight, italic, width, key)),
+            None => families.push((family, vec![(weight, italic, width, key)])),
         }
     }
     let mut out: Vec<K> = Vec::new();
@@ -119,8 +128,8 @@ pub(crate) fn pick_new_faces<'a, K: Clone + PartialEq>(
             let best = list
                 .iter()
                 .filter(|f| !slanted || f.1 == italic)
-                .min_by_key(|f| f.0.abs_diff(weight));
-            if let Some((_, _, key)) = best
+                .min_by_key(|f| (f.2.abs_diff(NORMAL_WIDTH), f.0.abs_diff(weight)));
+            if let Some((_, _, _, key)) = best
                 && !out.contains(key)
             {
                 out.push(key.clone());
@@ -130,18 +139,64 @@ pub(crate) fn pick_new_faces<'a, K: Clone + PartialEq>(
     out
 }
 
-/// `host` as `Download` shows it: whole, or when longer than `max` characters its end (the
-/// part that names who owns it) after an ellipsis, cut at a label boundary when one is in
-/// reach. Never the start, which a long crafted host could fill with a familiar name.
+/// Two-label public suffixes under which the owner is the third label from the end (a tenant
+/// of a hosting platform, or a name under a country's second level).
+const TWO_LABEL_SUFFIXES: [&str; 12] = [
+    "github.io",
+    "gitlab.io",
+    "pages.dev",
+    "netlify.app",
+    "vercel.app",
+    "co.uk",
+    "org.uk",
+    "co.jp",
+    "com.au",
+    "com.br",
+    "co.nz",
+    "com.cn",
+];
+
+/// The end of `host` that names its owner: its last two labels, or three under one of
+/// [`TWO_LABEL_SUFFIXES`] (the whole host when it has no more).
+fn owner_suffix(host: &str) -> &str {
+    let labels = if TWO_LABEL_SUFFIXES.iter().any(|s| {
+        host.len() > s.len() && host.ends_with(s) && host[..host.len() - s.len()].ends_with('.')
+    }) {
+        3
+    } else {
+        2
+    };
+    let mut cut = host.len();
+    for _ in 0..labels {
+        match host[..cut].rfind('.') {
+            Some(dot) => cut = dot,
+            None => return host,
+        }
+    }
+    &host[cut + 1..]
+}
+
+/// `host` as `Download` shows it: whole, or when longer than `max` characters its end after
+/// an ellipsis. The end always keeps the owner's labels ([`owner_suffix`]), never a bare
+/// public suffix such as `com` or `github.io`; when even those do not fit, the whole host is
+/// returned and the layout clips it. A partial label at the cut is dropped unless that would
+/// leave less than the owner's labels. Never the start, which a long crafted host could fill
+/// with a familiar name.
 pub(crate) fn host_label(host: &str, max: usize) -> String {
     let count = host.chars().count();
     if count <= max {
         return host.to_owned();
     }
+    let owner = owner_suffix(host);
     let keep = max.saturating_sub(1);
-    let tail: String = host.chars().skip(count - keep).collect();
+    if owner.chars().count() > keep {
+        return host.to_owned();
+    }
+    let start = count - keep;
+    let tail: String = host.chars().skip(start).collect();
+    let at_boundary = host.chars().nth(start - 1) == Some('.');
     let tail = match tail.split_once('.') {
-        Some((_, rest)) if !rest.is_empty() => rest.to_owned(),
+        Some((_, rest)) if !at_boundary && rest.len() >= owner.len() => rest.to_owned(),
         _ => tail,
     };
     format!("\u{2026}{tail}")
@@ -205,7 +260,7 @@ fn scan_system(missing: &HashSet<String>) -> Vec<NewFace> {
         .collect();
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
-    let faces: Vec<(String, u16, bool, PathBuf)> = db
+    let faces: Vec<(String, u16, bool, u16, PathBuf)> = db
         .faces()
         .filter_map(|f| {
             let family = f.families.first()?.0.clone();
@@ -213,13 +268,19 @@ fn scan_system(missing: &HashSet<String>) -> Vec<NewFace> {
                 fontdb::Source::File(p) | fontdb::Source::SharedFile(p, _) => p.clone(),
                 fontdb::Source::Binary(_) => return None,
             };
-            Some((family, f.weight.0, f.style != fontdb::Style::Normal, path))
+            Some((
+                family,
+                f.weight.0,
+                f.style != fontdb::Style::Normal,
+                f.stretch.to_number(),
+                path,
+            ))
         })
         .collect();
     let picked = pick_new_faces(
         faces
             .iter()
-            .map(|(f, w, i, p)| (f.as_str(), *w, *i, (f.clone(), p.clone()))),
+            .map(|(f, w, i, s, p)| (f.as_str(), *w, *i, *s, (f.clone(), p.clone()))),
         &known,
         missing,
     );
@@ -356,7 +417,7 @@ impl App {
             let families: HashSet<&str> = faces.iter().map(|f| f.family.as_str()).collect();
             tracing::info!(?families, files = faces.len(), "suggested fonts loaded");
             (self.font_io.load)(faces);
-            fbterm_term::fonts_loaded();
+            (self.font_io.loaded)();
         }
         self.refresh_installed_fonts();
         if std::mem::take(&mut self.fonts_rescan) {
