@@ -1226,7 +1226,7 @@ mod tests {
         outline: bool,
     ) -> Tiles<'static> {
         Tiles {
-            t: &crate::theme::DARK,
+            t: crate::theme::graphite_tokens(),
             window: window::Id::unique(),
             layout: two(),
             full: two(),
@@ -1275,7 +1275,11 @@ mod tests {
         assert!(with.iter().all(|(_, c)| *c == RED));
         let without = bare(&[1, 2], vec![None, None], 1, true).borders(&rects);
         assert_eq!(without.len(), 4);
-        assert!(without.iter().all(|(_, c)| *c == crate::theme::DARK.accent));
+        assert!(
+            without
+                .iter()
+                .all(|(_, c)| *c == crate::theme::graphite_tokens().accent)
+        );
         // Drawn last, so it wins where borders meet.
         let both = bare(&[1, 2], vec![Some(RED), Some(BLUE)], 2, true).borders(&rects);
         assert!(both[4..].iter().all(|(_, c)| *c == BLUE));
@@ -1293,7 +1297,7 @@ mod tests {
         assert!(
             unfocused[4..]
                 .iter()
-                .all(|(_, c)| *c == crate::theme::DARK.accent)
+                .all(|(_, c)| *c == crate::theme::graphite_tokens().accent)
         );
     }
 
@@ -1621,7 +1625,7 @@ mod tests {
                 })
                 .collect();
             let mut element: Element<'_, Message> = Element::new(Tiles {
-                t: &crate::theme::DARK,
+                t: crate::theme::graphite_tokens(),
                 window: wid,
                 layout: two(),
                 full: two(),
@@ -1724,7 +1728,7 @@ mod tests {
                     })
                     .collect();
                 Element::new(Tiles {
-                    t: &crate::theme::DARK,
+                    t: crate::theme::graphite_tokens(),
                     window: wid,
                     full: layout.clone(),
                     layout,

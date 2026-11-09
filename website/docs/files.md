@@ -19,8 +19,8 @@ Uninstalling the app never removes this directory (see [Install on Linux](instal
 | File | Written by | Purpose |
 | --- | --- | --- |
 | `profiles.toml` | you (and the profile editor) | Saved local and SSH profiles, with their tunnels. See [Profiles and jump hosts](profiles) and [Tunnels](tunnels). |
-| `settings.toml` | you (and the Settings tab) | Font, scrollback, theme, background, keyboard protocol and changed keyboard shortcuts. |
-| `schemes/` | you (and the Color schemes window) | One `<id>.toml` file per color scheme of yours. See [Color schemes](color-schemes#files-and-sharing). |
+| `settings.toml` | you (and the Settings tab) | Font, scrollback, color scheme, background, keyboard protocol and changed keyboard shortcuts. |
+| `schemes/` | you (and the Color schemes tab) | One `<id>.toml` file per color scheme of yours. See [Color schemes](color-schemes#files-and-sharing). |
 | `secrets.fbvault` | the app | Your saved passwords and passphrases, encrypted with your main password. Only exists once you use the encrypted vault. See [Saved secrets](saved-secrets). |
 | `secrets.dpapi` | the app | Windows only: your saved passwords and passphrases, encrypted for your Windows account, when saved secrets use the system storage. See [Saved secrets](saved-secrets). |
 | `state.toml` | the app | Open windows and tabs, and when each profile was last used. |
@@ -41,12 +41,16 @@ To edit the file by hand, run **Open settings file** from the palette (`Cmd+Shif
 ```toml
 font_family = "Geist Mono"
 font_size = 13.0
+use_theme_fonts = false
+ligatures = true
+font_features = []
 scrollback_lines = 10000
-theme = "dark"
 color_scheme = "graphite"
 kitty_keyboard = false
+grapheme_clusters = false
 background_opacity = 1.0
 background_blur = false
+macos_blur_style = "native"
 window_decorations = "fbterm"
 tab_bar = "top"
 max_fps = 60
@@ -57,14 +61,20 @@ secret_storage = "auto"
 
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `font_family` | string | `"Geist Mono"` | Terminal font family. |
+| `font_family` | string | `"Geist Mono"` | Terminal font family. In Settings the font list also finds monospace fonts installed while fbterm runs: opening the list looks for them. |
 | `font_size` | number, `6.0` to `72.0` | `13.0` | Font size in points. |
+| `use_theme_fonts` | `true` or `false` | `false` | Draw each tab in its color scheme's [suggested font](color-schemes#suggested-fonts) when that font is installed. A scheme that sets its own font keeps it; a missing font falls back to `font_family`. Nothing is downloaded. In Settings this is **Use each theme's suggested font** under Appearance, and the Color schemes tab has the same checkbox. Applies to open tabs at once. |
+| `ligatures` | `true` or `false` | `true` | Draw sequences such as `->`, `=>` and `!=` as one symbol when the font has them, including ligatures a font keeps in a stylistic set (Geist Mono's are in `ss11`): fbterm turns on a stylistic set automatically only when it contains nothing but ligatures, so letters keep their usual shapes. A ligature breaks apart under the cursor and where the color, the selection or a search match changes. Copying gives the plain characters. `false` turns every ligature off. In the Settings tab this is **Ligatures** under Appearance. Applies to open tabs at once. |
+| `font_features` | list of strings | `[]` | Extra OpenType features for the terminal font, applied after `ligatures`: a four-letter tag to turn a feature on (`"ss02"`), with `-` to turn one off (`"-calt"`), or with `=` and a number for a variant (`"cv01=2"`). An entry that is not a feature tag is ignored and shown in the window banner. Applies to open tabs at once. |
 | `scrollback_lines` | integer, `0` to `1000000` | `10000` | Lines of history kept per tab, open tabs included. A change applies at once. Raising it keeps everything; lowering it drops the oldest lines of open tabs that hold more, and in the Settings tab that asks first (Apply or Cancel), because it cannot be undone. Lowering it in the file applies when you save and a banner says how many tabs lost lines. Above `100000`, resizing a window can pause briefly while the history rewraps. |
-| `theme` | `"dark"` or `"light"` | `"dark"` | Color theme. |
-| `color_scheme` | string (scheme id) | `"graphite"` | Color scheme for every session; a profile can override it. An id that matches no scheme uses Graphite and is reported in the banner. See [Color schemes](color-schemes). |
+| `history_compression` | `true` or `false` | `false` | Keep the older part of each tab's history compressed, which saves memory at the cost of CPU: reading old history (scrolling back, searching) and output that scrolls into old history take more work. Recommended for very large histories, `100000` lines or more. Does nothing while `scrollback_lines` is `1000` or less. |
+| `uncompressed_history_lines` | integer, `1000` up to `scrollback_lines - 1` | `10000`, or `scrollback_lines - 1` when that is less | With `history_compression` on, how many of the newest history lines stay uncompressed. A value outside the range is moved into it and reported in the banner. Lowering `scrollback_lines` in the Settings tab lowers this too when it would no longer be below it. |
+| `color_scheme` | string (scheme id) | `"graphite"` | Color scheme for the whole app, tab bar and dialogs included, and for every session; a profile can override it for its sessions only. An id that matches no scheme uses Graphite and is reported in the banner. See [Color schemes](color-schemes). |
 | `kitty_keyboard` | `true` or `false` | `false` | Let programs turn on the kitty keyboard protocol, which reports keys such as Esc, Ctrl and Alt chords, and optionally every key and key releases, as unambiguous escape codes. When `false`, programs' requests for it are ignored and keys use the classic encoding. A change applies to open tabs at once: turning it off returns every tab to the classic encoding, turning it on lets programs enable the protocol from then on (restart a program that asked for it earlier). |
+| `grapheme_clusters` | `true` or `false` | `false` | Count joined emoji, flags and skin tones as one character in one cell, as programs that support it ask for themselves. When `false`, only programs that ask get it. A change applies to new tabs and to tabs after a reset or a restart, never to a program already running. |
 | `background_opacity` | number, `0.05` to `1.0` | `1.0` | Opacity of the terminal's background and of the tab bar, from `0.05` (nearly see-through) to `1.0` (opaque). Text, the cursor, the selection and cells a program gives their own background color stay opaque. On macOS a change applies to open windows at once; on Linux and Windows a window can only become see-through if it was opened while the value was below `1.0`, so open a new window after lowering it (or restart fbterm: while a window opened at `1.0` is open, Settings shows `Restart fbterm to apply this to open windows.` under the control). |
-| `background_blur` | `true` or `false` | `false` | Blur what shows through a see-through background. Takes effect only for windows opened while `background_opacity` is below `1.0`, so open a new window after changing it. Works on macOS, on Windows 11 22H2 and newer, and on KDE Plasma under Wayland; elsewhere the Settings switch is disabled and reads `Not supported on this system`. |
+| `background_blur` | `true` or `false` | `false` | Blur what shows through a see-through background. Takes effect only for windows opened while `background_opacity` is below `1.0`, so open a new window after changing it. Works on macOS, on Windows 11 22H2 and newer, and on KDE Plasma under Wayland; elsewhere the Settings switch is disabled and reads `Not supported on this system`. On macOS, `macos_blur_style` picks how the blur looks. |
+| `macos_blur_style` | `"native"` or `"classic"` | `"native"` | How blur looks on macOS (ignored on other systems). `"native"` is the system's own look, which lays its own tint over the blur, so `background_opacity` changes little. `"classic"` is fbterm's earlier, clearer blur: the blur alone, without that tint, so the terminal background at `background_opacity` is the only tint and the opacity drives the look. Classic follows the light or dark look of the color scheme of the active tab's top-left pane (moving focus between panes does not change it). Both keep the window's own rounded corners. A change applies at once to every open window that blurs. In Settings it is the `Blur style` row under `Background blur`, shown on macOS only and usable while blur is on and the opacity is below 100%. Any other value is reported and `"native"` is used. |
 | `window_decorations` | `"fbterm"` or `"system"` | `"fbterm"` | Linux only; other systems ignore it. Who draws the window's title bar: `"fbterm"` draws it in the tab bar, `"system"` uses the desktop's. In the file it is written as `# Window title bar on Linux: "fbterm" draws it in the tab bar, "system" uses the desktop's.` In Settings this is **Title bar**. If the desktop refuses to let fbterm move its window, the session uses the system title bar anyway and says so once; the setting stays as you wrote it. See [Install on Linux](install-linux#title-bar). |
 | `tab_bar` | `"top"` or `"left"` | `"top"` | Where open sessions are listed: a row of tabs along the top of the window, or a column down its left side (see [Tabs on the left](tabs#tabs-on-the-left)). Left out, the [Welcome tab](tabs#the-welcome-tab) asks once. In Settings this is **Tabs**; `Cmd+Shift+B` (`Ctrl+Shift+B`) switches it. |
 | `tab_groups` | `true` or `false` | `false` | Fold the sidebar into the profiles' groups when tabs are on the left (see [Tab groups](tabs#tab-groups)). In Settings this is **Group tabs**. |

@@ -6,6 +6,7 @@ use iced::gradient::Linear;
 use iced::{Background, Color, Radians};
 
 use crate::theme::{self, Tokens};
+use crate::ui::to_color;
 
 /// Accent share of an active tinted tab's color (over the terminal's background).
 pub const ACTIVE_TINT: f32 = 0.34;
@@ -64,18 +65,17 @@ pub fn contrast(a: Color, b: Color) -> f32 {
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }
 
-/// The text colors that read best on `bg`: the dark theme's (light text) or the light
-/// theme's (dark text).
-pub fn ink(bg: Color) -> &'static Tokens {
-    if contrast(theme::DARK.text, bg) >= contrast(theme::LIGHT.text, bg) {
+/// The text colors to draw on `bg`: the current set `t` when its `label` color (the role the
+/// caller draws the label in, such as `|t| t.text`) reads there (4.5:1), else the dark set's
+/// (light text) or the light set's (dark text), whichever `label` reads better.
+pub fn ink(t: &Tokens, bg: Color, label: fn(&Tokens) -> Color) -> &Tokens {
+    if contrast(label(t), bg) >= 4.5 {
+        t
+    } else if contrast(label(&theme::DARK), bg) >= contrast(label(&theme::LIGHT), bg) {
         &theme::DARK
     } else {
         &theme::LIGHT
     }
-}
-
-fn to_color(c: Rgb) -> Color {
-    Color::from_rgb8(c.r, c.g, c.b)
 }
 
 /// The colors of a tab with `accent` shown as `style`; `active` tabs take the terminal's
@@ -98,7 +98,7 @@ pub fn look(
             if active {
                 // Tinted at the top, fading into the terminal's background at the bottom.
                 let tint = mix(accent, terminal, ACTIVE_TINT);
-                let ink = ink(tint);
+                let ink = ink(t, tint, |t| t.text);
                 // The renderer blends stops in linear light, which keeps the tint until
                 // late; stops mixed here (in sRGB) make the fade look even.
                 let mut gradient = Linear::new(Radians(std::f32::consts::PI))
@@ -117,7 +117,7 @@ pub fn look(
             } else {
                 // Drawn over the bar, so a see-through tint works at any opacity.
                 let k = if hovered { HOVER_TINT } else { INACTIVE_TINT };
-                let ink = ink(mix(accent, bar, k));
+                let ink = ink(t, mix(accent, bar, k), |t| t.text_secondary);
                 TabLook {
                     background: Some(Background::Color(Color { a: k, ..accent })),
                     label: ink.text_secondary,
@@ -126,12 +126,12 @@ pub fn look(
                 }
             }
         }
-        // The active tab is the terminal's surface, which need not follow the app theme
-        // (a dark scheme under the light theme): its text follows its own contrast.
+        // The active tab is the terminal's surface, which need not follow the chrome (a
+        // profile's own scheme): its text keeps the chrome's set only where that reads.
         (accent, _) if active => TabLook {
             background: Some(Background::Color(terminal.scale_alpha(opacity))),
-            label: ink(terminal).text,
-            icon: ink(terminal).text_muted,
+            label: ink(t, terminal, |t| t.text).text,
+            icon: ink(t, terminal, |t| t.text).text_muted,
             stripe: accent,
         },
         (accent, _) => TabLook {
@@ -188,10 +188,71 @@ mod tests {
 
     #[test]
     fn ink_picks_the_readable_text() {
-        assert_eq!(ink(DARK.app).text, DARK.text);
-        assert_eq!(ink(LIGHT.raised).text, LIGHT.text);
-        assert_eq!(ink(to_color(YELLOW)).text, LIGHT.text);
-        assert_eq!(ink(Color::from_rgb8(0x20, 0x10, 0x60)).text, DARK.text);
+        assert_eq!(ink(&DARK, DARK.app, |t| t.text).text, DARK.text);
+        assert_eq!(ink(&DARK, LIGHT.raised, |t| t.text).text, LIGHT.text);
+        assert_eq!(ink(&DARK, to_color(YELLOW), |t| t.text).text, LIGHT.text);
+        assert_eq!(
+            ink(&LIGHT, Color::from_rgb8(0x20, 0x10, 0x60), |t| t.text).text,
+            DARK.text
+        );
+    }
+
+    #[test]
+    fn ink_keeps_the_current_set_when_readable() {
+        let night = fbterm_config::schemes::SchemeColors {
+            background: Rgb {
+                r: 0x10,
+                g: 0x20,
+                b: 0x30,
+            },
+            ..fbterm_config::schemes::builtins().remove(0).colors
+        };
+        let t = theme::derive(&night);
+        assert!(std::ptr::eq(ink(&t, t.terminal, |t| t.text), &t));
+        // A light background under a dark set: the light set's text (a const, so by value).
+        assert_eq!(*ink(&t, Color::WHITE, |t| t.text), LIGHT);
+        assert_eq!(*ink(&t, LIGHT.app, |t| t.text), LIGHT);
+    }
+
+    #[test]
+    fn inactive_tint_labels_keep_their_contrast_on_derived_colors() {
+        // A low-contrast scheme: its secondary text sits on the 4.5:1 floor over `app`, so a
+        // bright tint over the bar takes it below while its main text still passes.
+        let dim = fbterm_config::schemes::SchemeColors {
+            background: Rgb {
+                r: 0x10,
+                g: 0x10,
+                b: 0x10,
+            },
+            foreground: Rgb {
+                r: 0x60,
+                g: 0x60,
+                b: 0x60,
+            },
+            ..fbterm_config::schemes::builtins().remove(0).colors
+        };
+        let t = theme::derive(&dim);
+        let around = Surroundings {
+            terminal: t.terminal,
+            bar: t.surface,
+            opacity: 1.0,
+        };
+        let accent = YELLOW;
+        let bg = mix(to_color(accent), t.surface, INACTIVE_TINT);
+        assert!(
+            contrast(t.text, bg) >= 4.5,
+            "precondition: main text passes"
+        );
+        assert!(
+            contrast(t.text_secondary, bg) < 4.5,
+            "precondition: secondary fails"
+        );
+        let idle = look(&t, Some(accent), AccentStyle::Tab, false, false, around);
+        assert!(
+            contrast(idle.label, bg) >= 4.5,
+            "{}",
+            contrast(idle.label, bg)
+        );
     }
 
     #[test]

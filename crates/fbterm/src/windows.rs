@@ -181,8 +181,9 @@ impl App {
         }
     }
 
-    /// What a closed page tab leaves behind: the editor's drafts go, Settings writes what is
-    /// still waiting, the Welcome tab answers its open questions with the defaults.
+    /// What a closed page tab leaves behind: the editor's and Color schemes' drafts go,
+    /// Settings applies a value still typed (as Enter would) and writes what is still waiting,
+    /// the Welcome tab answers its open questions with the defaults.
     pub(crate) fn page_closed(&mut self, page: Page) -> Task<Message> {
         match page {
             Page::Profiles => {
@@ -190,11 +191,16 @@ impl App {
                 Task::none()
             }
             Page::Settings => {
+                let typed = self.flush_typed_setting();
                 self.write_pending_settings();
                 self.settings_win = None;
-                Task::none()
+                typed
             }
             Page::Welcome => self.welcome_closed(),
+            Page::Schemes => {
+                self.schemes_win = None;
+                Task::none()
+            }
         }
     }
 
@@ -272,7 +278,8 @@ impl App {
     /// A tab or window the user closed freed `terminals`: request the memory release once none
     /// is held any more. The session task may still hold its reference for a moment (or, with a
     /// background job on the PTY, for long), so a held terminal waits in `pending_release` for
-    /// `SessionEvent::Released` (see `release_swept`); nothing polls. Only user closes come
+    /// `SessionEvent::Released` (see `release_swept`; the history worker sends one too when a
+    /// turn of its held the terminal and let go last); nothing polls. Only user closes come
     /// here, never output or the end of a program.
     pub(crate) fn release_closed(&mut self, terminals: Vec<crate::memory::WeakTerminal>) {
         if terminals.is_empty() {
@@ -304,6 +311,17 @@ impl App {
             return Task::none();
         };
         tabs::on_shown(window);
+        let schemes = if window
+            .active_tab()
+            .is_some_and(|t| t.page == Some(Page::Schemes))
+        {
+            self.schemes_shown()
+        } else {
+            Task::none()
+        };
+        let Some(window) = self.windows.get(&wid) else {
+            return schemes;
+        };
         let waiting: Vec<_> = window
             .active_tab()
             .map(|t| {
@@ -314,12 +332,9 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
-        Task::batch(
-            waiting
-                .into_iter()
-                .map(|id| self.start(wid, id))
-                .collect::<Vec<_>>(),
-        )
+        let mut tasks: Vec<_> = waiting.into_iter().map(|id| self.start(wid, id)).collect();
+        tasks.push(schemes);
+        Task::batch(tasks)
     }
 
     /// Write `state.toml`: windows, tabs, selection, sizes and recency. Does nothing for debug
@@ -365,7 +380,11 @@ impl App {
         if self.quitting {
             return Task::none();
         }
-        // Settings changes still waiting for their quiet period are written now.
+        // Settings changes still waiting for their quiet period are written now, with a value
+        // still typed in a field (queued, not applied: the app is ending).
+        if let Some((_, state)) = &mut self.settings_win {
+            let _ = state.flush_typed();
+        }
         self.write_pending_settings();
         self.save_state();
         self.quitting = true;
@@ -373,7 +392,6 @@ impl App {
             .windows
             .keys()
             .copied()
-            .chain(self.schemes_window())
             .chain(self.archive_window())
             .collect();
         self.closing.extend(ids.iter().copied());
@@ -407,7 +425,7 @@ impl App {
         if self.settings_window() == Some(id) {
             self.write_pending_settings();
         }
-        if self.schemes_window() == Some(id) || self.archive_window() == Some(id) {
+        if self.archive_window() == Some(id) {
             self.close_window(id)
         } else if self.windows.len() > 1 {
             if self.ask_before_closing_window(id) {

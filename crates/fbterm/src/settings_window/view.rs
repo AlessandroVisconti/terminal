@@ -3,13 +3,13 @@
 
 use fbterm_config::keys::{Action, ActionGroup, Bindings, FixedShortcut, fixed_shortcuts, risk};
 use fbterm_config::settings::{FONT_SIZE_RANGE, OPACITY_RANGE};
-use fbterm_config::{SecretStorage, Settings, TabBar, ThemeMode, WindowDecorations};
+use fbterm_config::{MacosBlurStyle, SecretStorage, Settings, TabBar, WindowDecorations};
 use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, slider, text, text_input, toggler,
 };
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
-use super::{RecordProblem, Recording, SettingsMsg, SettingsState};
+use super::{COMPRESSION_NOTE, RecordProblem, Recording, SettingsMsg, SettingsState};
 use crate::app::Message;
 use crate::chrome::{self, Platform};
 use crate::saved_secrets::{SectionInfo, choice_label, storage_note};
@@ -190,7 +190,7 @@ fn setting<'a>(
     control: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let mut words = column![text(label).font(UI_FONT).size(13).color(if dimmed {
-        t.text_muted
+        dimmed_text(t)
     } else {
         t.text
     })]
@@ -214,6 +214,24 @@ fn setting<'a>(
         .into()
 }
 
+/// The text color of a dimmed (disabled) row: its label, and the value of its own field.
+fn dimmed_text(t: &Tokens) -> Color {
+    t.text_muted
+}
+
+/// [`ui::input_style`] whose value, while disabled, is dimmed like the row's label.
+fn dimmed_input_style(t: &Tokens, status: text_input::Status) -> text_input::Style {
+    let style = ui::input_style(t, status);
+    if matches!(status, text_input::Status::Disabled) {
+        text_input::Style {
+            value: dimmed_text(t),
+            ..style
+        }
+    } else {
+        style
+    }
+}
+
 fn appearance<'a>(
     t: &'static Tokens,
     state: &'a SettingsState,
@@ -223,25 +241,10 @@ fn appearance<'a>(
     opaque_windows: bool,
 ) -> Vec<Element<'a, Message>> {
     let v = &state.values;
-    let theme = row![
-        segment(
-            t,
-            "Dark",
-            v.theme == ThemeMode::Dark,
-            editable.then(|| msg(SettingsMsg::Theme(ThemeMode::Dark))),
-        ),
-        segment(
-            t,
-            "Light",
-            v.theme == ThemeMode::Light,
-            editable.then(|| msg(SettingsMsg::Theme(ThemeMode::Light))),
-        ),
-    ]
-    .spacing(2);
-    let theme = container(theme).padding(2).style(move |_| well(t));
     let fonts = pick_list(state.fonts.as_slice(), state.selected_font(), |f| {
         msg(SettingsMsg::Font(f))
     })
+    .on_open(msg(SettingsMsg::FontsOpened))
     .font(MONO)
     .text_size(12.5)
     .padding(Padding::from([6.0, 10.0]))
@@ -342,10 +345,29 @@ fn appearance<'a>(
         );
     }
     let mut rows = vec![
-        setting(t, "Theme", None, false, theme),
         setting(t, "Font family", None, false, fonts),
         setting(t, "Color scheme", None, false, scheme),
         setting(t, "Font size", None, false, size),
+        setting(
+            t,
+            THEME_FONTS_LABEL,
+            Some(THEME_FONTS_HINT),
+            false,
+            switch(
+                t,
+                v.use_theme_fonts,
+                editable,
+                false,
+                SettingsMsg::UseThemeFonts,
+            ),
+        ),
+        setting(
+            t,
+            "Ligatures",
+            Some("Draws sequences such as -> and != as one symbol when the font has them."),
+            false,
+            switch(t, v.ligatures, editable, false, SettingsMsg::Ligatures),
+        ),
         opacity_row.into(),
         blur_setting(
             t,
@@ -355,6 +377,14 @@ fn appearance<'a>(
             v.background_opacity,
         ),
     ];
+    if shows_blur_style_row(Platform::current()) {
+        rows.push(blur_style_setting(
+            t,
+            &v.macos_blur_style,
+            editable,
+            blur_style_enabled(v.background_blur, chrome::blur_here(), v.background_opacity),
+        ));
+    }
     // Where open sessions are listed; an unanswered setting shows `Top`.
     let tabs = row![
         segment(
@@ -405,6 +435,12 @@ fn appearance<'a>(
     rows
 }
 
+/// The label of the `use_theme_fonts` row; the Color schemes tab's checkbox says the same.
+pub const THEME_FONTS_LABEL: &str = "Use each theme's suggested font";
+/// The line under it.
+pub const THEME_FONTS_HINT: &str =
+    "When the font is installed. A scheme that sets its own font keeps it.";
+
 /// The line under `Background opacity` at `opacity` when `opaque_windows` (an open terminal
 /// window was created opaque, which never happens on macOS): such a window shows a lower
 /// opacity only once fbterm restarts; windows opened from now on show it at once.
@@ -434,6 +470,54 @@ pub(super) fn blur_setting<'a>(
             blur.inert,
             SettingsMsg::Blur,
         ),
+    )
+}
+
+/// Whether the Settings tab offers the `Blur style` choice: only on macOS, the one system
+/// whose blur view has more than one look (`macos_blur_style` is ignored elsewhere).
+pub fn shows_blur_style_row(platform: Platform) -> bool {
+    platform == Platform::MacOs
+}
+
+/// Whether the `Blur style` choice can be used: only while blur shows, by the blur switch's
+/// own rule (blur on, on a system that blurs, below full opacity).
+pub fn blur_style_enabled(blur_on: bool, supported: bool, opacity: f32) -> bool {
+    blur_on && supported && opacity < 1.0
+}
+
+/// The `Blur style` row under `Background blur`: `Native` or `Classic` for `style`, pressable
+/// when `editable` and `enabled` (see [`blur_style_enabled`]), muted otherwise. A change
+/// re-tunes the blur of open windows at once.
+pub(super) fn blur_style_setting<'a>(
+    t: &'static Tokens,
+    style: &MacosBlurStyle,
+    editable: bool,
+    enabled: bool,
+) -> Element<'a, Message> {
+    let usable = editable && enabled;
+    let classic = *style == MacosBlurStyle::Classic;
+    let choice = row![
+        segment(
+            t,
+            "Native",
+            !classic,
+            usable.then(|| msg(SettingsMsg::BlurStyle(MacosBlurStyle::Native))),
+        ),
+        segment(
+            t,
+            "Classic",
+            classic,
+            usable.then(|| msg(SettingsMsg::BlurStyle(MacosBlurStyle::Classic))),
+        ),
+    ]
+    .spacing(2);
+    let choice = container(choice).padding(2).style(move |_| well(t));
+    setting(
+        t,
+        "Blur style",
+        Some("Native uses the macOS look. Classic is fbterm's earlier, clearer blur."),
+        !enabled,
+        choice,
     )
 }
 
@@ -490,6 +574,8 @@ fn terminal<'a>(
     .menu_style(move |_| menu_style(t));
     vec![
         scrollback_row(t, state, scrollback),
+        compression_row(t, state, editable),
+        uncompressed_row(t, state, editable),
         setting(
             t,
             "Kitty keyboard protocol",
@@ -501,6 +587,21 @@ fn terminal<'a>(
                 editable,
                 false,
                 SettingsMsg::Kitty,
+            ),
+        ),
+        setting(
+            t,
+            "Grapheme clusters",
+            Some(
+                "Keeps joined emoji and flags in one cell in new terminals and after a restart or reset. Programs can turn this on themselves.",
+            ),
+            false,
+            switch(
+                t,
+                state.values.grapheme_clusters,
+                editable,
+                false,
+                SettingsMsg::Clusters,
             ),
         ),
         setting(t, "Redraw rate", Some(state.rate_hint()), false, rate),
@@ -707,6 +808,67 @@ fn scrollback_row<'a>(
         Some(e) => column![
             row_,
             container(e).padding(Padding::from([0.0, 16.0]).bottom(12.0))
+        ]
+        .into(),
+        None => row_,
+    }
+}
+
+/// The `Compress old history` switch, with its note.
+fn compression_row<'a>(
+    t: &'static Tokens,
+    state: &'a SettingsState,
+    editable: bool,
+) -> Element<'a, Message> {
+    setting(
+        t,
+        "Compress old history",
+        Some(COMPRESSION_NOTE),
+        false,
+        switch(
+            t,
+            state.values.history_compression,
+            editable,
+            false,
+            SettingsMsg::HistoryCompression,
+        ),
+    )
+}
+
+/// The `Recent lines kept uncompressed` row: disabled (dimmed, not editable) while compression
+/// is off or the scrollback is too small; an out-of-range number shows the valid range under it.
+fn uncompressed_row<'a>(
+    t: &'static Tokens,
+    state: &'a SettingsState,
+    editable: bool,
+) -> Element<'a, Message> {
+    let enabled = editable && state.uncompressed_enabled();
+    let field = row![
+        text_input("10000", &state.uncompressed_text)
+            .on_input_maybe(enabled.then_some(|s| msg(SettingsMsg::UncompressedText(s))))
+            .on_submit_maybe(enabled.then(|| msg(SettingsMsg::UncompressedSubmit)))
+            .font(MONO)
+            .size(12.5)
+            .padding(Padding::from([6.0, 10.0]))
+            .width(110)
+            .align_x(Alignment::End)
+            .style(move |_, s| dimmed_input_style(t, s)),
+        unit(t, "lines", Length::Shrink),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+    let row_ = setting(
+        t,
+        "Recent lines kept uncompressed",
+        state.uncompressed_note(),
+        !state.uncompressed_enabled(),
+        field,
+    );
+    match state.uncompressed_error() {
+        Some(why) => column![
+            row_,
+            container(text(why).font(UI_FONT).size(12).color(t.warning))
+                .padding(Padding::from([0.0, 16.0]).bottom(12.0))
         ]
         .into(),
         None => row_,
@@ -1272,7 +1434,7 @@ pub(crate) fn toggler_style(t: &Tokens, status: toggler::Status, inert: bool) ->
         // Muted like a read-only slider: on reads as the muted text color, off as the border.
         (true, false) if inert => t.text_muted,
         (false, false) if inert => t.border,
-        (true, false) if hovered => t.accent_edge,
+        (true, false) if hovered => t.accent_hover,
         (true, false) => t.accent,
         (false, false) if hovered => t.text_muted,
         (false, false) => t.border,
@@ -1287,7 +1449,7 @@ pub(crate) fn toggler_style(t: &Tokens, status: toggler::Status, inert: bool) ->
             // On, muted: the knob must not vanish into the muted track.
             t.app
         } else {
-            Color::WHITE
+            t.on_accent
         }),
         foreground_border_width: 0.0,
         foreground_border_color: Color::TRANSPARENT,
@@ -1328,5 +1490,33 @@ pub(crate) fn menu_style(t: &Tokens) -> iced::overlay::menu::Style {
         selected_text_color: t.text,
         selected_background: Background::Color(t.accent_soft),
         shadow: iced::Shadow::default(),
+    }
+}
+
+#[cfg(test)]
+mod toggler_tests {
+    use super::*;
+    use crate::tab_look::contrast;
+
+    #[test]
+    fn an_on_knob_stays_visible_on_the_accent_track() {
+        for t in [
+            crate::theme::graphite_tokens(),
+            crate::theme::pale_accent_tokens(),
+        ] {
+            for status in [
+                toggler::Status::Active { is_toggled: true },
+                toggler::Status::Hovered { is_toggled: true },
+            ] {
+                let s = toggler_style(t, status, false);
+                let (Background::Color(track), Background::Color(knob)) =
+                    (s.background, s.foreground)
+                else {
+                    panic!("color backgrounds");
+                };
+                let k = contrast(knob, track);
+                assert!(k >= 4.5, "{status:?} {k}");
+            }
+        }
     }
 }

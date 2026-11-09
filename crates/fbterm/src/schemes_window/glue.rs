@@ -1,4 +1,4 @@
-//! The app side of the Color schemes window: opening it, and the actions that touch files and
+//! The app side of the Color schemes tab: opening it, and the actions that touch files and
 //! open sessions (save, duplicate, delete, import, export).
 
 use std::path::PathBuf;
@@ -12,6 +12,7 @@ use iced::{Task, window};
 
 use super::{DeleteAsk, ImportAsk, ImportChoice, SchemesMsg, SchemesState};
 use crate::app::{App, Message, SettingsSource};
+use crate::tabs::Page;
 
 /// What the global setting falls back to when its scheme is deleted.
 const FALLBACK: &str = "graphite";
@@ -21,47 +22,45 @@ impl App {
         self.schemes_win.as_ref().map(|(id, _)| *id)
     }
 
-    /// Open the Color schemes window with `select` selected (else the global scheme), or bring
-    /// it to the front and select `select` there.
+    /// Open the Color schemes tab with `select` selected (else the global scheme), or select
+    /// the tab where it is open and `select` there.
     pub(crate) fn open_schemes(&mut self, select: Option<String>) -> Task<Message> {
         let select = select.unwrap_or_else(|| self.settings.color_scheme.clone());
-        if let Some((id, state)) = &mut self.schemes_win {
+        let (id, shown) = self.show_page(Page::Schemes);
+        if let Some((_, state)) = &mut self.schemes_win {
             state.update(SchemesMsg::Select(select));
-            return window::gain_focus(*id);
+            return shown;
         }
-        let (id, open) = crate::chrome::open_window(window::Settings {
-            size: iced::Size::new(980.0, 780.0),
-            min_size: Some(iced::Size::new(760.0, 520.0)),
-            exit_on_close_request: false,
-            ..window::Settings::default()
-        });
-        let mut state = SchemesState::new(
-            &self.schemes,
-            Some(&select),
-            crate::settings_window::installed_monospace(),
-        );
+        let mut state =
+            SchemesState::new(&self.schemes, Some(&select), self.installed_fonts.clone());
+        state.sync_settings(&self.settings);
         if self.gallery_loading {
-            // The fetch started before the window closed is still running.
+            // The fetch started before the tab closed is still running.
             state.gallery = super::GalleryLoad::Loading;
         } else if let Some(catalog) = &self.gallery_catalog {
             // The catalog of this run: shown again without a fetch.
             state.gallery = super::GalleryLoad::Loaded(catalog.clone());
         }
         self.schemes_win = Some((id, state));
-        open.discard()
+        shown
     }
 
     pub(crate) fn schemes_msg(&mut self, msg: SchemesMsg) -> Task<Message> {
+        // The gallery is shown (a user action): read the installed fonts again and look for
+        // suggested fonts installed since; moving through the scheme list reads nothing.
+        let scan = if matches!(msg, SchemesMsg::ShowGallery(true)) && self.schemes_win.is_some() {
+            self.refresh_installed_fonts();
+            self.scan_fonts()
+        } else {
+            Task::none()
+        };
         let msg = match self.gallery_msg(msg) {
-            Ok(task) => return task,
+            Ok(task) => return Task::batch([task, scan]),
             Err(msg) => msg,
         };
         match msg {
             SchemesMsg::Open => self.open_schemes(None),
-            SchemesMsg::Close => match self.schemes_window() {
-                Some(id) => self.close_window(id),
-                None => Task::none(),
-            },
+            SchemesMsg::Close => self.close_page(Page::Schemes),
             SchemesMsg::Save => self.save_scheme(),
             SchemesMsg::Duplicate => self.duplicate_scheme(),
             SchemesMsg::Delete => {
@@ -79,6 +78,19 @@ impl App {
             SchemesMsg::Imported(path) => Self::read_import(path),
             SchemesMsg::ImportRead(result) => self.imported(*result),
             SchemesMsg::ImportChoice(choice) => self.import_choice(choice),
+            SchemesMsg::DownloadFont(url) => {
+                self.open_font_page(&url);
+                Task::none()
+            }
+            SchemesMsg::UseFont(family) => {
+                if crate::theme_fonts::is_installed(&self.installed_fonts, &family) {
+                    self.set_setting(SettingChange::FontFamily(family))
+                } else {
+                    tracing::warn!(%family, "suggested font not used: not installed");
+                    Task::none()
+                }
+            }
+            SchemesMsg::UseThemeFonts(on) => self.set_setting(SettingChange::UseThemeFonts(on)),
             SchemesMsg::Export => self.pick_export(),
             SchemesMsg::Exported(path) => self.exported(path),
             SchemesMsg::Preview(_) => Task::none(),
@@ -88,6 +100,17 @@ impl App {
                 }
                 Task::none()
             }
+        }
+    }
+
+    /// A suggested font's official page, in the system browser through the gallery's opener
+    /// (a user click only); anything but an `https://` link is refused. fbterm never
+    /// downloads the font itself.
+    fn open_font_page(&self, url: &str) {
+        if fbterm_config::schemes::is_plain_https_url(url) {
+            (self.gallery_io.open)(url);
+        } else {
+            tracing::warn!(%url, "font page not opened: not a plain https link");
         }
     }
 
@@ -381,8 +404,10 @@ impl App {
         // A `[gallery]` block is only ever written by Install on this machine: an imported
         // copy, even of a gallery theme, counts as edited, so Update asks before replacing it.
         scheme.gallery = None;
-        // `read_file` drops an unsafe `[credit]` already; checked again for any other source.
+        // `read_file` drops an unsafe `[credit]` or `[suggested_font]` already; checked again
+        // for any other source. Both travel with the colors.
         fbterm_config::schemes::sanitize_credit(&mut scheme);
+        fbterm_config::schemes::sanitize_suggested_font(&mut scheme);
         if BUILTIN_IDS.contains(&scheme.id.as_str()) || !is_plain_id(&scheme.id) {
             scheme.id = new_user_id();
         } else if let Some(existing) = self

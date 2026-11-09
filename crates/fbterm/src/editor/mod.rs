@@ -64,7 +64,7 @@ pub enum EditorMsg {
     Reload,
     /// Open the file picker for the key path.
     PickKey,
-    /// Open the Color schemes window.
+    /// Open the Color schemes tab.
     EditSchemes,
     /// `Export…`: the archive window in its Export mode.
     Export,

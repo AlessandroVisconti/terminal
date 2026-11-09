@@ -2,6 +2,28 @@
 
 All notable changes to featherbit terminal (`fbterm`). The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each version links to its GitHub release, where the downloads are.
 
+## [0.9.0] - 2026-11-09
+
+### Added
+
+- The whole app follows your color scheme. The global scheme now colors the tab bar, the sidebar, every page, the panels, dialogs, the palette and menus, not only the terminal; a profile's own scheme still colors only its sessions. Graphite looks as before; other schemes get window colors worked out from their own, with readable text and the scheme's accent ([#91](https://github.com/featherbitplatform/terminal/pull/91)).
+- Suggested fonts for themes: every built-in and gallery theme suggests a free font with a `Download` link to its official page and a `Use font` button, and the `Use each theme's suggested font` switch lets the font follow the theme when it is installed. fbterm never downloads fonts ([#88](https://github.com/featherbitplatform/terminal/pull/88)).
+- Ligatures: on by default in every font that has them, including the bundled Geist Mono. Turn them off with the `Ligatures` switch, or pick OpenType features with `font_features` in `settings.toml` ([#85](https://github.com/featherbitplatform/terminal/pull/85)).
+- Grapheme clusters: programs that turn on mode 2027 get flags, skin tones and joined emoji in one cell. The `grapheme_clusters` setting turns it on by default. Copying text keeps combining accents and whole emoji ([#84](https://github.com/featherbitplatform/terminal/pull/84)).
+- Compressed history for very large scrollback: the `history_compression` switch keeps older history compressed, trading some CPU for memory (one tab with a full 1,000,000-line log: about 159 MB instead of 297 MB). `uncompressed_history_lines` sets how many recent lines stay uncompressed. Off by default ([#89](https://github.com/featherbitplatform/terminal/pull/89)).
+- macOS: a `Blur style` choice under Background blur. `Native` is the system's blur; `Classic` is fbterm's earlier, clearer blur, where the background opacity drives the look again. Both keep the window's rounded corners ([#87](https://github.com/featherbitplatform/terminal/pull/87)).
+
+### Changed
+
+- Color schemes is a tab, like Settings and Profiles, instead of a separate window. It notices fonts installed while fbterm runs when you switch to it ([#91](https://github.com/featherbitplatform/terminal/pull/91)).
+- The Dark/Light `theme` setting is removed: the window follows the color scheme. For a light window choose Graphite Light. An old `theme` line is reported and dropped on the next settings change ([#91](https://github.com/featherbitplatform/terminal/pull/91)).
+- Local shells read program output and parse it on separate threads, so busy programs wait less: about 19% faster on plain log output ([#83](https://github.com/featherbitplatform/terminal/pull/83)).
+
+### Fixed
+
+- The Settings font list finds fonts installed while fbterm runs: opening the list looks for them, no restart needed ([#90](https://github.com/featherbitplatform/terminal/pull/90)).
+- macOS: tabs opening together, such as restored tabs, no longer fail now and then to start their shell ([#83](https://github.com/featherbitplatform/terminal/pull/83)).
+
 ## [0.8.3] - 2026-11-08
 
 ### Fixed
@@ -187,6 +209,7 @@ The first release: the daily driver milestone, macOS only.
 - Compact scrollback history: a live `scrollback_lines` setting with a Settings confirmation, and memory given back when tabs close ([#2](https://github.com/featherbitplatform/terminal/pull/2)).
 - Unsigned macOS `.dmg` packaging and the release workflow ([#1](https://github.com/featherbitplatform/terminal/pull/1)).
 
+[0.9.0]: https://github.com/featherbitplatform/terminal/releases/tag/v0.9.0
 [0.8.3]: https://github.com/featherbitplatform/terminal/releases/tag/v0.8.3
 [0.8.2]: https://github.com/featherbitplatform/terminal/releases/tag/v0.8.2
 [0.8.1]: https://github.com/featherbitplatform/terminal/releases/tag/v0.8.1

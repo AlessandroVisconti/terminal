@@ -309,20 +309,45 @@ fn missing_settings_file_gives_defaults() {
     assert_eq!(s.font_size, 13.0);
     assert_eq!(s.scrollback_lines, 10_000);
     assert_eq!(s.font_family, "Geist Mono");
-    assert_eq!(s.theme, ThemeMode::Dark);
 }
 
 #[test]
 fn partial_settings_file_uses_defaults() {
     let path = tmp("settings.toml");
-    std::fs::write(&path, "theme = \"light\"\n").unwrap();
+    std::fs::write(&path, "scrollback_lines = 5000\n").unwrap();
     let s = Settings::load_or_default(&path);
-    assert_eq!(s.theme, ThemeMode::Light);
+    assert_eq!(s.scrollback_lines, 5000);
     assert_eq!(s.font_size, 13.0);
     assert!(
         !s.kitty_keyboard,
         "kitty keyboard protocol is off by default"
     );
+}
+
+#[test]
+fn grapheme_clusters_setting_defaults_off_and_parses() {
+    let path = tmp("settings.toml");
+    std::fs::write(&path, "font_size = 14.0\n").unwrap();
+    assert!(!Settings::load_or_default(&path).grapheme_clusters);
+    std::fs::write(&path, "grapheme_clusters = true\n").unwrap();
+    assert!(Settings::load_or_default(&path).grapheme_clusters);
+}
+
+#[test]
+fn ligature_settings_default_and_parse() {
+    let path = tmp("settings.toml");
+    std::fs::write(&path, "font_size = 14.0\n").unwrap();
+    let s = Settings::load_or_default(&path);
+    assert!(s.ligatures, "ligatures are on by default");
+    assert!(s.font_features.is_empty());
+    std::fs::write(
+        &path,
+        "ligatures = false\nfont_features = [\"ss11\", \"-calt\"]\n",
+    )
+    .unwrap();
+    let s = Settings::load_or_default(&path);
+    assert!(!s.ligatures);
+    assert_eq!(s.font_features, ["ss11", "-calt"]);
 }
 
 #[test]
@@ -354,7 +379,7 @@ fn paths_filenames() {
 #[test]
 fn broken_settings_reports_line() {
     let path = tmp("settings.toml");
-    let bytes = b"theme = \"dark\"\nfont_size = [\n";
+    let bytes = b"font_size = 14.0\nfont_size = [\n";
     std::fs::write(&path, bytes).unwrap();
     let err = Settings::load(&path).unwrap_err();
     assert!(matches!(err.line, Some(n) if n >= 2));
@@ -373,18 +398,13 @@ fn missing_settings_load_is_ok_defaults() {
 #[test]
 fn out_of_range_settings_are_clamped_and_reported() {
     let path = tmp("settings.toml");
-    std::fs::write(
-        &path,
-        "theme = \"light\"\nfont_size = 200.0\nscrollback_lines = 5000000\n",
-    )
-    .unwrap();
+    std::fs::write(&path, "font_size = 200.0\nscrollback_lines = 5000000\n").unwrap();
     let (s, warning) = Settings::load_checked(&path).unwrap();
     assert_eq!(s.font_size, 72.0);
     assert_eq!(s.scrollback_lines, 1_000_000);
-    assert_eq!(s.theme, ThemeMode::Light);
     let w = warning.expect("out-of-range values are reported");
     assert_eq!(w.path, path);
-    assert_eq!(w.line, Some(2));
+    assert_eq!(w.line, Some(1));
     assert!(w.message.contains("font_size"), "{}", w.message);
     assert!(w.message.contains("scrollback_lines"), "{}", w.message);
     // `load` applies the same clamping, without the warning.
@@ -442,7 +462,7 @@ fn background_settings_parse() {
 #[test]
 fn out_of_range_opacity_is_clamped_and_reported() {
     let path = tmp("settings.toml");
-    std::fs::write(&path, "theme = \"dark\"\nbackground_opacity = 1.5\n").unwrap();
+    std::fs::write(&path, "font_size = 14.0\nbackground_opacity = 1.5\n").unwrap();
     let (s, warning) = Settings::load_checked(&path).unwrap();
     assert_eq!(s.background_opacity, 1.0);
     let w = warning.expect("an out-of-range opacity is reported");
@@ -509,7 +529,7 @@ fn out_of_range_max_fps_is_clamped_and_reported() {
         ("241", 240),
         ("100000", 240),
     ] {
-        std::fs::write(&path, format!("theme = \"dark\"\nmax_fps = {value}\n")).unwrap();
+        std::fs::write(&path, format!("font_size = 14.0\nmax_fps = {value}\n")).unwrap();
         let (s, warning) = Settings::load_checked(&path).unwrap();
         assert_eq!(s.max_fps, MaxFps::Fixed(used), "{value}");
         let w = warning.expect(value);
@@ -588,6 +608,7 @@ fn settings_template_parses_to_defaults_with_every_setting_uncommented() {
     let answered = Settings {
         check_updates: Some(false),
         tab_bar: Some(TabBar::Top),
+        uncompressed_history_lines: Some(10_000),
         ..Settings::default()
     };
     assert_eq!(loaded, answered);
@@ -726,7 +747,10 @@ fn color_scheme_write_field_round_trips() {
         text.contains("# Terminal color scheme for every session"),
         "{text}"
     );
-    assert!(text.contains("# Color theme:"), "comments kept");
+    assert!(
+        text.contains("# Let programs turn on the kitty"),
+        "comments kept"
+    );
     assert_eq!(Settings::load(&path).unwrap().color_scheme, "harbor");
 }
 
@@ -1272,4 +1296,227 @@ fn icon_is_written_only_when_set() {
     let text = std::fs::read_to_string(&path).unwrap();
     assert_eq!(text.matches("icon").count(), 1, "{text}");
     assert_eq!(ProfileStore::load(&path).unwrap(), store);
+}
+
+#[test]
+fn history_compression_defaults_off() {
+    assert_eq!(Settings::default().history_compression_keep(), None);
+    assert!(SETTINGS_TEMPLATE.contains("#history_compression = false"));
+    assert!(SETTINGS_TEMPLATE.contains(
+        "# With history_compression: how many of the newest lines stay uncompressed.\n\
+         #uncompressed_history_lines = 10000  # 1000 to scrollback_lines - 1\n"
+    ));
+}
+
+fn compressing(scrollback: usize, keep: Option<usize>) -> Settings {
+    Settings {
+        history_compression: true,
+        scrollback_lines: scrollback,
+        uncompressed_history_lines: keep,
+        ..Settings::default()
+    }
+}
+
+#[test]
+fn uncompressed_default_tracks_scrollback() {
+    let mut s = compressing(10_000, None);
+    assert_eq!(s.history_compression_keep(), Some(9_999));
+    assert!(s.clamp().is_empty());
+    assert_eq!(
+        compressing(1_000_000, None).history_compression_keep(),
+        Some(10_000)
+    );
+}
+
+#[test]
+fn uncompressed_out_of_range_is_clamped_with_notice() {
+    let mut s = compressing(100_000, Some(500));
+    assert_eq!(s.history_compression_keep(), Some(1_000));
+    let problems = s.clamp();
+    assert_eq!(s.uncompressed_history_lines, Some(1_000));
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].0, "uncompressed_history_lines");
+    assert!(problems[0].1.contains("uncompressed_history_lines"));
+    let mut s = compressing(20_000, Some(50_000));
+    assert_eq!(s.history_compression_keep(), Some(19_999));
+    let problems = s.clamp();
+    assert_eq!(s.uncompressed_history_lines, Some(19_999));
+    assert!(problems[0].1.contains("uncompressed_history_lines"));
+    // Through a file, the warning names the key and its line.
+    let path = tmp("settings.toml");
+    std::fs::write(
+        &path,
+        "history_compression = true\nuncompressed_history_lines = 500\n",
+    )
+    .unwrap();
+    let (s, w) = Settings::load_checked(&path).unwrap();
+    assert_eq!(s.uncompressed_history_lines, Some(1_000));
+    let w = w.expect("reported");
+    assert_eq!(w.line, Some(2));
+    assert!(w.message.contains("uncompressed_history_lines"));
+    // With the switch off the value is left as written.
+    let mut off = Settings {
+        uncompressed_history_lines: Some(500),
+        ..Settings::default()
+    };
+    assert!(off.clamp().is_empty());
+    assert_eq!(off.uncompressed_history_lines, Some(500));
+}
+
+#[test]
+fn small_scrollback_disables_compression() {
+    assert_eq!(compressing(1_000, None).history_compression_keep(), None);
+    assert_eq!(compressing(0, Some(5)).history_compression_keep(), None);
+    assert_eq!(
+        compressing(1_001, None).history_compression_keep(),
+        Some(1_000)
+    );
+}
+
+#[test]
+fn macos_blur_style_defaults_to_native() {
+    assert_eq!(Settings::default().macos_blur_style, MacosBlurStyle::Native);
+    let s = Settings::load_or_default(&tmp("nope.toml"));
+    assert_eq!(s.macos_blur_style, MacosBlurStyle::Native);
+}
+
+#[test]
+fn macos_blur_style_parses_both_values_and_round_trips() {
+    let path = tmp("settings.toml");
+    for (text, want) in [
+        ("macos_blur_style = \"native\"\n", MacosBlurStyle::Native),
+        ("macos_blur_style = \"classic\"\n", MacosBlurStyle::Classic),
+    ] {
+        std::fs::write(&path, text).unwrap();
+        let (s, warning) = Settings::load_checked(&path).unwrap();
+        assert_eq!(s.macos_blur_style, want, "{text}");
+        assert!(warning.is_none(), "{text}");
+    }
+    let s = Settings {
+        macos_blur_style: MacosBlurStyle::Classic,
+        ..Settings::default()
+    };
+    s.save(&path).unwrap();
+    assert_eq!(
+        Settings::load(&path).unwrap().macos_blur_style,
+        MacosBlurStyle::Classic
+    );
+}
+
+#[test]
+fn unknown_macos_blur_style_falls_back_to_native_with_a_notice() {
+    let path = tmp("settings.toml");
+    for value in ["\"frosted\"", "\"Classic\"", "true", "3"] {
+        std::fs::write(
+            &path,
+            format!("font_size = 14.0\nmacos_blur_style = {value}\n"),
+        )
+        .unwrap();
+        let (s, warning) = Settings::load_checked(&path).unwrap();
+        assert_eq!(s.macos_blur_style, MacosBlurStyle::Native, "{value}");
+        assert_eq!(s.font_size, 14.0, "the rest of the file still loads");
+        let w = warning.expect(value);
+        assert_eq!(w.line, Some(2), "{value}");
+        assert!(w.message.contains("macos_blur_style"), "{}", w.message);
+        assert!(w.message.contains("using \"native\""), "{}", w.message);
+    }
+}
+
+#[test]
+fn settings_template_shows_the_macos_blur_style() {
+    assert!(
+        SETTINGS_TEMPLATE
+            .lines()
+            .any(|l| l == "#macos_blur_style = \"native\"  # or \"classic\"; macOS only"),
+        "template line"
+    );
+}
+
+#[test]
+fn macos_blur_style_write_field_round_trips() {
+    let path = tmp("settings.toml");
+    Settings::write_field(
+        &path,
+        &SettingChange::MacosBlurStyle(MacosBlurStyle::Classic),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("macos_blur_style = \"classic\""), "{text}");
+    assert_eq!(
+        Settings::load(&path).unwrap().macos_blur_style,
+        MacosBlurStyle::Classic
+    );
+    Settings::write_field(
+        &path,
+        &SettingChange::MacosBlurStyle(MacosBlurStyle::Native),
+    )
+    .unwrap();
+    assert_eq!(
+        Settings::load(&path).unwrap().macos_blur_style,
+        MacosBlurStyle::Native
+    );
+}
+
+const THEME_NOTICE: &str = "theme is no longer used: the window follows color_scheme. For a light window, choose Graphite Light.";
+
+#[test]
+fn old_theme_key_notices_once() {
+    let path = tmp("settings.toml");
+    std::fs::write(&path, "font_size = 14.0\ntheme = \"light\"\n").unwrap();
+    let (s, warning) = Settings::load_checked(&path).unwrap();
+    assert_eq!(s.font_size, 14.0);
+    let w = warning.expect("the removed key is noticed");
+    assert_eq!(w.line, Some(2));
+    assert_eq!(w.message, THEME_NOTICE);
+    let (_, again) = Settings::load_checked(&path).unwrap();
+    let again = again.expect("same notice on every load");
+    assert_eq!(
+        (again.line, again.message.as_str()),
+        (Some(2), THEME_NOTICE)
+    );
+}
+
+#[test]
+fn old_theme_key_yields_to_another_problem() {
+    let path = tmp("settings.toml");
+    std::fs::write(&path, "theme = \"dark\"\nfont_size = 200.0\n").unwrap();
+    let (_, warning) = Settings::load_checked(&path).unwrap();
+    let w = warning.unwrap();
+    assert!(w.message.contains("font_size"), "{}", w.message);
+    assert!(!w.message.contains("theme"), "{}", w.message);
+}
+
+#[test]
+fn template_has_no_theme_line() {
+    assert!(!SETTINGS_TEMPLATE.contains("theme ="));
+    assert!(!SETTINGS_TEMPLATE.contains("Color theme"));
+}
+
+#[test]
+fn a_settings_write_drops_the_old_theme_key() {
+    let path = tmp("settings.toml");
+    std::fs::write(&path, "font_size = 14.0\ntheme = \"light\"\n").unwrap();
+    Settings::write_field(&path, &SettingChange::FontSize(15.0)).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !text.lines().any(|l| l.trim_start().starts_with("theme")),
+        "{text}"
+    );
+    let (s, warning) = Settings::load_checked(&path).unwrap();
+    assert_eq!(s.font_size, 15.0);
+    assert!(warning.is_none(), "{warning:?}");
+}
+
+#[test]
+fn a_settings_write_keeps_theme_inside_a_table() {
+    let path = tmp("settings.toml");
+    std::fs::write(
+        &path,
+        "use_theme_fonts = true\n\n[keys]\ntheme = \"ctrl+t\"\n",
+    )
+    .unwrap();
+    Settings::write_field(&path, &SettingChange::FontSize(15.0)).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("use_theme_fonts = true"), "{text}");
+    assert!(text.contains("[keys]\ntheme = \"ctrl+t\""), "{text}");
 }

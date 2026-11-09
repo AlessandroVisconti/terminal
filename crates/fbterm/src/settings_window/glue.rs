@@ -1,6 +1,7 @@
 //! The app side of settings: the Settings tab, applying settings live, and reloading
 //! `settings.toml` when it changes on disk.
 
+use fbterm_config::font_features::parse_features;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -9,11 +10,10 @@ use fbterm_term::{ColorScheme, TerminalStyle};
 use iced::{Font, Task, window};
 use parking_lot::Mutex;
 
-use super::{SettingsMsg, SettingsState, WRITE_DEBOUNCE, Write, fonts, thousands};
+use super::{SettingsMsg, SettingsState, WRITE_DEBOUNCE, Write, thousands};
 use crate::app::{App, Message, SettingsSource};
 use crate::chrome::Chrome;
 use crate::tabs::{Page, Pane, Tab};
-use crate::theme;
 
 /// `name` as a `'static` str: iced wants font names that live for the whole process. Each
 /// distinct name is allocated once, however often the setting changes.
@@ -33,6 +33,10 @@ pub(crate) fn intern(name: &str) -> &'static str {
 pub(crate) fn terminal_style(settings: &Settings) -> TerminalStyle {
     TerminalStyle {
         scheme: ColorScheme::graphite(),
+        features: fbterm_term::FontFeatures {
+            ligatures: settings.ligatures,
+            extra: parse_features(&settings.font_features).0.into(),
+        },
         font: Font::with_name(intern(&settings.font_family)),
         font_size: settings.font_size,
         accent: None,
@@ -45,7 +49,8 @@ pub(crate) fn terminal_style(settings: &Settings) -> TerminalStyle {
 
 impl App {
     /// The look of one pane: the colors of its scheme ([`App::scheme_for`]), the scheme's font
-    /// and size where it sets them (else the settings'), at the pane's own zoom; focused (keys
+    /// (its own, or with `use_theme_fonts` its installed suggestion: [`App::scheme_font`]) and
+    /// size where it sets them (else the settings'), at the pane's own zoom; focused (keys
     /// go to it, solid cursor) only for the focused pane of the focused window while its find
     /// bar is closed and neither docked panel has the keyboard. No accent border: the tiles
     /// draw the focus outline.
@@ -57,7 +62,8 @@ impl App {
             .map_or(self.settings.font_size, |s| s.clamp(lo, hi));
         TerminalStyle {
             scheme: ColorScheme::from(&scheme.colors),
-            font: match &scheme.font_family {
+            features: self.style.features.clone(),
+            font: match self.scheme_font(scheme) {
                 Some(family) => Font::with_name(intern(family)),
                 None => self.style.font,
             },
@@ -94,6 +100,7 @@ impl App {
                 crate::config_files::reveal_config_folder(&self.paths);
                 Task::none()
             }
+            SettingsMsg::FontsOpened => self.scan_monospace_fonts(),
             SettingsMsg::EditSchemes => {
                 let current = self.settings.color_scheme.clone();
                 self.open_schemes(Some(current))
@@ -192,11 +199,25 @@ impl App {
         }
         let (id, open) = self.show_page(Page::Settings);
         let read_only = Settings::load(&self.paths.settings()).err();
-        let mut state = SettingsState::new(&self.settings, fonts::installed_monospace(), read_only);
+        let mut state = SettingsState::new(&self.settings, (self.font_io.monospace)(), read_only);
         state.display_hz = self.display_hz();
         state.max_open_history = self.max_open_history();
         self.settings_win = Some((id, state));
         open
+    }
+
+    /// Apply a value typed into a Settings field and still waiting on its quiet period, as
+    /// Enter would (the tab is closing). Leaves the write to the caller.
+    pub(crate) fn flush_typed_setting(&mut self) -> Task<Message> {
+        let Some((_, state)) = &mut self.settings_win else {
+            return Task::none();
+        };
+        let Some(change) = state.flush_typed().apply else {
+            return Task::none();
+        };
+        let mut next = self.settings.clone();
+        change.apply(&mut next);
+        self.apply_settings(next, SettingsSource::Window)
     }
 
     /// Write the Settings tab's unwritten changes to `settings.toml`, each key in place.
@@ -320,11 +341,17 @@ impl App {
     /// see [`SettingsSource`]).
     /// `kitty_keyboard` applies to every open terminal at once: turning it off drops the
     /// protocol flags programs have set, turning it on affects their requests from then on.
+    /// `grapheme_clusters` becomes every open terminal's default for mode 2027, used by new
+    /// terminals and after a reset or restart; a running program's mode is never flipped.
     /// `color_scheme` recolors the open panes that follow it (those without a scheme of their
     /// own, or whose own is not found).
+    /// `use_theme_fonts` changes the font of the panes whose scheme suggests an installed font
+    /// (read each frame, like a scheme font: the views measure again and report their grids).
     /// `background_opacity` is read each frame too; a window can only show through if it was
     /// created transparent (always on macOS, see [`Chrome::backdrop`]), and `background_blur`
     /// is fixed when a window opens, so those apply to windows opened from now on.
+    /// `macos_blur_style` re-tunes the blur view of every open window that has one, in place
+    /// (the post-update `sync_blur_views`, which also follows scheme and tab changes).
     /// `window_decorations` (Linux) switches every open window's title bar at once.
     /// `check_updates` starts or stops the update check (its subscription); off also drops
     /// what it found.
@@ -341,13 +368,12 @@ impl App {
         if new == self.settings {
             return Task::none();
         }
-        if new.font_family != self.settings.font_family || new.font_size != self.settings.font_size
-        {
+        let restyle = new.font_family != self.settings.font_family
+            || new.font_size != self.settings.font_size
+            || new.ligatures != self.settings.ligatures
+            || new.font_features != self.settings.font_features;
+        if restyle {
             self.style = terminal_style(&new);
-        }
-        if new.theme != self.settings.theme {
-            self.theme = theme::graphite_theme(new.theme);
-            self.tokens = theme::tokens(new.theme);
         }
         if new.kitty_keyboard != self.settings.kitty_keyboard {
             let panes = self
@@ -361,10 +387,31 @@ impl App {
                 }
             }
         }
+        if new.grapheme_clusters != self.settings.grapheme_clusters {
+            let panes = self
+                .windows
+                .values()
+                .flat_map(|w| &w.tabs)
+                .flat_map(|t| &t.panes);
+            for pane in panes {
+                if let Some(term) = pane.terminal() {
+                    term.lock().set_grapheme_clusters(new.grapheme_clusters);
+                }
+            }
+        }
         let task = if new.scrollback_lines != self.settings.scrollback_lines {
             self.apply_scrollback(new.scrollback_lines, source)
         } else {
             Task::none()
+        };
+        let (old_keep, new_keep) = (
+            self.settings.history_compression_keep(),
+            new.history_compression_keep(),
+        );
+        let task = if new_keep == old_keep {
+            task
+        } else {
+            Task::batch([task, self.apply_history_compression(old_keep, new_keep)])
         };
         let backdrop =
             |s: &Settings| Chrome::current().backdrop(s.background_opacity, s.background_blur);
@@ -394,18 +441,72 @@ impl App {
         let decorations_changed = new.window_decorations != self.settings.window_decorations;
         let scheme_changed = new.color_scheme != self.settings.color_scheme;
         let before = scheme_changed.then(|| self.pane_colors());
+        let theme_fonts_changed = new.use_theme_fonts != self.settings.use_theme_fonts;
         self.settings = new;
+        if let Some((_, state)) = &mut self.schemes_win {
+            state.sync_settings(&self.settings);
+        }
+        let mut task = task;
+        if theme_fonts_changed && self.settings.use_theme_fonts {
+            // Turned on (a user action): read what is installed, and look for suggested fonts
+            // installed since fbterm started.
+            self.refresh_installed_fonts();
+            self.warm_ligature_sets();
+            task = Task::batch([task, self.scan_fonts()]);
+        } else if theme_fonts_changed {
+            self.rebuild_scheme_fonts();
+        }
+        self.refresh_feature_notices();
+        if restyle {
+            self.warm_ligature_sets();
+        }
         if rate_changed {
             self.update_output_rate();
         }
         if let Some(before) = before {
             self.schemes_moved(&before);
+            self.retheme();
         }
         if decorations_changed {
             let chrome = self.window_decorations_changed(self.settings.window_decorations);
             return Task::batch([task, chrome]);
         }
         task
+    }
+
+    /// Set every open terminal's history compression (`None`: off) and queue each for the
+    /// background worker. The memory that compressing frees goes back to the OS once, after the
+    /// worker drains, and only for a change the user made that frees memory: off to on, or a
+    /// lower number of uncompressed lines. Raising it or turning it off frees nothing.
+    fn apply_history_compression(
+        &mut self,
+        old: Option<usize>,
+        new: Option<usize>,
+    ) -> Task<Message> {
+        let panes = self
+            .windows
+            .values()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes);
+        for term in panes.filter_map(|p| p.terminal()) {
+            let queued = {
+                let mut t = term.lock();
+                t.set_history_compression(new);
+                t.has_history_jobs()
+            };
+            if queued {
+                fbterm_term::history_worker::enqueue(term);
+            }
+        }
+        let frees = match (old, new) {
+            (None, Some(_)) => true,
+            (Some(old), Some(new)) => new < old,
+            _ => false,
+        };
+        if !frees {
+            return Task::none();
+        }
+        release_when_worker_idle()
     }
 
     /// Set every open terminal's scrollback limit. If any lost lines, release the freed memory
@@ -480,4 +581,113 @@ fn keys(changes: &[fbterm_config::SettingChange]) -> String {
         .map(fbterm_config::SettingChange::key)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+impl App {
+    /// The banner lines for `font_features` entries that do not parse, one per distinct entry,
+    /// kept in step with the settings like the scheme notices.
+    pub(crate) fn refresh_feature_notices(&mut self) {
+        let mut lines: Vec<String> = Vec::new();
+        for entry in parse_features(&self.settings.font_features).1 {
+            let line = format!("font_features: \"{entry}\" is not a feature tag; it is ignored.");
+            if !lines.contains(&line) {
+                lines.push(line);
+            }
+        }
+        if lines == self.feature_notices {
+            return;
+        }
+        let old = std::mem::take(&mut self.feature_notices);
+        self.notices.retain(|n| !old.contains(n));
+        if !lines.is_empty() {
+            self.notices_dismissed = false;
+        }
+        self.notices.extend(lines.iter().cloned());
+        self.feature_notices = lines;
+    }
+}
+
+impl App {
+    /// Detects the ligature-only stylistic sets of the terminal font and every scheme's font in
+    /// the background, so the first frame drawn with one never reads a font file itself.
+    pub(crate) fn warm_ligature_sets(&self) {
+        if !self.settings.ligatures {
+            return;
+        }
+        let mut fonts = vec![self.style.font];
+        for scheme in self.schemes.all() {
+            if let Some(family) = self.scheme_font(scheme) {
+                let font = Font::with_name(intern(family));
+                if !fonts.contains(&font) {
+                    fonts.push(font);
+                }
+            }
+        }
+        // The thread is detached: drawing detects anything it has not reached yet.
+        drop(fbterm_term::ligature_sets::warm_ligature_sets(fonts));
+    }
+}
+
+/// Ask for the memory release once the history worker has drained (`release_when_idle` on the
+/// blocking pool), for a user change that leaves the worker compressing history: switching
+/// compression on, fewer uncompressed lines, a reflow. A release already waiting covers this
+/// one too: none is added then.
+pub(crate) fn release_when_worker_idle() -> Task<Message> {
+    if !mark_release_pending() {
+        return Task::none();
+    }
+    Task::perform(
+        async {
+            let _ = tokio::task::spawn_blocking(release_when_idle).await;
+        },
+        |()| (),
+    )
+    .discard()
+}
+
+/// How long the release waits for the history worker to drain before it releases anyway.
+const RELEASE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Mark a release as waiting; `false` if one already was.
+fn mark_release_pending() -> bool {
+    !release_pending().swap(true, std::sync::atomic::Ordering::SeqCst)
+}
+
+fn clear_release_pending() {
+    release_pending().store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Whether a release is waiting: process-wide in the app. Tests get one flag per thread (they
+/// run the release on their own thread, and run in parallel), so only where the flag lives
+/// differs and the code that sets and clears it is the same.
+fn release_pending() -> &'static std::sync::atomic::AtomicBool {
+    #[cfg(not(test))]
+    {
+        static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        &PENDING
+    }
+    #[cfg(test)]
+    {
+        thread_local! {
+            static PENDING: &'static std::sync::atomic::AtomicBool =
+                Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false)));
+        }
+        PENDING.with(|p| *p)
+    }
+}
+
+/// Wait up to [`RELEASE_WAIT`] for the history worker to drain, then ask for the memory release
+/// (once) whether it did or not, and let the next freeing change start a new wait. Runs on the
+/// blocking pool: the wait sleeps on a condition variable.
+pub(super) fn release_when_idle() {
+    fbterm_term::history_worker::wait_idle_for(RELEASE_WAIT);
+    // Cleared even if the release panics.
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            clear_release_pending();
+        }
+    }
+    let _clear = Clear;
+    crate::memory::release_freed();
 }

@@ -1,7 +1,7 @@
-//! The Color schemes window's state: every scheme as a draft, the selected one's form (colors,
+//! The Color schemes tab's state: every scheme as a draft, the selected one's form (colors,
 //! font, name) and a live preview terminal, as plain data so its rules are testable without a
 //! GUI. Built-in schemes are read-only; user schemes are edited in their draft and written to
-//! `schemes/` only on Save, so unsaved edits change the preview and nothing else. The window is
+//! `schemes/` only on Save, so unsaved edits change the preview and nothing else. The tab is
 //! drawn by [`view`] and wired to the app in `glue`.
 
 use std::path::PathBuf;
@@ -139,9 +139,9 @@ pub enum ImportChoice {
     Cancel,
 }
 
-/// What the Color schemes window asks for. `Open`, `Close`, `Duplicate`, `Delete`,
+/// What the Color schemes tab asks for. `Open`, `Close`, `Duplicate`, `Delete`,
 /// `ConfirmDelete`, `Save`, the import and export messages and `Preview` are the app's; the
-/// rest edit the window's state.
+/// rest edit the tab's state.
 #[derive(Debug, Clone)]
 pub enum SchemesMsg {
     #[cfg_attr(
@@ -197,6 +197,13 @@ pub enum SchemesMsg {
     UpdateChoice(UpdateChoice),
     /// A credit's project link, for the system browser (`https://` only).
     OpenCreditLink(String),
+    /// `Download` on a suggested font: its official page, for the system browser (`https://`
+    /// only). fbterm itself never downloads a font.
+    DownloadFont(String),
+    /// `Use font`: make this installed family the global `font_family`.
+    UseFont(String),
+    /// The `Use each theme's suggested font` checkbox (the `use_theme_fonts` setting).
+    UseThemeFonts(bool),
     /// The gallery's search text, as typed.
     GalleryQuery(String),
     /// The gallery's variant filter: dark (`Some(true)`), light or all (`None`).
@@ -247,6 +254,82 @@ impl ImportAsk {
             "Replace \"{}\" with the imported scheme, or keep both?",
             self.existing
         )
+    }
+}
+
+/// Where a scheme's suggested font stands on this machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FontState {
+    /// The panes using the scheme are drawn in it now.
+    InUse,
+    /// Installed but not what the scheme's panes use.
+    Installed,
+    /// Not in the font database.
+    NotInstalled,
+}
+
+impl FontState {
+    /// The state word shown on the line, if any.
+    pub fn word(self) -> Option<&'static str> {
+        match self {
+            Self::InUse => Some("In use"),
+            Self::Installed => None,
+            Self::NotInstalled => Some("Not installed"),
+        }
+    }
+}
+
+/// The `Suggested font` line of a scheme with a `[suggested_font]` table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FontLine {
+    pub family: String,
+    /// The page `Download` opens, when it is an `https://` link that may be opened.
+    pub url: Option<String>,
+    /// That page's host, shown beside `Download` so a scheme from elsewhere cannot hide
+    /// where it leads.
+    pub host: Option<String>,
+    pub state: FontState,
+    /// `Use font` is enabled: the family is installed, not the global font already and not
+    /// what the scheme's panes use now.
+    pub can_use: bool,
+    /// The scheme's own `font_family`, which wins for its panes, when it is another family.
+    pub own_font: Option<String>,
+}
+
+/// What a suggestion line needs to know besides the scheme: the installed families (as the
+/// font database reports them), the global font and `use_theme_fonts`.
+#[derive(Debug, Clone, Copy)]
+pub struct FontContext<'a> {
+    pub installed: &'a [String],
+    pub global_font: &'a str,
+    pub use_theme_fonts: bool,
+}
+
+impl FontContext<'_> {
+    /// The line for `scheme`, when it suggests a font.
+    pub fn line(&self, scheme: &Scheme) -> Option<FontLine> {
+        let font = scheme.suggested_font.as_ref()?;
+        let installed = crate::theme_fonts::is_installed(self.installed, &font.family);
+        let resolved = fbterm_config::schemes::theme_font(scheme, self.use_theme_fonts, |f| {
+            crate::theme_fonts::is_installed(self.installed, f)
+        })
+        .unwrap_or(self.global_font);
+        let state = if resolved == font.family {
+            FontState::InUse
+        } else if installed {
+            FontState::Installed
+        } else {
+            FontState::NotInstalled
+        };
+        let url = Some(font.url.clone()).filter(|u| fbterm_config::schemes::is_plain_https_url(u));
+        Some(FontLine {
+            family: font.family.clone(),
+            host: url.as_deref().and_then(crate::theme_fonts::url_host),
+            url,
+            state,
+            can_use: installed && self.global_font != font.family && state != FontState::InUse,
+            own_font: scheme.font_family.clone().filter(|own| *own != font.family),
+        })
     }
 }
 
@@ -333,6 +416,10 @@ pub struct SchemesState {
     pub gallery_query: String,
     /// The gallery's variant filter: dark (`Some(true)`), light or all (`None`).
     pub gallery_variant: Option<bool>,
+    /// The `use_theme_fonts` setting, for the checkbox, the suggestion lines and the preview.
+    pub use_theme_fonts: bool,
+    /// The global `font_family` setting.
+    pub global_font: String,
 }
 
 impl SchemesState {
@@ -356,6 +443,8 @@ impl SchemesState {
             pending_update: None,
             gallery_query: String::new(),
             gallery_variant: None,
+            use_theme_fonts: false,
+            global_font: crate::settings_window::BUNDLED_FONT.to_owned(),
         };
         let first = state
             .drafts
@@ -368,6 +457,31 @@ impl SchemesState {
                 .map_or(first, str::to_owned),
         );
         state
+    }
+
+    /// Follow the settings the tab shows: `use_theme_fonts` and the global font.
+    pub fn sync_settings(&mut self, settings: &fbterm_config::Settings) {
+        self.use_theme_fonts = settings.use_theme_fonts;
+        self.global_font.clone_from(&settings.font_family);
+    }
+
+    /// The installed families were read again (the details or the gallery are shown).
+    pub fn set_installed(&mut self, installed: Vec<String>) {
+        self.installed = installed;
+    }
+
+    /// What the suggestion lines are measured against.
+    pub fn font_context(&self) -> FontContext<'_> {
+        FontContext {
+            installed: &self.installed,
+            global_font: &self.global_font,
+            use_theme_fonts: self.use_theme_fonts,
+        }
+    }
+
+    /// The `Suggested font` line of `scheme`, if it suggests one.
+    pub fn font_line(&self, scheme: &Scheme) -> Option<FontLine> {
+        self.font_context().line(scheme)
     }
 
     pub fn drafts(&self) -> &[Scheme] {
@@ -497,7 +611,8 @@ impl SchemesState {
     }
 
     /// How the preview draws the selected draft: its colors, its font and size where it sets
-    /// them (else `base`'s, the global ones), with its own background.
+    /// them (its own font, or with `use_theme_fonts` its installed suggestion, as its panes
+    /// would; else `base`'s, the global ones), with its own background.
     pub fn preview_style(&self, base: &TerminalStyle) -> TerminalStyle {
         let (lo, hi) = fbterm_config::settings::FONT_SIZE_RANGE;
         let Some(d) = self.selected_draft() else {
@@ -505,7 +620,11 @@ impl SchemesState {
         };
         TerminalStyle {
             scheme: ColorScheme::from(&d.colors),
-            font: d.font_family.as_deref().map_or(base.font, |f| {
+            features: base.features.clone(),
+            font: fbterm_config::schemes::theme_font(d, self.use_theme_fonts, |f| {
+                crate::theme_fonts::is_installed(&self.installed, f)
+            })
+            .map_or(base.font, |f| {
                 iced::Font::with_name(crate::settings_window::intern(f))
             }),
             font_size: d.font_size.map_or(base.font_size, |s| s.clamp(lo, hi)),
@@ -530,7 +649,7 @@ impl SchemesState {
             .collect();
     }
 
-    /// Apply a message that only edits the window's state; the app's messages are ignored here.
+    /// Apply a message that only edits the tab's state; the app's messages are ignored here.
     /// Edits of a built-in scheme are refused.
     pub fn update(&mut self, msg: SchemesMsg) {
         match msg {
@@ -625,7 +744,7 @@ impl SchemesState {
         }
     }
 
-    /// `scheme` was written over whatever the window held for its id: the draft and its
+    /// `scheme` was written over whatever the tab held for its id: the draft and its
     /// unsaved edits are dropped for it, and the form shows it if selected.
     pub(super) fn discard_draft(&mut self, scheme: &Scheme) {
         self.mark_saved(scheme);

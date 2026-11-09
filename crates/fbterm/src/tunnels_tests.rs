@@ -1205,37 +1205,21 @@ fn query_is_kept_while_closed_and_dropped_with_the_window() {
 }
 
 #[test]
-fn tunnels_action_from_schemes_window_opens_in_last_terminal_window() {
+fn tunnels_action_from_the_schemes_tab_opens_the_panel_beside_it() {
     use crate::keys::Action;
     let (mut w, a, b) = two_windows();
-    // Opened from B: what opening the panel there costs, raising nothing.
-    let in_place = shortcut(&mut w, b, Action::Tunnels).units();
-    let _ = shortcut(&mut w, b, Action::Tunnels);
-    let _ = w.app.update(Message::WindowFocused(a));
     let _ = w.app.update(Message::WindowFocused(b));
-    assert_eq!(w.app.last_terminal_window(), Some(b));
     let _ = w.app.open_schemes(None);
-    let settings = w.app.schemes_window().expect("the Color schemes window");
-    let _ = w.app.update(Message::WindowFocused(settings));
     assert_eq!(
-        w.app.last_terminal_window(),
+        w.app.schemes_window(),
         Some(b),
-        "Color schemes is no terminal"
+        "Color schemes is a tab of B"
     );
-
-    let task = shortcut(&mut w, settings, Action::Tunnels);
-    assert!(w.app.tunnels_panels.is_open(b), "opened in B");
+    let _ = shortcut(&mut w, b, Action::Tunnels);
+    assert!(w.app.tunnels_panels.is_open(b), "opened beside the tab");
     assert!(!w.app.tunnels_panels.is_open(a));
-    assert_eq!(task.units(), in_place + 1, "and B is raised");
-    // Again from Settings: B's panel stays open (it opens, never closes, out of sight).
-    let _ = shortcut(&mut w, settings, Action::Tunnels);
-    assert!(w.app.tunnels_panels.is_open(b));
-
-    // B closed: the other terminal window is used.
-    let _ = w.app.update(Message::WindowClosed(b));
-    assert_eq!(w.app.last_terminal_window(), Some(a));
-    let _ = shortcut(&mut w, settings, Action::Tunnels);
-    assert!(w.app.tunnels_panels.is_open(a));
+    let _ = shortcut(&mut w, b, Action::Tunnels);
+    assert!(!w.app.tunnels_panels.is_open(b), "and the action closes it");
 }
 
 #[test]

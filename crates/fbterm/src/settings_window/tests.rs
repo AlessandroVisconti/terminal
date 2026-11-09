@@ -12,13 +12,13 @@ fn state() -> SettingsState {
 #[test]
 fn a_click_applies_and_writes_at_once() {
     let mut s = state();
-    let e = s.update(SettingsMsg::Theme(ThemeMode::Light));
-    assert_eq!(e.apply, Some(SettingChange::Theme(ThemeMode::Light)));
+    let e = s.update(SettingsMsg::Kitty(true));
+    assert_eq!(e.apply, Some(SettingChange::KittyKeyboard(true)));
     assert_eq!(e.write, Write::Now);
-    assert_eq!(s.values.theme, ThemeMode::Light);
-    assert_eq!(s.take_pending(), [SettingChange::Theme(ThemeMode::Light)]);
+    assert!(s.values.kitty_keyboard);
+    assert_eq!(s.take_pending(), [SettingChange::KittyKeyboard(true)]);
     // Choosing what is already chosen changes nothing.
-    let e = s.update(SettingsMsg::Theme(ThemeMode::Light));
+    let e = s.update(SettingsMsg::Kitty(true));
     assert_eq!(e, Effect::NONE);
 }
 
@@ -174,17 +174,31 @@ fn typed_opacity_is_kept_in_whole_percent() {
 }
 
 #[test]
+fn ligatures_switch_queues_its_setting() {
+    let mut s = state();
+    s.update(SettingsMsg::Ligatures(false));
+    assert_eq!(s.take_pending(), [SettingChange::Ligatures(false)]);
+}
+
+#[test]
+fn clusters_switch_queues_its_setting() {
+    let mut s = state();
+    s.update(SettingsMsg::Clusters(true));
+    assert_eq!(s.take_pending(), [SettingChange::GraphemeClusters(true)]);
+}
+
+#[test]
 fn unwritten_changes_go_back_in_line_unless_newer_ones_wait() {
     let mut s = state();
     s.update(SettingsMsg::Kitty(true));
     let failed = s.take_pending();
-    s.update(SettingsMsg::Theme(ThemeMode::Light));
+    s.update(SettingsMsg::Ligatures(false));
     s.requeue(failed);
     assert_eq!(
         s.take_pending(),
         [
             SettingChange::KittyKeyboard(true),
-            SettingChange::Theme(ThemeMode::Light)
+            SettingChange::Ligatures(false)
         ]
     );
     s.update(SettingsMsg::Kitty(false));
@@ -305,54 +319,13 @@ fn the_windows_build_is_read_from_the_registry_output() {
 #[test]
 fn an_unsupported_blur_switch_cannot_be_toggled() {
     use crate::app::Message;
-    use iced::advanced::layout::{self, Layout};
-    use iced::advanced::widget::{Operation, Tree};
-    use iced::advanced::{Shell, clipboard};
-    use iced::{Element, Event, Pixels, Point, Rectangle, Size, mouse};
-
-    struct Texts(Vec<String>);
-    impl Operation for Texts {
-        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-            operate(self);
-        }
-        fn text(&mut self, _id: Option<&iced::advanced::widget::Id>, _b: Rectangle, text: &str) {
-            self.0.push(text.to_owned());
-        }
-    }
-    let t = crate::theme::tokens(ThemeMode::Dark);
-    let renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
-        iced::Font::DEFAULT,
-        Pixels(16.0),
-    ));
-    let size = Size::new(560.0, 72.0);
+    let t = crate::theme::graphite_tokens();
     // Lay the blur row out, click the switch at its right end: what does it publish and say?
-    let run = |supported: bool| -> (Vec<Message>, Vec<String>) {
-        let mut element: Element<'_, Message> = view::blur_setting(t, false, true, supported, 0.8);
-        let mut tree = Tree::new(&element);
-        let node = element.as_widget_mut().layout(
-            &mut tree,
-            &renderer,
-            &layout::Limits::new(Size::ZERO, size),
-        );
-        let bounds = node.bounds();
-        let mut texts = Texts(Vec::new());
-        element
-            .as_widget_mut()
-            .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
-        let at = Point::new(bounds.width - 16.0 - 9.0, bounds.height / 2.0);
-        let mut messages = Vec::new();
-        let mut shell = Shell::new(&mut messages);
-        element.as_widget_mut().update(
-            &mut tree,
-            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
-            Layout::new(&node),
-            mouse::Cursor::Available(at),
-            &renderer,
-            &mut clipboard::Null,
-            &mut shell,
-            &Rectangle::with_size(size),
-        );
-        (messages, texts.0)
+    let run = |supported: bool| {
+        press_right_end(
+            view::blur_setting(t, false, true, supported, 0.8),
+            16.0 + 9.0,
+        )
     };
     let (messages, texts) = run(true);
     assert!(
@@ -372,6 +345,142 @@ fn an_unsupported_blur_switch_cannot_be_toggled() {
         texts.iter().any(|x| x == "Not supported on this system"),
         "{texts:?}"
     );
+}
+
+/// Lay `element` out at 560x72, press at its right end `inset` px in from the edge, and say
+/// what it published and which texts it shows.
+fn press_right_end(
+    mut element: iced::Element<'_, crate::app::Message>,
+    inset: f32,
+) -> (Vec<crate::app::Message>, Vec<String>) {
+    use iced::advanced::layout::{self, Layout};
+    use iced::advanced::widget::{Operation, Tree};
+    use iced::advanced::{Shell, clipboard};
+    use iced::{Event, Pixels, Point, Rectangle, Size, mouse};
+
+    struct Texts(Vec<String>);
+    impl Operation for Texts {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+            operate(self);
+        }
+        fn text(&mut self, _id: Option<&iced::advanced::widget::Id>, _b: Rectangle, text: &str) {
+            self.0.push(text.to_owned());
+        }
+    }
+    let renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
+        iced::Font::DEFAULT,
+        Pixels(16.0),
+    ));
+    let size = Size::new(560.0, 72.0);
+    let mut tree = Tree::new(&element);
+    let node = element.as_widget_mut().layout(
+        &mut tree,
+        &renderer,
+        &layout::Limits::new(Size::ZERO, size),
+    );
+    let bounds = node.bounds();
+    let mut texts = Texts(Vec::new());
+    element
+        .as_widget_mut()
+        .operate(&mut tree, Layout::new(&node), &renderer, &mut texts);
+    let at = Point::new(bounds.width - inset, bounds.height / 2.0);
+    let mut messages = Vec::new();
+    // A press and its release: buttons publish on release, switches on press.
+    for event in [
+        mouse::Event::ButtonPressed(mouse::Button::Left),
+        mouse::Event::ButtonReleased(mouse::Button::Left),
+    ] {
+        let mut shell = Shell::new(&mut messages);
+        element.as_widget_mut().update(
+            &mut tree,
+            &Event::Mouse(event),
+            Layout::new(&node),
+            mouse::Cursor::Available(at),
+            &renderer,
+            &mut clipboard::Null,
+            &mut shell,
+            &Rectangle::with_size(size),
+        );
+    }
+    (messages, texts.0)
+}
+
+#[test]
+fn the_blur_style_row_is_macos_only() {
+    use crate::chrome::Platform;
+    assert!(view::shows_blur_style_row(Platform::MacOs));
+    assert!(!view::shows_blur_style_row(Platform::Windows));
+    assert!(!view::shows_blur_style_row(Platform::Linux));
+}
+
+#[test]
+fn the_blur_style_row_is_usable_only_while_blur_shows() {
+    // Same rule as the blur switch's effect: blur on, below full opacity, on a system that
+    // blurs.
+    assert!(view::blur_style_enabled(true, true, 0.8));
+    assert!(!view::blur_style_enabled(false, true, 0.8), "blur off");
+    assert!(!view::blur_style_enabled(true, true, 1.0), "opacity 100%");
+    assert!(!view::blur_style_enabled(true, false, 0.8), "unsupported");
+}
+
+#[test]
+fn choosing_a_blur_style_applies_and_saves_it() {
+    use fbterm_config::MacosBlurStyle;
+    let mut s = state();
+    let e = s.update(SettingsMsg::BlurStyle(MacosBlurStyle::Classic));
+    assert_eq!(
+        e.apply,
+        Some(SettingChange::MacosBlurStyle(MacosBlurStyle::Classic))
+    );
+    assert_eq!(e.write, Write::Now);
+    assert_eq!(s.values.macos_blur_style, MacosBlurStyle::Classic);
+    assert_eq!(
+        s.take_pending(),
+        [SettingChange::MacosBlurStyle(MacosBlurStyle::Classic)]
+    );
+    assert_eq!(
+        s.update(SettingsMsg::BlurStyle(MacosBlurStyle::Classic)),
+        Effect::NONE
+    );
+}
+
+#[test]
+fn the_blur_style_row_offers_both_styles_and_is_inert_without_blur() {
+    use crate::app::Message;
+    use fbterm_config::MacosBlurStyle;
+    let t = crate::theme::graphite_tokens();
+    const NOTE: &str = "Native uses the macOS look. Classic is fbterm's earlier, clearer blur.";
+    // The right segment is `Classic`: press inside it, clear of the card's padding.
+    let inset = 16.0 + 2.0 + 12.0;
+    let (messages, texts) = press_right_end(
+        view::blur_style_setting(t, &MacosBlurStyle::Native, true, true),
+        inset,
+    );
+    assert!(
+        matches!(
+            messages.as_slice(),
+            [Message::Settings(SettingsMsg::BlurStyle(
+                MacosBlurStyle::Classic
+            ))]
+        ),
+        "{messages:?}"
+    );
+    for want in ["Blur style", "Native", "Classic", NOTE] {
+        assert!(texts.iter().any(|x| x == want), "{want}: {texts:?}");
+    }
+    // Disabled (blur off or opaque): nothing to press.
+    let (messages, texts) = press_right_end(
+        view::blur_style_setting(t, &MacosBlurStyle::Native, true, false),
+        inset,
+    );
+    assert!(messages.is_empty(), "{messages:?}");
+    assert!(texts.iter().any(|x| x == NOTE), "{texts:?}");
+    // Not editable (the file does not load): nothing to press either.
+    let (messages, _) = press_right_end(
+        view::blur_style_setting(t, &MacosBlurStyle::Native, false, true),
+        inset,
+    );
+    assert!(messages.is_empty(), "{messages:?}");
 }
 
 #[test]
@@ -883,7 +992,7 @@ fn a_fixed_shortcut_row_shows_its_chord_and_cannot_be_recorded() {
             self.0.push(text.to_owned());
         }
     }
-    let t = crate::theme::tokens(ThemeMode::Dark);
+    let t = crate::theme::graphite_tokens();
     let renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
         iced::Font::DEFAULT,
         Pixels(16.0),
@@ -956,4 +1065,305 @@ fn the_group_tabs_row_shows_only_with_tabs_on_the_left() {
         ..Settings::default()
     };
     assert!(view::shows_group_tabs_row(&left));
+}
+
+fn with_scrollback(lines: usize) -> SettingsState {
+    let mut s = state();
+    s.update(SettingsMsg::ScrollbackText(lines.to_string()));
+    s.update(SettingsMsg::ScrollbackSubmit);
+    assert_eq!(s.values.scrollback_lines, lines);
+    s.take_pending();
+    s
+}
+
+#[test]
+fn compression_switch_saves() {
+    let mut s = state();
+    assert!(!s.values.history_compression);
+    let e = s.update(SettingsMsg::HistoryCompression(true));
+    assert_eq!(e.apply, Some(SettingChange::HistoryCompression(true)));
+    assert_eq!(e.write, Write::Now);
+    assert!(s.values.history_compression);
+    assert_eq!(s.take_pending(), [SettingChange::HistoryCompression(true)]);
+}
+
+#[test]
+fn uncompressed_field_disabled_while_off() {
+    let mut s = state();
+    assert!(!s.uncompressed_enabled());
+    assert_eq!(
+        s.uncompressed_note(),
+        None,
+        "off is not a scrollback problem"
+    );
+    // The field shows the effective default while the setting is absent.
+    assert_eq!(s.uncompressed_text, "9999");
+    s.update(SettingsMsg::HistoryCompression(true));
+    assert!(s.uncompressed_enabled());
+}
+
+#[test]
+fn uncompressed_field_disabled_with_small_scrollback() {
+    let mut s = with_scrollback(1_000);
+    s.update(SettingsMsg::HistoryCompression(true));
+    assert!(!s.uncompressed_enabled());
+    assert_eq!(
+        s.uncompressed_note(),
+        Some("Needs scrollback above 1,000 lines.")
+    );
+    assert_eq!(s.uncompressed_text, "999");
+    let mut s = with_scrollback(1_001);
+    s.update(SettingsMsg::HistoryCompression(true));
+    assert!(s.uncompressed_enabled());
+    assert_eq!(s.uncompressed_note(), None);
+}
+
+#[test]
+fn uncompressed_in_range_saves_and_shows_default_when_absent() {
+    let mut s = state();
+    s.update(SettingsMsg::HistoryCompression(true));
+    s.take_pending();
+    // Absent: the field shows the default, kept below the scrollback of 10,000.
+    assert_eq!(s.values.uncompressed_history_lines, None);
+    assert_eq!(s.uncompressed_text, "9999");
+    let e = s.update(SettingsMsg::UncompressedText("5,000".into()));
+    assert_eq!(e.apply, None, "typing waits for Enter or the quiet period");
+    let Write::After(n) = e.write else {
+        panic!("a typed value waits: {e:?}");
+    };
+    assert_eq!(s.uncompressed_error(), None);
+    let e = s.update(SettingsMsg::Flush(n));
+    assert_eq!(
+        e.apply,
+        Some(SettingChange::UncompressedHistoryLines(5_000))
+    );
+    assert_eq!(e.write, Write::Now);
+    assert_eq!(s.values.uncompressed_history_lines, Some(5_000));
+    assert_eq!(
+        s.take_pending(),
+        [SettingChange::UncompressedHistoryLines(5_000)]
+    );
+}
+
+/// A state whose saved settings have `scrollback` lines and `uncompressed_history_lines` set
+/// to `keep`, with compression off.
+fn with_stored_uncompressed(scrollback: usize, keep: usize) -> SettingsState {
+    let mut s = state();
+    s.sync(&Settings {
+        scrollback_lines: scrollback,
+        uncompressed_history_lines: Some(keep),
+        ..Settings::default()
+    });
+    s
+}
+
+/// A stored value out of range is kept as written while compression is off; switching it on
+/// in the tab clamps it into range and saves that, so no error shows under the field and no
+/// notice comes at the next launch.
+#[test]
+fn switching_on_normalizes_an_out_of_range_stored_value() {
+    for (keep, want) in [(8_000, 4_999), (200, 1_000)] {
+        let mut s = with_stored_uncompressed(5_000, keep);
+        let e = s.update(SettingsMsg::HistoryCompression(true));
+        assert_eq!(e.apply, Some(SettingChange::HistoryCompression(true)));
+        assert_eq!(e.write, Write::Now);
+        assert_eq!(s.values.uncompressed_history_lines, Some(want), "{keep}");
+        assert_eq!(s.uncompressed_text, want.to_string());
+        assert_eq!(s.uncompressed_error(), None);
+    }
+    // In range: left as it is.
+    let mut s = with_stored_uncompressed(5_000, 2_000);
+    s.update(SettingsMsg::HistoryCompression(true));
+    assert_eq!(s.values.uncompressed_history_lines, Some(2_000));
+}
+
+/// Typed text that is not saved (and its error) does not survive switching off and on.
+#[test]
+fn toggling_compression_resyncs_the_uncompressed_field() {
+    let mut s = state();
+    s.update(SettingsMsg::HistoryCompression(true));
+    s.update(SettingsMsg::UncompressedText("500".into()));
+    assert!(s.uncompressed_error().is_some());
+    s.update(SettingsMsg::HistoryCompression(false));
+    assert_eq!(s.uncompressed_text, "9999");
+    s.update(SettingsMsg::HistoryCompression(true));
+    assert_eq!(s.uncompressed_text, "9999");
+    assert_eq!(s.uncompressed_error(), None);
+    // A value waiting on its quiet period is dropped too.
+    s.update(SettingsMsg::UncompressedText("2000".into()));
+    s.update(SettingsMsg::HistoryCompression(false));
+    s.take_pending();
+    for n in 0..=s.generation {
+        assert_eq!(s.update(SettingsMsg::Flush(n)).apply, None);
+    }
+    assert_eq!(s.values.uncompressed_history_lines, None);
+}
+
+/// The view leaves the disabled field read-only; the handlers ignore its messages as well.
+#[test]
+fn a_disabled_uncompressed_field_ignores_input() {
+    for mut s in [state(), {
+        let mut s = with_scrollback(1_000);
+        s.update(SettingsMsg::HistoryCompression(true));
+        s.take_pending();
+        s
+    }] {
+        assert!(!s.uncompressed_enabled());
+        let shown = s.uncompressed_text.clone();
+        let values = s.values.clone();
+        assert_eq!(
+            s.update(SettingsMsg::UncompressedText("5000".into())),
+            Effect::NONE
+        );
+        assert_eq!(s.uncompressed_text, shown);
+        assert_eq!(s.update(SettingsMsg::UncompressedSubmit), Effect::NONE);
+        assert_eq!(s.uncompressed_text, shown);
+        assert_eq!(s.values, values);
+        assert!(!s.has_pending());
+    }
+}
+
+/// With a scrollback of 1,000 or less the field is disabled and shows the clamped effective
+/// value, never a stored one above the scrollback.
+#[test]
+fn a_small_scrollback_shows_the_clamped_value() {
+    let s = with_stored_uncompressed(800, 8_000);
+    assert_eq!(s.uncompressed_text, "799");
+    let mut s = with_stored_uncompressed(5_000, 2_000);
+    s.update(SettingsMsg::ScrollbackText("900".into()));
+    s.update(SettingsMsg::ScrollbackSubmit);
+    assert_eq!(s.values.scrollback_lines, 900);
+    assert_eq!(s.uncompressed_text, "899");
+}
+
+/// A typed value still waiting on its quiet period is applied when the tab closes, as Enter
+/// would; an out-of-range one is not.
+#[test]
+fn closing_applies_a_held_uncompressed_value() {
+    let mut s = state();
+    s.update(SettingsMsg::HistoryCompression(true));
+    s.take_pending();
+    s.update(SettingsMsg::UncompressedText("5000".into()));
+    let e = s.flush_typed();
+    assert_eq!(
+        e.apply,
+        Some(SettingChange::UncompressedHistoryLines(5_000))
+    );
+    assert_eq!(e.write, Write::Now);
+    assert_eq!(s.flush_typed(), Effect::NONE);
+    s.take_pending();
+    s.update(SettingsMsg::UncompressedText("50000".into()));
+    assert_eq!(s.flush_typed().apply, None);
+    assert!(!s.has_pending());
+}
+
+/// Typing `20000` over `10000` one key at a time applies none of `2`, `20`, `200`, `2000` (a
+/// lowering would compress every tab and ask for a memory release, and each apply makes open
+/// find bars search again): only the value standing at Enter, or when the quiet period after
+/// the last key passes, applies, once.
+#[test]
+fn typing_the_uncompressed_value_applies_once() {
+    let typed = |s: &mut SettingsState| {
+        let mut generations = Vec::new();
+        for text in ["2", "20", "200", "2000", "20000"] {
+            let e = s.update(SettingsMsg::UncompressedText(text.into()));
+            assert_eq!(e.apply, None, "{text} applied while typing");
+            if let Write::After(n) = e.write {
+                generations.push(n);
+            }
+        }
+        generations
+    };
+    let fresh = || {
+        let mut s = with_scrollback(100_000);
+        s.update(SettingsMsg::HistoryCompression(true));
+        assert_eq!(s.uncompressed_text, "10000");
+        s.take_pending();
+        s
+    };
+
+    // Enter applies the value once.
+    let mut s = fresh();
+    let generations = typed(&mut s);
+    let e = s.update(SettingsMsg::UncompressedSubmit);
+    assert_eq!(
+        e.apply,
+        Some(SettingChange::UncompressedHistoryLines(20_000))
+    );
+    assert_eq!(e.write, Write::Now);
+    // The quiet periods of the keys typed then apply nothing more.
+    for n in generations {
+        assert_eq!(s.update(SettingsMsg::Flush(n)).apply, None);
+    }
+
+    // Without Enter: only the last key's quiet period applies, once.
+    let mut s = fresh();
+    let generations = typed(&mut s);
+    let (last, older) = generations.split_last().expect("typed values wait");
+    for &n in older {
+        assert_eq!(s.update(SettingsMsg::Flush(n)).apply, None);
+    }
+    let e = s.update(SettingsMsg::Flush(*last));
+    assert_eq!(
+        e.apply,
+        Some(SettingChange::UncompressedHistoryLines(20_000))
+    );
+    assert_eq!(e.write, Write::Now);
+    assert_eq!(s.update(SettingsMsg::Flush(*last)).apply, None);
+    assert_eq!(s.values.uncompressed_history_lines, Some(20_000));
+}
+
+#[test]
+fn uncompressed_out_of_range_saves_nothing() {
+    let mut s = state();
+    s.update(SettingsMsg::HistoryCompression(true));
+    s.take_pending();
+    for typed in ["500", "10000", "20000"] {
+        let e = s.update(SettingsMsg::UncompressedText(typed.into()));
+        assert_eq!(e, Effect::NONE);
+        assert_eq!(
+            s.uncompressed_error().as_deref(),
+            Some("Enter a number from 1,000 to 9,999.")
+        );
+        let e = s.update(SettingsMsg::UncompressedSubmit);
+        assert_eq!(e.apply, None);
+        assert!(!s.has_pending());
+        assert_eq!(s.values.uncompressed_history_lines, None);
+    }
+    // A valid value clears the message.
+    s.update(SettingsMsg::UncompressedText("2000".into()));
+    assert_eq!(s.uncompressed_error(), None);
+}
+
+#[test]
+fn confirmation_mentions_uncompressed_drop() {
+    let mut s = with_tab(8_000);
+    s.update(SettingsMsg::HistoryCompression(true));
+    s.update(SettingsMsg::UncompressedText("9000".into()));
+    s.update(SettingsMsg::UncompressedSubmit);
+    assert_eq!(s.values.uncompressed_history_lines, Some(9_000));
+    s.update(SettingsMsg::ScrollbackText("5000".into()));
+    assert_eq!(
+        s.scrollback_warning().as_deref(),
+        Some(
+            "Open tabs will lose their oldest lines beyond 5,000. This can't be undone.\nRecent lines kept uncompressed will drop to 4,999."
+        )
+    );
+    // Applying drags the stored value and the field follows.
+    s.update(SettingsMsg::ScrollbackApply);
+    assert_eq!(s.values.uncompressed_history_lines, Some(4_999));
+    assert_eq!(s.uncompressed_text, "4999");
+}
+
+#[test]
+fn confirmation_has_no_extra_line_when_nothing_drops() {
+    let mut s = with_tab(8_000);
+    s.update(SettingsMsg::HistoryCompression(true));
+    s.update(SettingsMsg::UncompressedText("2000".into()));
+    s.update(SettingsMsg::UncompressedSubmit);
+    s.update(SettingsMsg::ScrollbackText("5000".into()));
+    assert_eq!(
+        s.scrollback_warning().as_deref(),
+        Some("Open tabs will lose their oldest lines beyond 5,000. This can't be undone.")
+    );
 }

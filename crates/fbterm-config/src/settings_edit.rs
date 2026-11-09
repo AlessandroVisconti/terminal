@@ -7,7 +7,8 @@ use toml_edit::{DocumentMut, Item, Value};
 
 use crate::keys::{Action, Overrides};
 use crate::settings::{
-    DEFAULT_MAX_FPS, MaxFps, SecretStorage, Settings, TabBar, ThemeMode, WindowDecorations,
+    DEFAULT_MAX_FPS, MacosBlurStyle, MaxFps, SecretStorage, Settings, TabBar, UNCOMPRESSED_FLOOR,
+    WindowDecorations,
 };
 use crate::store::{ConfigError, atomic_write, line_of};
 
@@ -16,16 +17,27 @@ use crate::store::{ConfigError, atomic_write, line_of};
 pub enum SettingChange {
     FontFamily(String),
     FontSize(f32),
+    /// Lowering it also lowers a stored `uncompressed_history_lines` that would no longer be
+    /// below it (see [`UNCOMPRESSED_FLOOR`]).
     ScrollbackLines(usize),
-    Theme(ThemeMode),
+    /// Switching it on also clamps a stored `uncompressed_history_lines` into range (it is kept
+    /// as written while compression is off).
+    HistoryCompression(bool),
+    UncompressedHistoryLines(usize),
     ColorScheme(String),
     KittyKeyboard(bool),
+    GraphemeClusters(bool),
+    Ligatures(bool),
     BackgroundOpacity(f32),
     BackgroundBlur(bool),
+    /// How blur looks on macOS.
+    MacosBlurStyle(MacosBlurStyle),
     WindowDecorations(WindowDecorations),
     TabBar(TabBar),
     /// Fold the sidebar into profile groups.
     TabGroups(bool),
+    /// Draw panes in their scheme's suggested font when installed.
+    UseThemeFonts(bool),
     MaxFps(MaxFps),
     TunnelMaxRetries(u32),
     CheckUpdates(bool),
@@ -44,14 +56,19 @@ impl SettingChange {
             Self::FontFamily(_) => "font_family",
             Self::FontSize(_) => "font_size",
             Self::ScrollbackLines(_) => "scrollback_lines",
-            Self::Theme(_) => "theme",
+            Self::HistoryCompression(_) => "history_compression",
+            Self::UncompressedHistoryLines(_) => "uncompressed_history_lines",
             Self::ColorScheme(_) => "color_scheme",
             Self::KittyKeyboard(_) => "kitty_keyboard",
+            Self::GraphemeClusters(_) => "grapheme_clusters",
+            Self::Ligatures(_) => "ligatures",
             Self::BackgroundOpacity(_) => "background_opacity",
             Self::BackgroundBlur(_) => "background_blur",
+            Self::MacosBlurStyle(_) => "macos_blur_style",
             Self::WindowDecorations(_) => "window_decorations",
             Self::TabBar(_) => "tab_bar",
             Self::TabGroups(_) => "tab_groups",
+            Self::UseThemeFonts(_) => "use_theme_fonts",
             Self::MaxFps(_) => "max_fps",
             Self::TunnelMaxRetries(_) => "tunnel_max_retries",
             Self::CheckUpdates(_) => "check_updates",
@@ -65,15 +82,31 @@ impl SettingChange {
         match self {
             Self::FontFamily(v) => settings.font_family.clone_from(v),
             Self::FontSize(v) => settings.font_size = *v,
-            Self::ScrollbackLines(v) => settings.scrollback_lines = *v,
-            Self::Theme(v) => settings.theme = *v,
+            Self::ScrollbackLines(v) => {
+                settings.scrollback_lines = *v;
+                if let Some(keep) = settings.uncompressed_history_lines {
+                    settings.uncompressed_history_lines = Some(dragged_down(keep, *v));
+                }
+            }
+            Self::HistoryCompression(v) => {
+                settings.history_compression = *v;
+                if *v && let Some(keep) = settings.uncompressed_history_lines {
+                    settings.uncompressed_history_lines =
+                        Some(clamped(keep, settings.scrollback_lines));
+                }
+            }
+            Self::UncompressedHistoryLines(v) => settings.uncompressed_history_lines = Some(*v),
             Self::ColorScheme(v) => settings.color_scheme.clone_from(v),
             Self::KittyKeyboard(v) => settings.kitty_keyboard = *v,
+            Self::GraphemeClusters(v) => settings.grapheme_clusters = *v,
+            Self::Ligatures(v) => settings.ligatures = *v,
             Self::BackgroundOpacity(v) => settings.background_opacity = *v,
             Self::BackgroundBlur(v) => settings.background_blur = *v,
+            Self::MacosBlurStyle(v) => settings.macos_blur_style.clone_from(v),
             Self::WindowDecorations(v) => settings.window_decorations = *v,
             Self::TabBar(v) => settings.tab_bar = Some(*v),
             Self::TabGroups(v) => settings.tab_groups = *v,
+            Self::UseThemeFonts(v) => settings.use_theme_fonts = *v,
             Self::MaxFps(v) => settings.max_fps.clone_from(v),
             Self::TunnelMaxRetries(v) => settings.tunnel_max_retries = *v,
             Self::CheckUpdates(v) => settings.check_updates = Some(*v),
@@ -89,12 +122,15 @@ impl SettingChange {
         match self {
             Self::FontFamily(v) | Self::ColorScheme(v) => Value::from(v.as_str()),
             Self::FontSize(v) | Self::BackgroundOpacity(v) => Value::from(short_f64(*v)),
-            Self::ScrollbackLines(v) => Value::from(i64::try_from(*v).unwrap_or(i64::MAX)),
-            Self::Theme(ThemeMode::Dark) => Value::from("dark"),
-            Self::Theme(ThemeMode::Light) => Value::from("light"),
-            Self::KittyKeyboard(v) | Self::BackgroundBlur(v) | Self::CheckUpdates(v) => {
-                Value::from(*v)
+            Self::ScrollbackLines(v) | Self::UncompressedHistoryLines(v) => {
+                Value::from(i64::try_from(*v).unwrap_or(i64::MAX))
             }
+            Self::KittyKeyboard(v)
+            | Self::GraphemeClusters(v)
+            | Self::Ligatures(v)
+            | Self::BackgroundBlur(v)
+            | Self::HistoryCompression(v)
+            | Self::CheckUpdates(v) => Value::from(*v),
             // A number for a fixed rate, the string for the display's.
             Self::MaxFps(MaxFps::Fixed(n)) => Value::from(i64::from(*n)),
             Self::MaxFps(MaxFps::Display) => Value::from("display"),
@@ -102,11 +138,34 @@ impl SettingChange {
             Self::TunnelMaxRetries(v) => Value::from(i64::from(*v)),
             Self::SecretStorage(v) => Value::from(v.as_str()),
             Self::WindowDecorations(v) => Value::from(v.as_str()),
+            Self::MacosBlurStyle(v) => Value::from(v.as_str()),
             Self::TabBar(v) => Value::from(v.as_str()),
-            Self::TabGroups(v) => Value::from(*v),
+            Self::TabGroups(v) | Self::UseThemeFonts(v) => Value::from(*v),
             // Written per action by `edit_keys`.
             Self::Keys(_) => Value::from(""),
         }
+    }
+}
+
+/// `keep` (an `uncompressed_history_lines`) after `scrollback_lines` became `scrollback`:
+/// unchanged unless it is no longer below it, then `scrollback - 1`. A scrollback at or below
+/// [`UNCOMPRESSED_FLOOR`] turns compression off whatever the value, so it is left alone.
+fn dragged_down(keep: usize, scrollback: usize) -> usize {
+    if scrollback > UNCOMPRESSED_FLOOR && keep >= scrollback {
+        scrollback - 1
+    } else {
+        keep
+    }
+}
+
+/// `keep` (an `uncompressed_history_lines`) brought into its range for `scrollback`, as when
+/// compression is switched on. A scrollback at or below [`UNCOMPRESSED_FLOOR`] leaves no range
+/// (compression does not apply), so it is left alone.
+fn clamped(keep: usize, scrollback: usize) -> usize {
+    if scrollback > UNCOMPRESSED_FLOOR {
+        keep.clamp(UNCOMPRESSED_FLOOR, scrollback - 1)
+    } else {
+        keep
     }
 }
 
@@ -143,6 +202,27 @@ impl Settings {
 /// shown commented out (`#key = ...`, as in the template) is set on the line right after that
 /// comment. Otherwise the key is added with the other top-level keys.
 pub fn edit_text(text: &str, change: &SettingChange) -> Result<String, (Option<usize>, String)> {
+    let edited = edit_one(text, change)?;
+    // Lowering the scrollback also lowers an `uncompressed_history_lines` that is present and
+    // would no longer be below it; switching compression on clamps one into range. Both read
+    // the edited file, whose `scrollback_lines` is the new one. `edit_one` refused a file that
+    // does not load as settings, so the edited one loads too.
+    let rule: fn(usize, usize) -> usize = match change {
+        SettingChange::ScrollbackLines(_) => dragged_down,
+        SettingChange::HistoryCompression(true) => clamped,
+        _ => return Ok(edited),
+    };
+    if let Ok(s) = toml::from_str::<Settings>(&edited)
+        && let Some(keep) = s.uncompressed_history_lines
+        && let now = rule(keep, s.scrollback_lines)
+        && now != keep
+    {
+        return edit_one(&edited, &SettingChange::UncompressedHistoryLines(now));
+    }
+    Ok(edited)
+}
+
+fn edit_one(text: &str, change: &SettingChange) -> Result<String, (Option<usize>, String)> {
     let mut doc: DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| {
         let line = e.span().map(|s| line_of(text, s.start));
         (line, e.message().to_string())
@@ -152,6 +232,8 @@ pub fn edit_text(text: &str, change: &SettingChange) -> Result<String, (Option<u
         let line = e.span().map(|s| line_of(text, s.start));
         (line, e.message().to_string())
     })?;
+    // The obsolete top-level `theme` key goes with the next write (keys in tables stay).
+    doc.remove("theme");
     if let SettingChange::Keys(wanted) = change {
         // Compare with the entries as written (before load drops conflicting or reserved
         // ones), so an entry the app ignored is not left behind to apply on the next load.
@@ -371,13 +453,17 @@ mod tests {
             SettingChange::FontFamily("JetBrains Mono".into()),
             SettingChange::FontSize(15.5),
             SettingChange::ScrollbackLines(25_000),
-            SettingChange::Theme(ThemeMode::Light),
+            SettingChange::HistoryCompression(true),
+            SettingChange::UncompressedHistoryLines(5_000),
             SettingChange::KittyKeyboard(true),
+            SettingChange::GraphemeClusters(true),
+            SettingChange::Ligatures(false),
             SettingChange::BackgroundOpacity(0.85),
             SettingChange::BackgroundBlur(true),
             SettingChange::WindowDecorations(WindowDecorations::System),
             SettingChange::TabBar(TabBar::Left),
             SettingChange::TabGroups(true),
+            SettingChange::UseThemeFonts(true),
             SettingChange::MaxFps(MaxFps::Fixed(120)),
             SettingChange::MaxFps(MaxFps::Display),
             SettingChange::TunnelMaxRetries(3),
@@ -411,10 +497,10 @@ mod tests {
             )
         );
         // Without the template's `#[keys]`, the table is added after a blank line.
-        let after = edit_text("theme = \"dark\"", &keys(&[(Action::Quit, "ctrl+shift+k")]));
+        let after = edit_text("ligatures = true", &keys(&[(Action::Quit, "ctrl+shift+k")]));
         assert_eq!(
             after.unwrap(),
-            "theme = \"dark\"\n\n[keys]\nquit = \"ctrl+shift+k\"\n"
+            "ligatures = true\n\n[keys]\nquit = \"ctrl+shift+k\"\n"
         );
         let after = edit_text(
             SETTINGS_TEMPLATE,
@@ -444,7 +530,7 @@ mod tests {
 
     #[test]
     fn key_edits_keep_comments_and_untouched_entries() {
-        let before = "theme = \"dark\"\n\
+        let before = "ligatures = true\n\
                       \n\
                       # My shortcuts.\n\
                       [keys]\n\
@@ -464,7 +550,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             after,
-            "theme = \"dark\"\n\
+            "ligatures = true\n\
              \n\
              # My shortcuts.\n\
              [keys]\n\
@@ -478,7 +564,7 @@ mod tests {
         let after = edit_text(&after, &keys(&[])).unwrap();
         assert_eq!(
             after,
-            "theme = \"dark\"\n\
+            "ligatures = true\n\
              \n\
              # My shortcuts.\n\
              [keys]\n\
@@ -557,7 +643,7 @@ mod tests {
     #[test]
     fn an_existing_key_keeps_its_place_and_comments() {
         let before = "# My settings.\n\
-                      theme = \"dark\"   # night owl\n\
+                      ligatures = true   # night owl\n\
                       \n\
                       # Bigger text.\n\
                       font_size = 14.0\n\
@@ -566,17 +652,17 @@ mod tests {
         assert_eq!(
             after,
             "# My settings.\n\
-             theme = \"dark\"   # night owl\n\
+             ligatures = true   # night owl\n\
              \n\
              # Bigger text.\n\
              font_size = 16.0\n\
              kitty_keyboard = false\n"
         );
-        let after = edit_text(before, &SettingChange::Theme(ThemeMode::Light)).unwrap();
+        let after = edit_text(before, &SettingChange::Ligatures(false)).unwrap();
         assert_eq!(
             after,
             "# My settings.\n\
-             theme = \"light\"   # night owl\n\
+             ligatures = false   # night owl\n\
              \n\
              # Bigger text.\n\
              font_size = 14.0\n\
@@ -605,10 +691,10 @@ mod tests {
 
     #[test]
     fn a_missing_key_joins_the_top_level_keys() {
-        let after = edit_text("theme = \"light\"\n", &SettingChange::FontSize(15.0)).unwrap();
-        assert_eq!(after, "theme = \"light\"\nfont_size = 15.0\n");
+        let after = edit_text("ligatures = true\n", &SettingChange::FontSize(15.0)).unwrap();
+        assert_eq!(after, "ligatures = true\nfont_size = 15.0\n");
         // A commented key after a table header is not where a top-level key can go.
-        let text = "theme = \"light\"\n\n[extra]\n#font_size = 13.0\n";
+        let text = "ligatures = true\n\n[extra]\n#font_size = 13.0\n";
         let after = edit_text(text, &SettingChange::FontSize(15.0)).unwrap();
         assert_eq!(
             toml::from_str::<Settings>(&after).unwrap().font_size,
@@ -625,7 +711,7 @@ mod tests {
         let s: Settings = toml::from_str(&after).unwrap();
         assert_eq!(s.font_size, 15.0, "{after}");
         assert_eq!(s.font_family, "#font_size = 13.0\n");
-        let text = "theme = \"dark\"\nextra = [\n#font_size = 13.0\n1]\n";
+        let text = "ligatures = true\nextra = [\n#font_size = 13.0\n1]\n";
         let after = edit_text(text, &SettingChange::FontSize(15.0)).unwrap();
         assert_eq!(toml::from_str::<Settings>(&after).unwrap().font_size, 15.0);
     }
@@ -638,11 +724,11 @@ mod tests {
         let dotfiles = dir.join("dotfiles");
         std::fs::create_dir_all(&dotfiles).unwrap();
         let real = dotfiles.join("settings.toml");
-        std::fs::write(&real, "# mine\ntheme = \"dark\"\n").unwrap();
+        std::fs::write(&real, "# mine\nligatures = true\n").unwrap();
         std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
         let link = dir.join("settings.toml");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        Settings::write_field(&link, &SettingChange::Theme(ThemeMode::Light)).unwrap();
+        Settings::write_field(&link, &SettingChange::Ligatures(false)).unwrap();
         assert!(
             std::fs::symlink_metadata(&link)
                 .unwrap()
@@ -651,7 +737,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(&real).unwrap(),
-            "# mine\ntheme = \"light\"\n"
+            "# mine\nligatures = false\n"
         );
         let mode = std::fs::metadata(&real).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
@@ -660,11 +746,11 @@ mod tests {
 
     #[test]
     fn line_endings_and_a_missing_final_newline_are_respected() {
-        let text = "# a\r\n#font_size = 13.0\r\ntheme = \"dark\"\r\n";
+        let text = "# a\r\n#font_size = 13.0\r\nligatures = true\r\n";
         let after = edit_text(text, &SettingChange::FontSize(15.0)).unwrap();
         assert_eq!(
             after,
-            "# a\r\n#font_size = 13.0\r\nfont_size = 15.0\r\ntheme = \"dark\"\r\n"
+            "# a\r\n#font_size = 13.0\r\nfont_size = 15.0\r\nligatures = true\r\n"
         );
         let after = edit_text("#font_size = 13.0", &SettingChange::FontSize(15.0)).unwrap();
         assert_eq!(after, "#font_size = 13.0\nfont_size = 15.0\n");
@@ -673,7 +759,7 @@ mod tests {
     #[test]
     fn a_broken_file_is_refused() {
         let (line, _) = edit_text(
-            "theme = \"dark\"\nfont_size = = 3\n",
+            "ligatures = true\nfont_size = = 3\n",
             &SettingChange::FontSize(15.0),
         )
         .unwrap_err();
@@ -704,6 +790,22 @@ mod tests {
         }
         assert_eq!(Settings::default().secret_storage, SecretStorage::Auto);
         assert!(toml::from_str::<Settings>("secret_storage = \"cloud\"\n").is_err());
+    }
+
+    #[test]
+    fn use_theme_fonts_defaults_off_and_is_written_in_place() {
+        assert!(!Settings::default().use_theme_fonts);
+        let s: Settings = toml::from_str("use_theme_fonts = true\n").unwrap();
+        assert!(s.use_theme_fonts);
+        let sample: Settings = toml::from_str(SETTINGS_TEMPLATE).unwrap();
+        assert!(
+            !sample.use_theme_fonts,
+            "the sample leaves it commented out"
+        );
+        assert!(SETTINGS_TEMPLATE.contains("#use_theme_fonts = false\n"));
+        let edited = edit_text(SETTINGS_TEMPLATE, &SettingChange::UseThemeFonts(true)).unwrap();
+        assert!(edited.contains("#use_theme_fonts = false\nuse_theme_fonts = true\n"));
+        assert!(toml::from_str::<Settings>(&edited).unwrap().use_theme_fonts);
     }
 
     #[test]
@@ -789,6 +891,102 @@ mod tests {
     }
 
     #[test]
+    fn lowering_scrollback_drags_uncompressed_down() {
+        let mut s = Settings {
+            uncompressed_history_lines: Some(8_000),
+            ..Settings::default()
+        };
+        SettingChange::ScrollbackLines(5_000).apply(&mut s);
+        assert_eq!(s.uncompressed_history_lines, Some(4_999));
+        // Absent stays absent; a value that still fits stays.
+        let mut s = Settings::default();
+        SettingChange::ScrollbackLines(5_000).apply(&mut s);
+        assert_eq!(s.uncompressed_history_lines, None);
+        let mut s = Settings {
+            uncompressed_history_lines: Some(2_000),
+            ..Settings::default()
+        };
+        SettingChange::ScrollbackLines(5_000).apply(&mut s);
+        assert_eq!(s.uncompressed_history_lines, Some(2_000));
+        // At or below the floor compression is off anyway: the key is left alone.
+        let mut s = Settings {
+            uncompressed_history_lines: Some(8_000),
+            ..Settings::default()
+        };
+        SettingChange::ScrollbackLines(1_000).apply(&mut s);
+        assert_eq!(s.uncompressed_history_lines, Some(8_000));
+        // In the file: both keys are written, only when the key is present.
+        let text = "scrollback_lines = 20000\nuncompressed_history_lines = 8000\n";
+        let edited = edit_text(text, &SettingChange::ScrollbackLines(5_000)).unwrap();
+        assert_eq!(
+            edited,
+            "scrollback_lines = 5000\nuncompressed_history_lines = 4999\n"
+        );
+        let edited = edit_text(&edited, &SettingChange::ScrollbackLines(50_000)).unwrap();
+        assert_eq!(
+            edited,
+            "scrollback_lines = 50000\nuncompressed_history_lines = 4999\n"
+        );
+        let edited = edit_text("", &SettingChange::ScrollbackLines(5_000)).unwrap();
+        assert!(!edited.contains("uncompressed"), "{edited}");
+    }
+
+    /// Another key in the file is invalid: the whole edit is refused with that key's line, so
+    /// the scrollback is never written without the uncompressed value it drags down (the
+    /// drag-down's own read of the edited file cannot fail where this one passed).
+    #[test]
+    fn lowering_scrollback_beside_an_invalid_key_writes_nothing() {
+        for text in [
+            "tab_bar = \"purple\"\nscrollback_lines = 20000\nuncompressed_history_lines = 8000\n",
+            "scrollback_lines = 20000\nuncompressed_history_lines = \"lots\"\n",
+        ] {
+            let (line, _) = edit_text(text, &SettingChange::ScrollbackLines(5_000)).unwrap_err();
+            assert!(line.is_some(), "{text}");
+        }
+    }
+
+    #[test]
+    fn switching_compression_on_clamps_a_stored_uncompressed_value() {
+        for (keep, want) in [(8_000, 4_999), (200, 1_000), (2_000, 2_000)] {
+            let mut s = Settings {
+                scrollback_lines: 5_000,
+                uncompressed_history_lines: Some(keep),
+                ..Settings::default()
+            };
+            SettingChange::HistoryCompression(true).apply(&mut s);
+            assert_eq!(s.uncompressed_history_lines, Some(want), "{keep}");
+        }
+        // Absent stays absent; off, or a scrollback at the floor, leaves it as written.
+        let mut s = Settings::default();
+        SettingChange::HistoryCompression(true).apply(&mut s);
+        assert_eq!(s.uncompressed_history_lines, None);
+        for (scrollback, on) in [(5_000, false), (1_000, true)] {
+            let mut s = Settings {
+                scrollback_lines: scrollback,
+                uncompressed_history_lines: Some(8_000),
+                ..Settings::default()
+            };
+            SettingChange::HistoryCompression(on).apply(&mut s);
+            assert_eq!(s.uncompressed_history_lines, Some(8_000));
+        }
+        // In the file: the clamped value is written with the switch, and the file then loads
+        // with no problem to report.
+        let text = "scrollback_lines = 5000\nuncompressed_history_lines = 8000\n";
+        let edited = edit_text(text, &SettingChange::HistoryCompression(true)).unwrap();
+        assert_eq!(
+            edited,
+            "scrollback_lines = 5000\nuncompressed_history_lines = 4999\nhistory_compression = true\n"
+        );
+        let mut loaded: Settings = toml::from_str(&edited).unwrap();
+        assert!(loaded.clamp().is_empty());
+        let edited = edit_text(text, &SettingChange::HistoryCompression(false)).unwrap();
+        assert!(
+            edited.contains("uncompressed_history_lines = 8000"),
+            "{edited}"
+        );
+    }
+
+    #[test]
     fn every_field_round_trips_through_the_template() {
         let mut text = SETTINGS_TEMPLATE.to_owned();
         let mut expected = Settings::default();
@@ -805,6 +1003,38 @@ mod tests {
         for line in SETTINGS_TEMPLATE.lines() {
             assert!(text.contains(line), "lost {line:?}");
         }
+    }
+
+    #[test]
+    fn ligatures_written_after_its_template_line() {
+        let dir = std::env::temp_dir().join(format!("fbterm-edit-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("settings.toml");
+        Settings::write_field(&path, &SettingChange::Ligatures(false)).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            text,
+            SETTINGS_TEMPLATE.replace(
+                "#ligatures = true\n",
+                "#ligatures = true\nligatures = false\n"
+            )
+        );
+        assert!(!Settings::load(&path).unwrap().ligatures);
+    }
+
+    #[test]
+    fn grapheme_clusters_written_after_its_template_line() {
+        let dir = std::env::temp_dir().join(format!("fbterm-edit-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("settings.toml");
+        Settings::write_field(&path, &SettingChange::GraphemeClusters(true)).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            text,
+            SETTINGS_TEMPLATE.replace(
+                "#grapheme_clusters = false\n",
+                "#grapheme_clusters = false\ngrapheme_clusters = true\n"
+            )
+        );
+        assert!(Settings::load(&path).unwrap().grapheme_clusters);
     }
 
     #[test]

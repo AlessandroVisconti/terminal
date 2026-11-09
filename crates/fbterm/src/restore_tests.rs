@@ -363,10 +363,6 @@ fn settings_reload_applies_or_keeps_the_previous_and_says_why() {
     let _ = app.update(Message::ConfigChanged(changed));
     assert_eq!(app.settings.font_size, 18.0);
     assert_eq!(app.style.font_size, 18.0);
-    assert_eq!(
-        app.tokens,
-        crate::theme::tokens(fbterm_config::ThemeMode::Light)
-    );
     assert_eq!(app.settings.scrollback_lines, 50);
 
     std::fs::write(paths.settings(), "font_size = \"big\"\n").unwrap();
@@ -379,6 +375,128 @@ fn settings_reload_applies_or_keeps_the_previous_and_says_why() {
     let _ = app.update(Message::ConfigChanged(changed));
     assert_eq!(app.settings.font_size, 14.0);
     assert!(app.notices.is_empty());
+}
+
+#[test]
+fn grapheme_setting_reaches_new_terminals() {
+    let a = profile("a");
+    let paths = paths_with(std::slice::from_ref(&a));
+    let (mut app, _) = App::build(paths, true);
+    app.state_saving_enabled = false;
+    let grid = fbterm_term::GridSize {
+        cols: 80,
+        rows: 24,
+        cell_width: 8.0,
+        cell_height: 16.0,
+    };
+    let on = |app: &App| {
+        app.new_terminal(grid)
+            .lock()
+            .mode()
+            .contains(fbterm_term::TermMode::GRAPHEME_CLUSTER)
+    };
+    assert!(!on(&app));
+    app.settings.grapheme_clusters = true;
+    assert!(on(&app));
+}
+
+#[test]
+fn restart_restores_grapheme_default() {
+    let a = profile("a");
+    let paths = paths_with(std::slice::from_ref(&a));
+    SavedState {
+        windows: vec![saved(&[&a], 0)],
+        ..Default::default()
+    }
+    .save(&paths.state())
+    .unwrap();
+    let (mut app, _) = App::build(paths, true);
+    app.state_saving_enabled = false;
+    let (wid, id, term) = {
+        let (wid, w) = app.windows.iter().next().unwrap();
+        let pane = &w.tabs[0].panes[0];
+        (
+            *wid,
+            pane.id,
+            pane.terminal()
+                .cloned()
+                .expect("started tab has a terminal"),
+        )
+    };
+    term.lock().feed(b"\x1b[?2027h");
+    assert!(
+        term.lock()
+            .mode()
+            .contains(fbterm_term::TermMode::GRAPHEME_CLUSTER)
+    );
+    let _ = app.start(wid, id);
+    assert!(
+        !term
+            .lock()
+            .mode()
+            .contains(fbterm_term::TermMode::GRAPHEME_CLUSTER)
+    );
+}
+
+#[test]
+fn a_repeated_bad_feature_entry_shows_once() {
+    let a = profile("a");
+    let paths = paths_with(std::slice::from_ref(&a));
+    std::fs::write(
+        paths.settings(),
+        "font_features = [\"bad\", \"worse!\", \"bad\"]\n",
+    )
+    .unwrap();
+    let (app, _) = App::build(paths, true);
+    let line = "font_features: \"bad\" is not a feature tag; it is ignored.";
+    assert_eq!(app.notices.iter().filter(|n| n.as_str() == line).count(), 1);
+}
+
+#[test]
+fn ligature_settings_reach_pane_styles_and_report_bad_entries() {
+    let a = profile("a");
+    let paths = paths_with(std::slice::from_ref(&a));
+    SavedState {
+        windows: vec![saved(&[&a], 0)],
+        ..Default::default()
+    }
+    .save(&paths.state())
+    .unwrap();
+    let (mut app, _) = App::build(paths.clone(), true);
+    app.state_saving_enabled = false;
+    let features = |app: &App| {
+        let w = app.windows.values().next().unwrap();
+        app.pane_style(
+            *app.windows.keys().next().unwrap(),
+            &w.tabs[0],
+            &w.tabs[0].panes[0],
+        )
+        .features
+    };
+    assert!(features(&app).ligatures, "on by default");
+    let changed = Changed {
+        profiles: false,
+        settings: true,
+        schemes: false,
+    };
+    std::fs::write(
+        paths.settings(),
+        "ligatures = false\nfont_features = [\"ss02\", \"bad!\"]\n",
+    )
+    .unwrap();
+    let _ = app.update(Message::ConfigChanged(changed));
+    let f = features(&app);
+    assert!(!f.ligatures);
+    assert_eq!(f.extra.len(), 1);
+    let line = "font_features: \"bad!\" is not a feature tag; it is ignored.";
+    assert_eq!(app.notices.iter().filter(|n| n.as_str() == line).count(), 1);
+    std::fs::write(paths.settings(), "ligatures = true\n").unwrap();
+    let _ = app.update(Message::ConfigChanged(changed));
+    assert!(features(&app).ligatures);
+    assert!(
+        !app.notices.iter().any(|n| n.as_str() == line),
+        "the notice goes with the entry"
+    );
 }
 
 #[test]
@@ -1046,7 +1164,7 @@ fn merged_layout_survives_save_and_reload() {
 
 #[test]
 fn every_window_reports_its_own_os_scale() {
-    // The editor, Settings and Color schemes windows draw hairlines from their physical
+    // The editor, Settings and Color schemes tabs draw hairlines from their physical
     // scale too, so the OS scale is kept for any open window, not only terminal ones, and
     // dropped when the window closes.
     let paths = paths_with(&[profile("a")]);

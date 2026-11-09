@@ -586,6 +586,9 @@ fn exported_scheme_keeps_credit_and_drops_gallery() {
     .unwrap();
     assert_eq!(archive.schemes.len(), 1);
     assert_eq!(archive.schemes[0].credit, s.credit);
+    // The suggested font travels like the credit.
+    assert!(s.suggested_font.is_some());
+    assert_eq!(archive.schemes[0].suggested_font, s.suggested_font);
     assert!(archive.schemes[0].gallery.is_none());
 }
 

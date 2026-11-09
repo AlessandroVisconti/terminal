@@ -124,6 +124,9 @@ impl App {
     pub(crate) fn new_terminal(&self, grid: GridSize) -> SharedTerminal {
         let mut term = Terminal::new(grid, self.settings.scrollback_lines);
         term.set_kitty_keyboard(self.settings.kitty_keyboard);
+        term.set_grapheme_clusters(self.settings.grapheme_clusters);
+        term.set_history_compression(self.settings.history_compression_keep());
+        term.reset_grapheme_clusters();
         self.style.scheme.apply_to(&mut term);
         Arc::new(Mutex::new(term))
     }
@@ -164,7 +167,12 @@ impl App {
         pane.connecting = None;
         let (terminal, fresh) = match previous {
             Some(t) => {
-                t.lock().feed(tabs::RESTART_RESET);
+                {
+                    let mut term = t.lock();
+                    term.feed(tabs::RESTART_RESET);
+                    // A new program never inherits mode 2027 from the one before.
+                    term.reset_grapheme_clusters();
+                }
                 (t, false)
             }
             None => (fresh_terminal, true),
@@ -358,8 +366,14 @@ impl App {
                 }
             }
             TerminalOutput::Resized(grid) => {
+                // New columns reflow the history (a lines-only resize does not); the first
+                // layout of a pane has nothing earlier to compare with.
+                let reflowed = self
+                    .grids
+                    .get(&pane)
+                    .is_some_and(|old| old.cols != grid.cols);
                 self.grids.insert(pane, grid);
-                let settle = self.pane_resized(pane, grid);
+                let settle = self.pane_resized(pane, grid, reflowed);
                 Task::batch([settle, self.find_resized(pane)])
             }
             // The widget already put the text on the clipboard.
@@ -419,12 +433,20 @@ impl App {
         }
     }
 
-    /// A pane's view resized its terminal to `grid`. The session gets the latest grid once no
-    /// newer one came for `RESIZE_SETTLE` (or at once when a divider drag ends).
-    pub(crate) fn pane_resized(&mut self, pane: PaneId, grid: GridSize) -> Task<Message> {
+    /// A pane's view resized its terminal to `grid` (`reflowed`: its columns changed). The
+    /// session gets the latest grid once no newer one came for `RESIZE_SETTLE` (or at once when
+    /// a divider drag ends).
+    pub(crate) fn pane_resized(
+        &mut self,
+        pane: PaneId,
+        grid: GridSize,
+        reflowed: bool,
+    ) -> Task<Message> {
         self.resize_generation += 1;
         let generation = self.resize_generation;
-        self.pending_resizes.insert(pane, (generation, grid));
+        let reflowed = reflowed || self.pending_resizes.get(&pane).is_some_and(|p| p.2);
+        self.pending_resizes
+            .insert(pane, (generation, grid, reflowed));
         Task::perform(
             async { tokio::time::sleep(RESIZE_SETTLE).await },
             move |()| Message::ResizeSettled(pane, generation),
@@ -432,31 +454,66 @@ impl App {
     }
 
     /// The quiet period of a pane's resize `generation` passed.
-    pub(crate) fn resize_settled(&mut self, pane: PaneId, generation: u64) {
+    pub(crate) fn resize_settled(&mut self, pane: PaneId, generation: u64) -> Task<Message> {
         match self.pending_resizes.get(&pane) {
-            Some((g, grid)) if *g == generation => {
-                let grid = *grid;
+            Some((g, grid, reflowed)) if *g == generation => {
+                let (grid, reflowed) = (*grid, *reflowed);
                 self.pending_resizes.remove(&pane);
                 self.resize_session(pane, grid);
+                self.release_after_reflow(reflowed.then_some(pane))
             }
-            _ => {}
+            _ => Task::none(),
         }
     }
 
     /// Hand every waiting resize of `wid`'s panes to its session now.
-    fn flush_resizes(&mut self, wid: window::Id) {
+    fn flush_resizes(&mut self, wid: window::Id) -> Task<Message> {
         let Some(window) = self.windows.get(&wid) else {
-            return;
+            return Task::none();
         };
-        let ready: Vec<(PaneId, GridSize)> = self
+        let ready: Vec<(PaneId, GridSize, bool)> = self
             .pending_resizes
             .iter()
             .filter(|(id, _)| window.locate(**id).is_some())
-            .map(|(id, (_, grid))| (*id, *grid))
+            .map(|(id, (_, grid, reflowed))| (*id, *grid, *reflowed))
             .collect();
-        for (pane, grid) in ready {
+        let mut reflowed = Vec::new();
+        for (pane, grid, r) in ready {
             self.pending_resizes.remove(&pane);
             self.resize_session(pane, grid);
+            if r {
+                reflowed.push(pane);
+            }
+        }
+        self.release_after_reflow(reflowed)
+    }
+
+    /// Settled resizes reflowed `panes`: a terminal with history compression on rebuilt its
+    /// history uncompressed, and the worker compresses it again. Once it drains, the memory that
+    /// frees goes back to the OS (one release waiting at most, however many steps a drag had).
+    /// Only the user's own resizes get here: programs cannot resize the terminal. Each such
+    /// terminal is queued on the worker here, since a silent program would never queue it.
+    fn release_after_reflow(&self, panes: impl IntoIterator<Item = PaneId>) -> Task<Message> {
+        let mut compressed = false;
+        for pane in panes {
+            let term = self.windows.values().find_map(|w| {
+                let (t, p) = w.locate(pane)?;
+                w.tabs[t].panes[p].terminal()
+            });
+            let Some(term) = term else { continue };
+            let (on, jobs) = {
+                let t = term.lock();
+                (t.history_compression().is_some(), t.has_history_jobs())
+            };
+            if jobs {
+                fbterm_term::history_worker::enqueue(term);
+            }
+            compressed |= on;
+        }
+        if compressed {
+            crate::settings_window::release_when_worker_idle()
+        } else {
+            Task::none()
         }
     }
 
@@ -505,8 +562,7 @@ impl App {
             return Task::none();
         }
         if let TilesMsg::EndDrag = msg {
-            self.flush_resizes(wid);
-            return Task::none();
+            return self.flush_resizes(wid);
         }
         if let TilesMsg::Focus(pane) = msg {
             return self.focus_pane(wid, pane);

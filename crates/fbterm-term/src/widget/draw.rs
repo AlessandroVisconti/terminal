@@ -10,12 +10,14 @@ use feathercritty::grid::{Dimensions, RowReader};
 use feathercritty::index::{Column, Line, Point};
 use feathercritty::term::cell::{Cell, Flags, Hyperlink};
 use feathercritty::vte::ansi::CursorShape;
+use iced::advanced::graphics::text::{Raw, Renderer as _};
 use iced::advanced::renderer::{Quad, Renderer as _};
-use iced::advanced::text::{self, Renderer as _};
-use iced::{Border, Font, Pixels, Rectangle, Size};
+use iced::{Border, Font, Rectangle, Size};
 
 use super::Highlight;
 use super::colors::{cell_colors, resolve};
+use super::features::{FontFeatures, run_features};
+use super::shaped::{ShapeCache, ShapeKey};
 use crate::palette::ColorScheme;
 use crate::{SearchMatch, Terminal};
 
@@ -34,6 +36,9 @@ pub struct TextRun {
     pub fg: Rgb,
     pub bold: bool,
     pub italic: bool,
+    /// A cell drawn on its own (wide, a grapheme cluster, or a standalone symbol): no ligature
+    /// can form in it.
+    pub alone: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +170,9 @@ pub fn build(
         let line = Line(y as i32 - offset as i32);
         let row = reader.row(grid, line);
         let mut run: Option<TextRun> = None;
+        // What a run must share besides foreground and font style: a ligature never spans a
+        // change of background, decoration, selection, match or the cursor cell.
+        let mut run_key = None;
         let flush = |run: &mut Option<TextRun>, texts: &mut Vec<TextRun>| {
             if let Some(mut r) = run.take() {
                 let trimmed = r.text.trim_end_matches(' ').len();
@@ -182,13 +190,17 @@ pub fn build(
             let selected = selection.is_some_and(|s| s.contains(Point::new(line, Column(x))));
             let (mut fg, mut bg) = cell_colors(cell, colors, scheme, selected);
             // Search matches: the current one strongest, then the selection, then the others.
-            if let Some((h, marks)) = &marks {
-                let mut hit = marks[y].iter().filter(|m| (m.from..=m.to).contains(&x));
-                let current = hit.clone().any(|m| m.current);
+            // One scan of the row's matches gives both answers.
+            let (in_match, current) = marks.as_ref().map_or((false, false), |(_, m)| {
+                m[y].iter()
+                    .filter(|m| (m.from..=m.to).contains(&x))
+                    .fold((false, false), |(_, cur), m| (true, cur || m.current))
+            });
+            if let Some((h, _)) = &marks {
                 if current {
                     bg = h.current_bg;
                     fg = h.current_fg;
-                } else if hit.next().is_some() && !selected {
+                } else if in_match && !selected {
                     bg = h.match_bg;
                 }
             }
@@ -233,6 +245,9 @@ pub fn build(
                 push_span(&mut strikes, row_u16, col, 1, (fg, LineKind::Strike));
             }
 
+            let decoration = flags & (Flags::ALL_UNDERLINES | Flags::STRIKEOUT);
+            let key = (bg, decoration, hovered, selected, in_match, is_cursor_cell);
+
             // Glyphs.
             if flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
                 continue;
@@ -259,19 +274,27 @@ pub fn build(
                     fg,
                     bold,
                     italic,
+                    alone: true,
                 });
                 continue;
             }
             let c = if cell.c == '\t' { ' ' } else { cell.c };
             match &mut run {
                 // A blank continues any run: it draws nothing.
-                Some(r) if c == ' ' || (r.fg == fg && r.bold == bold && r.italic == italic) => {
+                Some(r)
+                    if c == ' '
+                        || (r.fg == fg
+                            && r.bold == bold
+                            && r.italic == italic
+                            && run_key == Some(key)) =>
+                {
                     r.text.push(c);
                     r.span.cells += 1;
                 }
                 _ if c == ' ' => flush(&mut run, &mut list.texts),
                 _ => {
                     flush(&mut run, &mut list.texts);
+                    run_key = Some(key);
                     run = Some(TextRun {
                         span: Span {
                             row: row_u16,
@@ -282,6 +305,7 @@ pub fn build(
                         fg,
                         bold,
                         italic,
+                        alone: false,
                     });
                 }
             }
@@ -330,11 +354,12 @@ fn background_fill(list: &DrawList, opacity: f32) -> Option<iced::Color> {
 }
 
 /// Font metrics used to place cells.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Metrics {
     pub cell: Size,
     pub font: Font,
     pub font_size: f32,
+    pub features: FontFeatures,
 }
 
 fn fill(renderer: &mut iced::Renderer, bounds: Rectangle, c: Rgb) {
@@ -353,10 +378,24 @@ fn is_han(c: char) -> bool {
         0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0x20000..=0x3134F)
 }
 
+/// The color emoji font that ships with the system.
+#[cfg(target_os = "macos")]
+const EMOJI_FONT: &str = "Apple Color Emoji";
+#[cfg(target_os = "windows")]
+const EMOJI_FONT: &str = "Segoe UI Emoji";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const EMOJI_FONT: &str = "Noto Color Emoji";
+
 /// Font for a run. The text stack's default Han fallback on macOS names a font that is not always
 /// installed as a file, so ideographs would render blank; point them at one that ships with the OS.
+/// A wide cluster asking for emoji presentation (VS16) is drawn with the color emoji font: the
+/// terminal font's own glyph for the base (such as a text-style heart) would otherwise win. A
+/// narrow one (without mode 2027 the cluster keeps one cell) keeps the terminal font, which fits.
 fn run_font(base: Font, run: &TextRun) -> Font {
     let mut font = base;
+    if run.span.cells == 2 && run.text.contains('\u{FE0F}') {
+        return Font::with_name(EMOJI_FONT);
+    }
     if cfg!(target_os = "macos")
         && run.span.cells == 2
         && run.text.chars().next().is_some_and(is_han)
@@ -374,6 +413,7 @@ pub fn render(
     m: Metrics,
     accent: Option<Rgb>,
     background_opacity: f32,
+    shapes: &mut ShapeCache,
 ) {
     let (cw, ch) = (m.cell.width, m.cell.height);
     let rect = |s: Span| Rectangle {
@@ -447,6 +487,9 @@ pub fn render(
             ),
         }
     }
+    // Grid text is shaped here, with the run's OpenType features, and handed to the renderer
+    // as shaped buffers; the cache keeps them alive until the frame after their last use.
+    shapes.end_frame();
     for run in &list.texts {
         let mut font = run_font(m.font, run);
         if run.bold {
@@ -455,23 +498,29 @@ pub fn render(
         if run.italic {
             font.style = iced::font::Style::Italic;
         }
+        let detected = if m.features.ligatures && !run.alone {
+            shapes.sets(font)
+        } else {
+            std::sync::Arc::from([])
+        };
+        let features = run_features(&m.features, &detected, run.alone);
         let r = rect(run.span);
-        renderer.fill_text(
-            text::Text {
-                content: run.text.clone(),
-                bounds: Size::new(r.width + cw, ch),
-                size: Pixels(m.font_size),
-                line_height: text::LineHeight::Absolute(Pixels(ch)),
-                font,
-                align_x: text::Alignment::Left,
-                align_y: iced::alignment::Vertical::Top,
-                shaping: text::Shaping::Advanced,
-                wrapping: text::Wrapping::None,
-            },
-            iced::Point::new(r.x, r.y),
-            color(run.fg),
-            bounds,
+        let key = ShapeKey::new(
+            &run.text,
+            font,
+            m.font_size,
+            ch,
+            r.width + cw,
+            features,
+            !run.alone,
         );
+        let buffer = shapes.buffer(key);
+        renderer.fill_raw(Raw {
+            buffer: std::sync::Arc::downgrade(&buffer),
+            position: iced::Point::new(r.x, r.y),
+            color: color(run.fg),
+            clip_bounds: bounds,
+        });
     }
     if let Some(a) = accent {
         renderer.fill_quad(
@@ -510,6 +559,32 @@ mod tests {
         );
         t.feed(bytes);
         t
+    }
+
+    #[test]
+    fn emoji_presentation_draws_with_the_color_emoji_font() {
+        let t = term_with("\x1b[?2027h❤\u{FE0F} ❤ 日".as_bytes());
+        let list = build(&mut RowReader::new(), &t, &scheme(), true, None, None);
+        let font_of = |text: &str| {
+            let run = list.texts.iter().find(|r| r.text == text).expect(text);
+            run_font(Font::MONOSPACE, run).family
+        };
+        assert_eq!(font_of("❤\u{FE0F}"), iced::font::Family::Name(EMOJI_FONT));
+        assert_eq!(
+            font_of("❤"),
+            Font::MONOSPACE.family,
+            "text presentation keeps the font"
+        );
+
+        // Without the mode the cluster has one cell: a color emoji would spill over the next.
+        let t = term_with("❤\u{FE0F}x".as_bytes());
+        let list = build(&mut RowReader::new(), &t, &scheme(), true, None, None);
+        let run = list.texts.iter().find(|r| r.text == "❤\u{FE0F}").unwrap();
+        assert_eq!(run.span.cells, 1);
+        assert_eq!(
+            run_font(Font::MONOSPACE, run).family,
+            Font::MONOSPACE.family
+        );
     }
 
     #[test]
@@ -612,6 +687,90 @@ mod tests {
         assert_eq!(hovered.lines[0].0.cells, 4);
     }
 
+    /// The text of each run on row 0, in order.
+    fn row0(list: &DrawList) -> Vec<&str> {
+        list.texts
+            .iter()
+            .filter(|r| r.span.row == 0)
+            .map(|r| r.text.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn runs_split_at_the_cursor() {
+        let t = term_with(b"a->b\x1b[1;3H");
+        let list = build(&mut RowReader::new(), &t, &scheme(), true, None, None);
+        assert_eq!(row0(&list), ["a-", ">", "b"]);
+        // An unfocused (hollow) cursor keeps the cell's colors, and still splits.
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
+        assert_eq!(row0(&list), ["a-", ">", "b"]);
+    }
+
+    #[test]
+    fn runs_split_at_selection_edges() {
+        let mut t = term_with(b"a->b");
+        t.set_selection(Some(crate::Selection::on_line(0, 2, 3)));
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
+        assert_eq!(row0(&list), ["a-", ">b"]);
+    }
+
+    #[test]
+    fn runs_split_at_match_edges() {
+        let t = term_with(b"a->b");
+        let pattern = crate::SearchPattern::new(&crate::SearchQuery::new(">", false))
+            .unwrap()
+            .unwrap();
+        let h = Highlight {
+            pattern,
+            current: None,
+            match_bg: Rgb { r: 1, g: 1, b: 1 },
+            current_bg: Rgb { r: 2, g: 2, b: 2 },
+            current_fg: Rgb { r: 3, g: 3, b: 3 },
+        };
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, Some(&h));
+        assert_eq!(row0(&list), ["a-", ">", "b"]);
+    }
+
+    #[test]
+    fn runs_split_on_background_and_underline() {
+        let t = term_with(b"\x1b[41m-\x1b[0m>");
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
+        assert_eq!(row0(&list), ["-", ">"]);
+        let t = term_with(b"\x1b[4m-\x1b[0m>");
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
+        assert_eq!(row0(&list), ["-", ">"]);
+    }
+
+    #[test]
+    fn alone_runs_are_marked() {
+        let t = term_with("日 e\u{301} ->".as_bytes());
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
+        let alone: Vec<(&str, bool)> = list
+            .texts
+            .iter()
+            .map(|r| (r.text.as_str(), r.alone))
+            .collect();
+        assert_eq!(alone, [("日", true), ("e\u{301}", true), ("->", false)]);
+    }
+
+    #[test]
+    fn a_ligature_at_the_last_cells_stays_in_its_run() {
+        let mut t = Terminal::new(
+            crate::GridSize {
+                cols: 4,
+                rows: 3,
+                cell_width: 8.0,
+                cell_height: 16.0,
+            },
+            100,
+        );
+        t.feed(b"ab->\r\n");
+        let list = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
+        let run = list.texts.iter().find(|r| r.span.row == 0).unwrap();
+        assert_eq!(run.text, "ab->");
+        assert_eq!((run.span.col, run.span.cells), (0, 4));
+    }
+
     #[test]
     fn build_marks_selection_background() {
         let mut t = term_with(b"hello");
@@ -666,5 +825,238 @@ mod tests {
         // Without a highlight nothing is tinted.
         let plain = build(&mut RowReader::new(), &t, &scheme(), false, None, None);
         assert!(plain.quads.iter().all(|(_, c)| *c != tint && *c != strong));
+    }
+
+    // Compression-on variants: the same content, written into the oldest history rows and
+    // compressed (`cold_tests::pair`), viewed with the view scrolled to the top, builds the same
+    // draw list as with compression off.
+
+    /// Both terminals of the pair (`cols` x `rows`), scrolled to the top of the history, after
+    /// `prepare` (given the oldest line); asserts that `draw` builds the same list from each and
+    /// returns the compressed one's.
+    fn cold_list(
+        cols: u16,
+        rows: u16,
+        before: &[u8],
+        prepare: impl Fn(&mut Terminal, i32),
+        draw: impl Fn(&Terminal) -> DrawList,
+    ) -> DrawList {
+        let (mut off, mut on) = crate::cold_tests::pair(cols, rows, before, b"");
+        let top = on.term().grid().topmost_line().0;
+        assert!(top < -1000, "the content is deep in history");
+        for t in [&mut off, &mut on] {
+            t.scroll_to_top();
+            prepare(t, top);
+        }
+        let (a, b) = (draw(&off), draw(&on));
+        assert_eq!(
+            format!("{a:?}"),
+            format!("{b:?}"),
+            "differs with compression on"
+        );
+        b
+    }
+
+    fn cold(before: &[u8]) -> DrawList {
+        cold_list(
+            20,
+            4,
+            before,
+            |_, _| {},
+            |t| build(&mut RowReader::new(), t, &scheme(), true, None, None),
+        )
+    }
+
+    #[test]
+    fn build_batches_runs_by_style_compressed() {
+        let list = cold(b"ab \x1b[31mcd\x1b[0m  \x1b[1mef\r\n");
+        let texts: Vec<_> = list
+            .texts
+            .iter()
+            .filter(|r| r.span.row == 0)
+            .map(|r| (r.span.col, r.text.as_str(), r.bold))
+            .collect();
+        assert_eq!(
+            texts,
+            vec![(0, "ab", false), (3, "cd", false), (7, "ef", true)]
+        );
+        assert!(list.cursor.is_none(), "the cursor is below the view");
+    }
+
+    #[test]
+    fn explicit_backgrounds_are_quads_compressed() {
+        let list = cold(b"\x1b[42mab\x1b[0m cd\r\n");
+        let green = list.quads.iter().find(|(s, _)| s.row == 0 && s.col == 0);
+        assert_eq!(green.map(|(s, _)| s.cells), Some(2));
+    }
+
+    #[test]
+    fn wide_and_non_ascii_characters_compressed() {
+        let list = cold("a日b\r\na❯b █▓─x\r\n".as_bytes());
+        let texts: Vec<_> = list
+            .texts
+            .iter()
+            .map(|r| (r.span.row, r.span.col, r.span.cells, r.text.as_str()))
+            .collect();
+        assert_eq!(
+            texts[..6],
+            [
+                (0, 0, 1, "a"),
+                (0, 1, 2, "日"),
+                (0, 3, 1, "b"),
+                (1, 0, 1, "a"),
+                (1, 1, 1, "❯"),
+                (1, 2, 6, "b █▓─x")
+            ]
+        );
+    }
+
+    #[test]
+    fn emoji_presentation_draws_with_the_color_emoji_font_compressed() {
+        let list = cold("\x1b[?2027h❤\u{FE0F} ❤ 日\r\n".as_bytes());
+        let run = list.texts.iter().find(|r| r.text == "❤\u{FE0F}").unwrap();
+        assert_eq!(
+            run_font(Font::MONOSPACE, run).family,
+            iced::font::Family::Name(EMOJI_FONT)
+        );
+    }
+
+    #[test]
+    fn build_underlines_hovered_link_only_compressed() {
+        let bytes = b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\ x\r\n";
+        let none = cold(bytes);
+        assert!(none.lines.is_empty());
+        let hovered = cold_list(
+            20,
+            4,
+            bytes,
+            |_, _| {},
+            |t| {
+                let top = t.term().grid().topmost_line();
+                let link = t
+                    .term()
+                    .grid()
+                    .cell(Point::new(top, Column(0)))
+                    .hyperlink()
+                    .unwrap();
+                assert_eq!(link.uri(), "https://example.com");
+                build(&mut RowReader::new(), t, &scheme(), true, Some(&link), None)
+            },
+        );
+        assert_eq!(hovered.lines.len(), 1);
+        assert_eq!(hovered.lines[0].0.cells, 4);
+    }
+
+    #[test]
+    fn runs_split_at_selection_and_match_edges_compressed() {
+        let list = cold_list(
+            20,
+            4,
+            b"a->b\r\n",
+            |t, top| t.set_selection(Some(crate::Selection::on_line(top, 2, 3))),
+            |t| build(&mut RowReader::new(), t, &scheme(), false, None, None),
+        );
+        assert_eq!(row0(&list), ["a-", ">b"]);
+        let list = cold_list(
+            20,
+            4,
+            b"a->b\r\n",
+            |_, _| {},
+            |t| {
+                let pattern = crate::SearchPattern::new(&crate::SearchQuery::new(">", false))
+                    .unwrap()
+                    .unwrap();
+                let h = Highlight {
+                    pattern,
+                    current: None,
+                    match_bg: Rgb { r: 1, g: 1, b: 1 },
+                    current_bg: Rgb { r: 2, g: 2, b: 2 },
+                    current_fg: Rgb { r: 3, g: 3, b: 3 },
+                };
+                build(&mut RowReader::new(), t, &scheme(), false, None, Some(&h))
+            },
+        );
+        assert_eq!(row0(&list), ["a-", ">", "b"]);
+    }
+
+    #[test]
+    fn runs_split_on_background_and_underline_and_alone_runs_compressed() {
+        assert_eq!(row0(&cold(b"\x1b[41m-\x1b[0m>\r\n")), ["-", ">"]);
+        assert_eq!(row0(&cold(b"\x1b[4m-\x1b[0m>\r\n")), ["-", ">"]);
+        let list = cold("日 e\u{301} ->\r\n".as_bytes());
+        let alone: Vec<(&str, bool)> = list
+            .texts
+            .iter()
+            .filter(|r| r.span.row == 0)
+            .map(|r| (r.text.as_str(), r.alone))
+            .collect();
+        assert_eq!(alone, [("日", true), ("e\u{301}", true), ("->", false)]);
+    }
+
+    #[test]
+    fn a_ligature_at_the_last_cells_stays_in_its_run_compressed() {
+        let list = cold_list(
+            4,
+            3,
+            b"ab->\r\n",
+            |_, _| {},
+            |t| build(&mut RowReader::new(), t, &scheme(), false, None, None),
+        );
+        let run = list.texts.iter().find(|r| r.span.row == 0).unwrap();
+        assert_eq!(run.text, "ab->");
+        assert_eq!((run.span.col, run.span.cells), (0, 4));
+    }
+
+    #[test]
+    fn build_marks_selection_and_tints_matches_compressed() {
+        let list = cold_list(
+            20,
+            4,
+            b"hello\r\n",
+            |t, top| {
+                let mut sel = crate::Selection::start(Point::new(Line(top), Column(1)));
+                sel.update(Point::new(Line(top), Column(3)));
+                t.set_selection(Some(sel));
+            },
+            |t| build(&mut RowReader::new(), t, &scheme(), false, None, None),
+        );
+        assert!(list.quads.contains(&(
+            Span {
+                row: 0,
+                col: 1,
+                cells: 3
+            },
+            scheme().selection
+        )));
+        let (tint, strong) = (Rgb { r: 1, g: 1, b: 1 }, Rgb { r: 2, g: 2, b: 2 });
+        let list = cold_list(
+            20,
+            4,
+            b"ab ab\r\nab\r\n",
+            |_, _| {},
+            |t| {
+                let pattern = crate::SearchPattern::new(&crate::SearchQuery::new("ab", false))
+                    .unwrap()
+                    .unwrap();
+                let all = t.visible_matches(&pattern);
+                assert_eq!(all.len(), 3);
+                let h = Highlight {
+                    pattern,
+                    current: Some(all[1]),
+                    match_bg: tint,
+                    current_bg: strong,
+                    current_fg: Rgb { r: 3, g: 3, b: 3 },
+                };
+                build(&mut RowReader::new(), t, &scheme(), false, None, Some(&h))
+            },
+        );
+        let quads: Vec<_> = list
+            .quads
+            .iter()
+            .map(|(s, c)| (s.row, s.col, s.cells, *c))
+            .collect();
+        assert!(quads.contains(&(0, 0, 2, tint)));
+        assert!(quads.contains(&(1, 0, 2, tint)));
+        assert_eq!(quads.iter().filter(|q| q.3 == strong).count(), 1);
     }
 }

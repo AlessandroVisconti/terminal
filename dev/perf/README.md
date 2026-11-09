@@ -487,9 +487,81 @@ H  one-tab-streaming-panes  106.3 / 106.7 / 107.0 MB RSS, 13.30 / 13.00 / 13.30 
 Ht streaming-tabs           107.6 / 107.7 / 110.5 MB RSS, 13.00 / 12.90 / 14.90 % CPU
 ```
 
+## Cold history compression (2026-11-08)
+
+Opt-in `history_compression` (design `docs/superpowers/specs/2026-11-08-history-compression-design.md`,
+gates in its section 6) with feathercritty at `1b44975` (branch `feature/history-compression`,
+before its PR merged). Library-level numbers are in feathercritty's `benches/RESULTS.md`; these
+are the fbterm rows. Apple M5 Max, macOS, release builds, load average about 2.3-2.5 (the owner's
+working Mac, other apps running).
+
+### Reads in compressed history (`cold_bench`, spec 6.4 fbterm rows)
+
+`cargo run --release -p fbterm-term --example cold_bench`: one 126x50 tab with a 1,000,000-line
+history of colored service-log lines (122 MB of output, generated deterministically), once with
+compression off and once with it on (10,000 rows kept uncompressed, every job run inline: 141 ms).
+Each measure ran 9 times, off and on alternating; median [min - max]. The draw-list positions
+are 100,000 lines up and further, 60,000 lines apart per run, so each run's first frame finds
+nothing of its position in the decompression cache.
+
+| Measure | Off | On | On / off | Gate | Verdict |
+|---|---|---|---|---|---|
+| draw-list build, first frame (cache cold) | 0.066 ms [0.062 - 0.116] | 0.093 ms [0.085 - 0.141] | - | at most 2 ms | pass |
+| draw-list build, following frames (cache warm), per frame | 0.063 ms [0.063 - 0.067] | 0.064 ms [0.063 - 0.065] | 0.996 [0.961 - 1.028] | at most 1.15x | pass |
+| search, whole history, literal, no match | 550.6 ms [547.4 - 553.8] | 614.6 ms [612.9 - 618.9] | 1.117 [1.109 - 1.122] | at most 2x | pass |
+| search, whole history, regex, no match | 567.3 ms [556.2 - 569.4] | 631.5 ms [619.7 - 634.0] | 1.113 [1.108 - 1.127] | (recorded) | - |
+| export, whole history, plain | 294.3 ms [294.0 - 296.9] | 358.9 ms [357.5 - 362.2] | 1.219 [1.209 - 1.226] | at most 2x | pass |
+| export, whole history, with colors | 622.8 ms [621.9 - 626.1] | 682.8 ms [681.7 - 684.8] | 1.096 [1.092 - 1.100] | at most 2x | pass |
+
+A second full run agreed within 2% on every row (first frame 0.094 ms, warm ratio 1.001, search
+1.122, plain export 1.222, colored export 1.089). The draw list reads at most two blocks per
+frame, so even its cold first frame is a small fraction of the 2 ms gate; search and export
+decompress each block once, in order, and take 9-22% longer than with compression off.
+
+### Scenario I: one tab with a 1,000,000-line log
+
+`SCENARIOS=I RUNS=5 bash dev/perf/sessions.sh`: one tab, `scrollback_lines = 1000000`, running
+`dev/perf/servicelog.pl` (1,050,000 colored service-log lines, about 127 MB, as fast as fbterm
+reads them), then `sleep`. I-off has `history_compression = false`, I-on `true` with
+`uncompressed_history_lines` at its default (10,000); nothing else is in the temp config dir and
+the tab's shell is `/bin/sh`. RSS and footprint are read after 60 s, when the output and the
+compression backlog have drained (RSS no longer moves), then CPU over 10 s while idle. Five runs
+each, alternating off and on; load average (1 minute) 1.1-1.5.
+
+| | fbterm RSS (MB) | footprint (MB) | idle CPU over 10 s |
+|---|---|---|---|
+| I-off | 297.1 [297.0 - 298.7] | 249.5 [249.3 - 250.8] | 0.00% [0.00 - 0.20] |
+| I-on | 159.4 [158.9 - 162.4] | 111.5 [111.0 - 114.8] | 0.00% [0.00 - 0.10] |
+
+Compression saves about 138 MB resident (46%) on a full 1,000,000-line log tab: about 196 MB of
+history over the one-tab base of about 100 MB becomes about 58 MB. Verdict on the idle CPU gate
+(0.00% with compression on): pass on the median, with four of five runs at exactly 0.00%. One
+I-on run read 0.10%, which is one 10 ms tick of `ps` CPU time in the 10 s window; an I-off run
+read 0.20% the same way (with RSS moving by 4.7 MB in that window), so the tick is not specific
+to compression and was not investigated further. The worker has no tick or timer: it sleeps on
+its queue until output or a setting change wakes it.
+
+```
+I-off 297.1 297.1 249.5 249.5 1 1.2 0.00 0   (load_start 1.44)
+I-on  159.2 159.2 111.2 111.2 1 1.2 0.10 0   (1.19)
+I-off 297.0 297.0 249.3 249.3 1 1.2 0.00 0   (1.23)
+I-on  160.3 160.3 114.8 114.8 1 1.2 0.00 0   (1.20)
+I-off 297.2 297.2 249.5 249.5 1 1.2 0.00 0   (1.32)
+I-on  158.9 158.9 111.0 111.0 1 1.2 0.00 0   (1.13)
+I-off 297.1 301.8 249.5 250.5 1 1.2 0.20 0   (1.25)
+I-on  162.4 162.4 114.3 114.3 1 1.2 0.00 0   (1.48)
+I-off 298.7 298.7 250.8 250.8 1 1.2 0.00 0   (1.13)
+I-on  159.4 159.4 111.5 111.5 1 1.2 0.00 0   (1.18)
+```
+
+Columns: `scenario rss_mb rss_end_mb footprint_mb footprint_end_mb children children_rss_mb
+cpu_pct stragglers`.
+
 ## Re-running
 
 ```
-bash dev/perf/sessions.sh                      # everything, 3 runs each (about 45 minutes)
+bash dev/perf/sessions.sh                      # everything, 3 runs each (about 55 minutes)
 SCENARIOS=A RUNS=1 WARMUP=10 bash dev/perf/sessions.sh   # quick check
+SCENARIOS=I RUNS=5 bash dev/perf/sessions.sh   # history compression off and on (about 13 minutes)
+cargo run --release -p fbterm-term --example cold_bench   # reads in compressed history (about 45 s)
 ```

@@ -6,7 +6,7 @@ use fbterm_config::Rgb;
 use feathercritty::event::WindowSize;
 use feathercritty::event::{Event, EventListener};
 use feathercritty::grid::{Dimensions, Scroll};
-use feathercritty::term::{Config, Term};
+use feathercritty::term::{Config, HistoryDone, HistoryJob, Term};
 use feathercritty::vte::ansi::{Processor, Rgb as VteRgb};
 use parking_lot::Mutex;
 
@@ -169,6 +169,10 @@ pub struct Terminal {
     parser: Processor,
     shared: Arc<Mutex<Shared>>,
     pub(crate) generation: u64,
+    /// Calls of [`Terminal::drop_history_cache`] (tests: the read cache itself is not visible
+    /// outside feathercritty).
+    #[cfg(test)]
+    pub(crate) cache_drops: usize,
 }
 
 pub type SharedTerminal = Arc<Mutex<Terminal>>;
@@ -198,6 +202,8 @@ impl Terminal {
             parser: Processor::new(),
             shared,
             generation: 0,
+            #[cfg(test)]
+            cache_drops: 0,
         }
     }
 
@@ -236,6 +242,65 @@ impl Terminal {
         before.saturating_sub(self.history_len())
     }
 
+    /// Compress history lines older than the `keep` newest (`None`: compress nothing, and
+    /// decompress what is compressed). Only marks blocks: the work is done by history jobs,
+    /// which [`crate::history_worker`] runs off the lock. Like [`Terminal::set_kitty_keyboard`],
+    /// the title the emulator re-announces is discarded.
+    pub fn set_history_compression(&mut self, keep: Option<usize>) {
+        if self.config.history_compression == keep {
+            return;
+        }
+        self.config.history_compression = keep;
+        let seen = self.shared.lock().events.len();
+        self.term.set_options(self.config.clone());
+        self.drop_reannounced_title(seen);
+        self.generation += 1;
+    }
+
+    /// The history compression setting (`None`: off).
+    pub fn history_compression(&self) -> Option<usize> {
+        self.config.history_compression
+    }
+
+    /// Whether history blocks may be waiting to be compressed or decompressed. O(1), so it is
+    /// checked after every feed.
+    pub fn has_history_jobs(&self) -> bool {
+        self.term.has_history_jobs()
+    }
+
+    /// The next history job, with a copy of its block; run it without the lock.
+    pub fn next_history_job(&mut self) -> Option<HistoryJob> {
+        self.term.next_history_job()
+    }
+
+    /// Up to `max` history jobs, oldest first; run them without the lock.
+    pub fn next_history_jobs(&mut self, max: usize) -> Vec<HistoryJob> {
+        self.term.next_history_jobs(max)
+    }
+
+    /// Install a finished history job. `false` when the result is stale (the history changed
+    /// since the job was taken) and was dropped; that is normal.
+    pub fn install_history_job(&mut self, done: HistoryDone) -> bool {
+        self.term.install_history_job(done)
+    }
+
+    /// Free the decompressed history blocks kept for reads (up to 256 KiB with compression on;
+    /// nothing otherwise). Called once after a sweep of the whole history (a search, an export),
+    /// so the blocks it read last do not stay resident.
+    pub fn drop_history_cache(&mut self) {
+        self.term.drop_history_cache();
+        #[cfg(test)]
+        {
+            self.cache_drops += 1;
+        }
+    }
+
+    /// Run and install every pending history job now, under the caller's lock (tests and
+    /// measurements; the app leaves them to [`crate::history_worker`]).
+    pub fn run_history_jobs(&mut self) {
+        self.term.run_history_jobs();
+    }
+
     /// Lines of scrollback the normal screen holds (while the alternate screen is up, the
     /// normal screen's, which is kept aside).
     pub fn history_len(&self) -> usize {
@@ -259,6 +324,31 @@ impl Terminal {
 
     pub fn kitty_keyboard(&self) -> bool {
         self.config.kitty_keyboard
+    }
+
+    /// Start with grapheme clusters on (DEC private mode 2027) after a reset or a restart. This
+    /// only sets the default: the mode a running program has is never flipped. Like
+    /// [`Terminal::set_kitty_keyboard`], the title the emulator re-announces is discarded.
+    pub fn set_grapheme_clusters(&mut self, on: bool) {
+        if self.config.grapheme_clusters == on {
+            return;
+        }
+        self.config.grapheme_clusters = on;
+        let seen = self.shared.lock().events.len();
+        self.term.set_options(self.config.clone());
+        self.drop_reannounced_title(seen);
+        self.generation += 1;
+    }
+
+    /// The grapheme clusters default (the setting), not the live mode.
+    pub fn grapheme_clusters(&self) -> bool {
+        self.config.grapheme_clusters
+    }
+
+    /// Put mode 2027 back to the default, for a new session taking over this terminal.
+    pub fn reset_grapheme_clusters(&mut self) {
+        self.term.reset_grapheme_cluster_mode();
+        self.generation += 1;
     }
 
     /// Counter bumped by every change that can alter what is drawn.
@@ -620,6 +710,55 @@ mod tests {
             t.mode(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn grapheme_setting_sets_default_not_live_mode() {
+        let mut t = Terminal::new(size(80, 24), 100);
+        assert!(!t.grapheme_clusters());
+        t.set_grapheme_clusters(true);
+        assert!(t.grapheme_clusters());
+        assert!(
+            !t.mode().contains(TermMode::GRAPHEME_CLUSTER),
+            "never flips a live mode"
+        );
+        t.reset_grapheme_clusters();
+        assert!(t.mode().contains(TermMode::GRAPHEME_CLUSTER));
+    }
+
+    /// `(char, wide)` for the first `n` cells of line 0.
+    fn cells(t: &Terminal, n: usize) -> Vec<(char, bool)> {
+        (0..n)
+            .map(|c| {
+                let cell = &t.term().grid().screen()[Line(0)][Column(c)];
+                (cell.c, cell.flags.contains(Flags::WIDE_CHAR))
+            })
+            .collect()
+    }
+
+    const CLUSTERS: &str = "🇮🇹 👍🏽 👨\u{200D}👩\u{200D}👧 ❤\u{FE0F}";
+
+    #[test]
+    fn clusters_with_mode_one_cell_each() {
+        let mut t = Terminal::new(size(80, 24), 100);
+        t.feed(format!("\x1b[?2027h{CLUSTERS}").as_bytes());
+        let wide: Vec<char> = cells(&t, 11)
+            .into_iter()
+            .filter(|&(_, wide)| wide)
+            .map(|(c, _)| c)
+            .collect();
+        assert_eq!(wide, ['🇮', '👍', '👨', '❤']);
+        assert_eq!(t.term().grid().cursor.point.column, Column(11));
+    }
+
+    #[test]
+    fn clusters_without_mode_unchanged() {
+        let mut t = Terminal::new(size(80, 24), 100);
+        t.feed(CLUSTERS.as_bytes());
+        // Regional indicators and the family's members take cells of their own; zero-width
+        // pieces attach to the cell before them: 2 + 1 + 4 + 1 + 6 + 1 + 1 columns.
+        assert_eq!(t.term().grid().cursor.point.column, Column(16));
+        assert_eq!(cells(&t, 2), [('🇮', false), ('🇹', false)]);
     }
 
     #[test]

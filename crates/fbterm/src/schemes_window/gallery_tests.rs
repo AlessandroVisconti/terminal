@@ -1,4 +1,4 @@
-//! The theme gallery in the Color schemes window, against a temporary config directory and a
+//! The theme gallery in the Color schemes tab, against a temporary config directory and a
 //! fake fetch: when the catalog is fetched, how failures read, and what Install and Update do
 //! to scheme files and open panes. Nothing here touches the network.
 
@@ -13,9 +13,16 @@ use super::gallery::{
     EDITED_HERE, GalleryIo, GalleryLoad, GalleryRow, NO_LONGER_OFFERED, RowButton, UpdateChoice,
     clip_chars, credit_line, gallery_rows,
 };
-use super::{Entry, SchemesMsg, SchemesState};
+use super::{Entry, FontContext, SchemesMsg, SchemesState};
 use crate::app::{App, Message};
 use crate::schemes_tests::{app_with, rgb, style, with_scheme};
+
+/// No installed fonts beyond the bundled one, the default font, theme fonts off.
+const FONTS: FontContext<'static> = FontContext {
+    installed: &[],
+    global_font: "Geist Mono",
+    use_theme_fonts: false,
+};
 
 /// What the fake fetch and opener saw.
 #[derive(Default)]
@@ -179,10 +186,7 @@ fn opening_gallery_fetches_once() {
     assert!(matches!(win(&app).gallery, GalleryLoad::Loaded(_)));
     // Closed and opened again in the same run: the catalog is still there, unfetched.
     let _ = send(&mut app, SchemesMsg::Close);
-    let id = app.schemes_window();
-    if let Some(id) = id {
-        let _ = app.update(Message::WindowClosed(id));
-    }
+    assert!(app.schemes_win.is_none());
     let _ = send(&mut app, SchemesMsg::Open);
     assert_eq!(send(&mut app, SchemesMsg::ShowGallery(true)).units(), 0);
     assert!(matches!(win(&app).gallery, GalleryLoad::Loaded(_)));
@@ -556,9 +560,8 @@ fn credit_link_only_https() {
     );
 }
 
-fn close_window(app: &mut App) {
-    let id = app.schemes_window().expect("schemes window open");
-    let _ = app.update(Message::WindowClosed(id));
+fn close_tab(app: &mut App) {
+    let _ = send(app, SchemesMsg::Close);
     assert!(app.schemes_win.is_none());
 }
 
@@ -577,7 +580,7 @@ fn reopen_during_loading_and_stale_results() {
     assert_eq!(send(&mut app, SchemesMsg::ShowGallery(true)).units(), 1);
     let first = app.gallery_generation;
     // Closed and opened again while the fetch runs: still Loading, no second fetch.
-    close_window(&mut app);
+    close_tab(&mut app);
     let _ = send(&mut app, SchemesMsg::Open);
     assert!(matches!(win(&app).gallery, GalleryLoad::Loading));
     assert_eq!(send(&mut app, SchemesMsg::ShowGallery(true)).units(), 0);
@@ -697,7 +700,7 @@ fn four() -> Catalog {
 #[test]
 fn gallery_rows_sorted_by_name_ignoring_case() {
     let (app, _, _, _) = app_with(&[profile("a")], "", &[]);
-    let rows = gallery_rows(&four(), &app.schemes, "", None);
+    let rows = gallery_rows(&four(), &app.schemes, "", None, &FONTS);
     assert_eq!(row_ids(&rows), ["ash", "dune", "oat", "pine"]);
     let ash = &rows[0];
     assert_eq!(ash.name, "Ash");
@@ -714,7 +717,7 @@ fn gallery_filter_matches_name_project_and_author() {
     let (app, _, _, _) = app_with(&[profile("a")], "", &[]);
     let cat = four();
     let ids = |filter: &str, variant| {
-        row_ids(&gallery_rows(&cat, &app.schemes, filter, variant))
+        row_ids(&gallery_rows(&cat, &app.schemes, filter, variant, &FONTS))
             .into_iter()
             .map(str::to_owned)
             .collect::<Vec<_>>()
@@ -749,7 +752,7 @@ fn gallery_row_buttons_follow_install_state() {
         entry("v", 1, "#101010", true),
     ]))
     .unwrap();
-    let rows = gallery_rows(&cat, &app.schemes, "", None);
+    let rows = gallery_rows(&cat, &app.schemes, "", None, &FONTS);
     let by = |id: &str| rows.iter().find(|r| r.id == id);
     assert_eq!(by("x").unwrap().button, Some(RowButton::Update));
     assert_eq!(by("y").unwrap().button, Some(RowButton::Installed));
@@ -825,7 +828,7 @@ fn demo_gallery_shows_every_row_kind() {
     let (catalog, installed) = super::gallery::demo_catalog();
     assert!(catalog.skipped.is_empty(), "{:?}", catalog.skipped);
     let (app, _, _, _) = app_with(&[profile("a")], "", &installed);
-    let rows = gallery_rows(&catalog, &app.schemes, "", None);
+    let rows = gallery_rows(&catalog, &app.schemes, "", None, &FONTS);
     assert_eq!(rows.len(), 5);
     assert_eq!(rows[0].button, Some(RowButton::Install));
     let kinds: Vec<_> = rows

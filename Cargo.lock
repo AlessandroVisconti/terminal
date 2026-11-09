@@ -1454,7 +1454,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fbterm"
-version = "0.8.3"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "block2 0.6.2",
@@ -1494,7 +1494,7 @@ dependencies = [
 
 [[package]]
 name = "fbterm-config"
-version = "0.8.3"
+version = "0.9.0"
 dependencies = [
  "directories",
  "serde",
@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "fbterm-secrets"
-version = "0.8.3"
+version = "0.9.0"
 dependencies = [
  "age",
  "base64 0.22.1",
@@ -1527,7 +1527,7 @@ dependencies = [
 
 [[package]]
 name = "fbterm-session"
-version = "0.8.3"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "data-encoding",
@@ -1552,17 +1552,21 @@ dependencies = [
 
 [[package]]
 name = "fbterm-term"
-version = "0.8.3"
+version = "0.9.0"
 dependencies = [
  "fbterm-config",
  "feathercritty",
  "flate2",
  "iced",
+ "libc",
  "parking_lot",
  "png",
  "portable-pty",
  "regex",
  "serde_json",
+ "skrifa 0.44.0",
+ "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1576,8 +1580,8 @@ dependencies = [
 
 [[package]]
 name = "feathercritty"
-version = "0.26.0+fbterm.5"
-source = "git+https://github.com/featherbitplatform/feathercritty?rev=3c290b8c1f0c89b6e726c27e1f5eb15fb08742be#3c290b8c1f0c89b6e726c27e1f5eb15fb08742be"
+version = "0.26.0+fbterm.7"
+source = "git+https://github.com/featherbitplatform/feathercritty?rev=938bbbd9372e53ba8db10c6015ee8eb1632e7d97#938bbbd9372e53ba8db10c6015ee8eb1632e7d97"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.2",
@@ -1593,9 +1597,11 @@ dependencies = [
  "rustix-openpty",
  "serde",
  "signal-hook",
+ "unicode-segmentation",
  "unicode-width",
  "vte",
  "windows-sys 0.59.0",
+ "zstd",
 ]
 
 [[package]]
@@ -6964,6 +6970,34 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zstd"
+version = "0.14.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db3ae9bf90af6e40197bef767eeefc46ad6397420fe873830bd85e5fbbfb3c70"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "8.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ded520f16b29e1a9b771c722221b2b0a0398c2316d9bb3c42b458a5414d7434b"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.1.2+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
 
 [[package]]
 name = "zvariant"

@@ -71,11 +71,7 @@ impl App {
             current: bar.current_match().filter(|_| bar.alt_screen == alt),
             match_bg: blend(accent, background, 0.38),
             current_bg: accent,
-            current_fg: fbterm_config::Rgb {
-                r: 255,
-                g: 255,
-                b: 255,
-            },
+            current_fg: to_rgb(self.tokens.on_accent),
         })
     }
 
@@ -484,6 +480,25 @@ mod tests {
     }
 
     #[test]
+    fn the_current_match_text_reads_on_the_accent() {
+        let (mut app, _, _) = app_with_tabs(1);
+        let mut bar = FindBar::new("", false);
+        let _ = bar.set_query("needle".into(), 0);
+        for t in [
+            crate::theme::graphite_tokens(),
+            crate::theme::pale_accent_tokens(),
+        ] {
+            app.tokens = t;
+            let black = fbterm_config::Rgb { r: 0, g: 0, b: 0 };
+            let h = app.highlight(&bar, false, black).expect("a pattern");
+            let c = |v: fbterm_config::Rgb| iced::Color::from_rgb8(v.r, v.g, v.b);
+            assert_eq!(c(h.current_bg), t.accent);
+            let k = crate::tab_look::contrast(c(h.current_fg), c(h.current_bg));
+            assert!(k >= 4.5, "{k}");
+        }
+    }
+
+    #[test]
     fn the_bar_opens_on_the_active_tab_and_closes() {
         let (mut app, wid, ids) = app_with_tabs(2);
         let _ = app.find(wid, FindMsg::Open);
@@ -520,6 +535,7 @@ mod tests {
                 below: None,
                 limit: fbterm_term::MATCH_CAP,
                 snippets: false,
+                drop_cache: true,
             },
             &std::sync::atomic::AtomicBool::new(false),
         );
@@ -585,6 +601,7 @@ mod tests {
                 below: None,
                 limit: super::super::all::PER_TAB + 1,
                 snippets: true,
+                drop_cache: true,
             };
             let out = fbterm_term::search(
                 &t.terminal,
@@ -639,6 +656,7 @@ mod tests {
                 below: None,
                 limit: super::super::all::PER_TAB + 1,
                 snippets: true,
+                drop_cache: true,
             };
             let out = fbterm_term::search(
                 &t.terminal,
@@ -748,6 +766,7 @@ mod tests {
                     below: None,
                     limit: fbterm_term::MATCH_CAP,
                     snippets: false,
+                    drop_cache: true,
                 },
                 &std::sync::atomic::AtomicBool::new(false),
             );

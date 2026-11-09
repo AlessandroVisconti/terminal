@@ -12,12 +12,13 @@ use fbterm_config::settings::{
     TUNNEL_RETRIES_RANGE,
 };
 use fbterm_config::{
-    ConfigError, MaxFps, SecretStorage, SettingChange, Settings, TabBar, ThemeMode,
-    WindowDecorations,
+    ConfigError, MacosBlurStyle, MaxFps, SecretStorage, SettingChange, Settings, TabBar,
+    UNCOMPRESSED_DEFAULT, UNCOMPRESSED_FLOOR, WindowDecorations,
 };
 
 mod fonts;
 mod glue;
+pub(crate) use glue::release_when_worker_idle;
 pub mod view;
 
 pub use fonts::FontChoice;
@@ -35,13 +36,14 @@ pub enum SettingsMsg {
     Close,
     OpenFile,
     RevealFolder,
-    /// Open the Color schemes window.
+    /// Open the Color schemes tab.
     EditSchemes,
+    /// The font family list was opened: look for fonts installed since.
+    FontsOpened,
     /// The quiet period after change number `n` passed.
     Flush(u64),
     /// A slider was let go: write now.
     Release,
-    Theme(ThemeMode),
     Font(FontChoice),
     /// The id of the chosen global color scheme.
     ColorScheme(String),
@@ -54,6 +56,8 @@ pub enum SettingsMsg {
     OpacityText(String),
     OpacitySubmit,
     Blur(bool),
+    /// The `Blur style` row (macOS): how blur looks.
+    BlurStyle(MacosBlurStyle),
     /// Who draws the title bar (Linux).
     TitleBar(WindowDecorations),
     /// The Appearance card's `Tabs` row: where open sessions are listed.
@@ -62,6 +66,9 @@ pub enum SettingsMsg {
     TabGroups(bool),
     ScrollbackText(String),
     ScrollbackSubmit,
+    HistoryCompression(bool),
+    UncompressedText(String),
+    UncompressedSubmit,
     /// Confirm lowering the scrollback below what an open tab holds: save and trim.
     ScrollbackApply,
     /// Drop the lowered value: the saved one comes back.
@@ -70,6 +77,13 @@ pub enum SettingsMsg {
     RetriesText(String),
     RetriesSubmit,
     Kitty(bool),
+    /// `Grapheme clusters`.
+    Clusters(bool),
+    /// `Ligatures`.
+    Ligatures(bool),
+    /// `Use each theme's suggested font`, the same setting as the Color schemes tab's
+    /// checkbox.
+    UseThemeFonts(bool),
     MaxFps(MaxFps),
     /// `Check for updates automatically`.
     CheckUpdates(bool),
@@ -131,6 +145,12 @@ fn withheld_note(mac: bool, chord: Option<Chord>) -> String {
 /// The note under the Scrollback field above [`SCROLLBACK_WARN_ABOVE`] lines.
 pub const SCROLLBACK_NOTE: &str =
     "Large history: resizing a window can pause briefly while history rewraps.";
+
+/// The note on the compression switch.
+pub const COMPRESSION_NOTE: &str = "Saves memory on very long histories, at the cost of extra CPU when output scrolls into old history and when you scroll back, search or export. Recommended for scrollback of 100,000 lines or more.";
+
+/// The note on the disabled `Recent lines kept uncompressed` field with a small scrollback.
+pub const UNCOMPRESSED_NEEDS_SCROLLBACK: &str = "Needs scrollback above 1,000 lines.";
 
 /// `n` with a comma between thousands (`2,000`).
 pub(crate) fn thousands(n: usize) -> String {
@@ -198,6 +218,8 @@ pub struct SettingsState {
     /// Background opacity in percent, as typed.
     pub opacity_text: String,
     pub scrollback_text: String,
+    /// Recent lines kept uncompressed, as typed (the effective value while the setting is absent).
+    pub uncompressed_text: String,
     /// Tunnel reconnect attempts, as typed.
     pub retries_text: String,
     /// A lower scrollback typed but not saved, because an open tab holds more lines than it
@@ -207,6 +229,10 @@ pub struct SettingsState {
     /// debounce: it applies when that quiet period passes (`Flush`) or on Enter, never per
     /// keystroke, so `2` on the way to `20000` cannot cut output scrolling in that moment.
     held_lower: Option<(usize, u64)>,
+    /// A recent-lines-kept-uncompressed value typed, with the change number of its debounce: it
+    /// applies when that quiet period passes (`Flush`) or on Enter, never per keystroke (each
+    /// apply re-marks every tab's history, and a lower one asks for a memory release).
+    held_uncompressed: Option<(usize, u64)>,
     /// The most history lines any open tab holds (set by the app when the window opens and
     /// before a typed scrollback is evaluated).
     pub max_open_history: usize,
@@ -250,9 +276,11 @@ impl SettingsState {
             font_size_text: String::new(),
             opacity_text: String::new(),
             scrollback_text: String::new(),
+            uncompressed_text: String::new(),
             retries_text: String::new(),
             pending_lower: None,
             held_lower: None,
+            held_uncompressed: None,
             max_open_history: 0,
             fonts,
             read_only,
@@ -268,6 +296,11 @@ impl SettingsState {
         state
     }
 
+    /// Offer `installed` as the font list (fonts were loaded while the tab is open).
+    pub fn set_installed(&mut self, installed: Vec<String>) {
+        self.fonts = fonts::choices(installed, &self.values.font_family);
+    }
+
     /// Show `values` (the file changed on disk): every control and typed number follows, and
     /// unwritten changes are dropped (the file wins).
     pub fn sync(&mut self, values: &Settings) {
@@ -279,9 +312,11 @@ impl SettingsState {
         self.font_size_text = size_text(values.font_size);
         self.opacity_text = percent_text(values.background_opacity);
         self.scrollback_text = values.scrollback_lines.to_string();
+        self.uncompressed_text = self.uncompressed_effective().to_string();
         self.retries_text = values.tunnel_max_retries.to_string();
         self.pending_lower = None;
         self.held_lower = None;
+        self.held_uncompressed = None;
         if !self.fonts.iter().any(|f| f.family == values.font_family) {
             let installed = self
                 .fonts
@@ -440,6 +475,7 @@ impl SettingsState {
             | SettingsMsg::OpenFile
             | SettingsMsg::RevealFolder
             | SettingsMsg::EditSchemes
+            | SettingsMsg::FontsOpened
             | SettingsMsg::SecretStorage(_)
             | SettingsMsg::ResetVault
             | SettingsMsg::DownloadUpdate => Effect::NONE,
@@ -448,6 +484,15 @@ impl SettingsState {
                     self.held_lower = None;
                     // The tabs may have grown since it was typed.
                     self.set_scrollback(v, false)
+                }
+                _ if self.held_uncompressed.is_some_and(|(_, at)| at == n) => {
+                    let (v, _) = self.held_uncompressed.take().expect("checked above");
+                    // The scrollback (and with it the range) may have changed since.
+                    if self.uncompressed_enabled() && self.uncompressed_range().contains(&v) {
+                        self.change(SettingChange::UncompressedHistoryLines(v), false)
+                    } else {
+                        self.flush_now()
+                    }
                 }
                 _ => Effect {
                     apply: None,
@@ -466,14 +511,17 @@ impl SettingsState {
                     Write::Not
                 },
             },
-            SettingsMsg::Theme(v) => self.change(SettingChange::Theme(v), false),
             SettingsMsg::Font(f) => self.change(SettingChange::FontFamily(f.family), false),
             SettingsMsg::ColorScheme(id) => self.change(SettingChange::ColorScheme(id), false),
             SettingsMsg::Blur(v) => self.change(SettingChange::BackgroundBlur(v), false),
+            SettingsMsg::BlurStyle(v) => self.change(SettingChange::MacosBlurStyle(v), false),
             SettingsMsg::TitleBar(v) => self.change(SettingChange::WindowDecorations(v), false),
             SettingsMsg::TabBar(v) => self.change(SettingChange::TabBar(v), false),
             SettingsMsg::TabGroups(v) => self.change(SettingChange::TabGroups(v), false),
             SettingsMsg::Kitty(v) => self.change(SettingChange::KittyKeyboard(v), false),
+            SettingsMsg::Clusters(v) => self.change(SettingChange::GraphemeClusters(v), false),
+            SettingsMsg::Ligatures(v) => self.change(SettingChange::Ligatures(v), false),
+            SettingsMsg::UseThemeFonts(v) => self.change(SettingChange::UseThemeFonts(v), false),
             SettingsMsg::MaxFps(v) => self.change(SettingChange::MaxFps(v), false),
             SettingsMsg::CheckUpdates(v) => self.change(SettingChange::CheckUpdates(v), false),
             SettingsMsg::Record(action)
@@ -639,6 +687,46 @@ impl SettingsState {
                     }
                 }
             }
+            SettingsMsg::HistoryCompression(on) => {
+                self.change(SettingChange::HistoryCompression(on), false)
+            }
+            // The view makes the field read-only while disabled; its messages are ignored too.
+            SettingsMsg::UncompressedText(_) | SettingsMsg::UncompressedSubmit
+                if !self.uncompressed_enabled() =>
+            {
+                Effect::NONE
+            }
+            SettingsMsg::UncompressedText(s) => {
+                let parsed = parse_count(&s);
+                self.uncompressed_text = s;
+                self.held_uncompressed = None;
+                match parsed {
+                    // Maybe a prefix of a larger number: applied after the quiet period or on
+                    // Enter, as the scrollback field holds a lower value.
+                    Some(v) if self.uncompressed_range().contains(&v) => {
+                        self.generation += 1;
+                        self.held_uncompressed = Some((v, self.generation));
+                        Effect {
+                            apply: None,
+                            write: Write::After(self.generation),
+                        }
+                    }
+                    _ => Effect::NONE,
+                }
+            }
+            // A held value is the field's own: applied here, its quiet period then finds it
+            // already set and applies nothing more.
+            SettingsMsg::UncompressedSubmit => match parse_count(&self.uncompressed_text) {
+                Some(v) if self.uncompressed_range().contains(&v) => {
+                    self.change(SettingChange::UncompressedHistoryLines(v), false)
+                }
+                // Out of range: nothing is saved and the message stays under the field.
+                Some(_) => self.flush_now(),
+                None => {
+                    self.uncompressed_text = self.uncompressed_effective().to_string();
+                    self.flush_now()
+                }
+            },
             SettingsMsg::RetriesText(s) => {
                 let parsed = s.trim().parse::<u32>().ok();
                 self.retries_text = s;
@@ -699,12 +787,68 @@ impl SettingsState {
         self.change(SettingChange::ScrollbackLines(v), debounce)
     }
 
-    /// The question shown under the Scrollback field while a lowered value waits.
+    /// The question shown under the Scrollback field while a lowered value waits. When the
+    /// lowered scrollback would also pull a saved `uncompressed_history_lines` down, a second
+    /// line says so.
     pub fn scrollback_warning(&self) -> Option<String> {
         self.pending_lower.map(|v| {
-            format!(
+            let mut why = format!(
                 "Open tabs will lose their oldest lines beyond {}. This can't be undone.",
                 thousands(v)
+            );
+            if let Some(keep) = self.values.uncompressed_history_lines
+                && v > UNCOMPRESSED_FLOOR
+                && keep >= v
+            {
+                why.push_str(&format!(
+                    "\nRecent lines kept uncompressed will drop to {}.",
+                    thousands(v - 1)
+                ));
+            }
+            why
+        })
+    }
+
+    /// The value the uncompressed field shows: the setting, or its default for this scrollback,
+    /// never above the scrollback (a stored value is kept as written while compression is off
+    /// or the scrollback is too small).
+    fn uncompressed_effective(&self) -> usize {
+        let top = self.values.scrollback_lines.saturating_sub(1);
+        self.values
+            .uncompressed_history_lines
+            .unwrap_or(UNCOMPRESSED_DEFAULT)
+            .min(top)
+    }
+
+    /// The values the uncompressed field accepts: 1,000 up to one below the scrollback.
+    fn uncompressed_range(&self) -> std::ops::RangeInclusive<usize> {
+        UNCOMPRESSED_FLOOR..=self.values.scrollback_lines.saturating_sub(1)
+    }
+
+    /// Whether the `Recent lines kept uncompressed` field can be edited: compression is on and
+    /// the scrollback leaves room above the floor.
+    pub fn uncompressed_enabled(&self) -> bool {
+        self.values.history_compression && self.values.scrollback_lines > UNCOMPRESSED_FLOOR
+    }
+
+    /// Why the uncompressed field is disabled, when the scrollback is the reason.
+    pub fn uncompressed_note(&self) -> Option<&'static str> {
+        (self.values.scrollback_lines <= UNCOMPRESSED_FLOOR)
+            .then_some(UNCOMPRESSED_NEEDS_SCROLLBACK)
+    }
+
+    /// The message under the uncompressed field while its typed number is out of range.
+    pub fn uncompressed_error(&self) -> Option<String> {
+        if !self.uncompressed_enabled() {
+            return None;
+        }
+        let v = parse_count(&self.uncompressed_text)?;
+        let range = self.uncompressed_range();
+        (!range.contains(&v)).then(|| {
+            format!(
+                "Enter a number from {} to {}.",
+                thousands(*range.start()),
+                thousands(*range.end())
             )
         })
     }
@@ -713,6 +857,19 @@ impl SettingsState {
     pub fn scrollback_note(&self) -> Option<&'static str> {
         let shown = self.pending_lower.unwrap_or(self.values.scrollback_lines);
         (shown > SCROLLBACK_WARN_ABOVE).then_some(SCROLLBACK_NOTE)
+    }
+
+    /// The tab is closing: a value typed into the uncompressed field and still waiting on its
+    /// quiet period is applied now, as Enter would (an out-of-range one is not).
+    pub fn flush_typed(&mut self) -> Effect {
+        let Some((v, _)) = self.held_uncompressed.take() else {
+            return Effect::NONE;
+        };
+        if self.uncompressed_enabled() && self.uncompressed_range().contains(&v) {
+            self.change(SettingChange::UncompressedHistoryLines(v), false)
+        } else {
+            Effect::NONE
+        }
     }
 
     /// Write whatever is pending now (Enter in a field that holds no new value).
@@ -740,6 +897,15 @@ impl SettingsState {
             };
         }
         self.values = next;
+        if matches!(
+            change,
+            SettingChange::ScrollbackLines(_) | SettingChange::HistoryCompression(_)
+        ) {
+            // The saved uncompressed value may have been dragged down or clamped with it, and
+            // text typed under the other state of the switch does not carry over.
+            self.uncompressed_text = self.uncompressed_effective().to_string();
+            self.held_uncompressed = None;
+        }
         self.pending.retain(|p| p.key() != change.key());
         self.pending.push(change.clone());
         self.generation += 1;
@@ -752,6 +918,12 @@ impl SettingsState {
             },
         }
     }
+}
+
+/// A typed whole number, with `,` and `_` allowed between digits.
+fn parse_count(s: &str) -> Option<usize> {
+    let digits: String = s.chars().filter(|c| *c != ',' && *c != '_').collect();
+    digits.trim().parse().ok()
 }
 
 /// A typed percentage (`85`, `85%`, `85.5`) as a fraction.

@@ -159,6 +159,7 @@ impl FindAll {
                         // One more than listed, to know there are more.
                         limit: PER_TAB + 1,
                         snippets: true,
+                        drop_cache: true,
                     },
                     cancel: self.cancel.clone(),
                 };

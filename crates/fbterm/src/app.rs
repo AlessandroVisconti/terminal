@@ -105,6 +105,8 @@ impl<T> std::fmt::Debug for Delivered<T> {
 #[derive(Debug, Clone)]
 pub enum Message {
     Session(SessionId, SessionEvent),
+    /// A system font scan for missing suggested fonts finished (see `crate::theme_fonts`).
+    FontsScanned(Arc<Vec<crate::theme_fonts::NewFace>>),
     Terminal(window::Id, PaneId, TerminalOutput),
     /// Focus, divider drags and the area of a window's panes.
     Tiles(window::Id, crate::tiles::TilesMsg),
@@ -189,7 +191,7 @@ pub enum Message {
     },
     Editor(EditorMsg),
     Settings(SettingsMsg),
-    /// The Color schemes window.
+    /// The Color schemes tab.
     Schemes(SchemesMsg),
     /// A window's tunnels panel.
     Tunnels(TunnelsMsg),
@@ -331,8 +333,9 @@ pub struct App {
     pub(crate) grids: HashMap<PaneId, GridSize>,
     /// The area each terminal window lays its panes out in, as last drawn.
     pub(crate) areas: HashMap<window::Id, iced::Size>,
-    /// Session resizes waiting for their quiet period: generation and grid, by pane.
-    pub(crate) pending_resizes: HashMap<PaneId, (u64, GridSize)>,
+    /// Session resizes waiting for their quiet period: generation, grid and whether any of them
+    /// changed the columns (a reflow), by pane.
+    pub(crate) pending_resizes: HashMap<PaneId, (u64, GridSize, bool)>,
     /// Counts pane resizes, so only the last of a burst reaches the session.
     pub(crate) resize_generation: u64,
     /// The window that last had focus: where unscoped actions go.
@@ -366,7 +369,7 @@ pub struct App {
     pub(crate) exit_waiting: bool,
     /// The Settings tab, when open.
     pub settings_win: Option<(window::Id, SettingsState)>,
-    /// The Color schemes window, when open.
+    /// The Color schemes tab, when open, with the window hosting it.
     pub schemes_win: Option<(window::Id, SchemesState)>,
     /// The export and import window, when open.
     pub archive_win: Option<(window::Id, ArchiveState)>,
@@ -403,6 +406,9 @@ pub struct App {
     pub maximized: std::collections::HashSet<window::Id>,
     /// Every open window, of any kind (their decorations switch with the chrome).
     pub(crate) open_windows: std::collections::HashSet<window::Id>,
+    /// The look each terminal window's macOS blur view has now, for the windows that have one
+    /// (opened with blur); re-tuned in place when it should change (`blur_style.rs`).
+    pub(crate) blur_views: HashMap<window::Id, chrome::BlurLook>,
     /// The windows the system may not move now: the pointer is over a tab or a button of
     /// their unified bar ([`chrome::Chrome::system_may_drag`]).
     pub(crate) held_still: std::collections::HashSet<window::Id>,
@@ -433,8 +439,12 @@ pub struct App {
     pub(crate) scheme_errors: Vec<String>,
     /// The banner lines about schemes now in `notices` (see `App::refresh_scheme_notices`).
     pub(crate) scheme_notices: Vec<String>,
-    /// Terminals of tabs the user closed that a session task still holds; the release is
-    /// requested when `SessionEvent::Released` shows the last holder let go (`windows.rs`).
+    /// The banner lines about `font_features` entries now in `notices`
+    /// (see `App::refresh_feature_notices`).
+    pub(crate) feature_notices: Vec<String>,
+    /// Terminals of tabs the user closed that a session task (or a history worker turn) still
+    /// holds; the release is requested when `SessionEvent::Released` shows the last holder let go
+    /// (`windows.rs`).
     pub(crate) pending_release: Vec<Vec<crate::memory::WeakTerminal>>,
     /// Whether one of our windows has focus at all (the app is in front).
     pub app_active: bool,
@@ -469,6 +479,25 @@ pub struct App {
     pub(crate) gallery_loading: bool,
     /// How the theme gallery fetches its catalog and opens credit links (fakes in tests).
     pub(crate) gallery_io: crate::schemes_window::gallery::GalleryIo,
+    /// How the app lists, scans for and loads fonts (fakes in tests).
+    pub(crate) font_io: crate::theme_fonts::FontIo,
+    /// The installed families as last read through `font_io` (sorted), on a user action only;
+    /// never read per frame. See `crate::theme_fonts`.
+    pub(crate) installed_fonts: Vec<String>,
+    /// Each scheme's resolved font (its own, or with `use_theme_fonts` its installed
+    /// suggestion; `None`: the global font), rebuilt when the schemes, the installed list or
+    /// the settings change, so drawing a pane only looks it up.
+    pub(crate) scheme_fonts: HashMap<String, Option<&'static str>>,
+    /// A system font scan is under way on the blocking pool.
+    pub(crate) fonts_scanning: bool,
+    /// A scan was asked for while one ran (for example a catalog arrived): run one more when
+    /// it finishes.
+    pub(crate) fonts_rescan: bool,
+    /// The running scan also looks for every monospace family the renderer does not know
+    /// (the Settings font list was opened), not only missing suggestions.
+    pub(crate) fonts_monospace: bool,
+    /// The follow-up scan in `fonts_rescan` was asked for by the Settings font list.
+    pub(crate) fonts_monospace_next: bool,
     /// Whether the Welcome tab may open at this launch: off in unit tests, and off once it
     /// opened (or was found not due) this run. See `crate::welcome`.
     pub(crate) ask_welcome: bool,
@@ -686,6 +715,11 @@ impl App {
 
         let style = crate::settings_window::terminal_style(&settings);
         let (events, rx) = unbounded_channel();
+        // A tab closed while a history worker turn held its terminal: the worker lets go last
+        // and says so here, like a session task does.
+        fbterm_term::history_worker::on_released(crate::memory::worker_release_notice(
+            events.clone(),
+        ));
         let tunnel_retries = Arc::new(AtomicU32::new(settings.tunnel_max_retries));
         let mut app = Self {
             tunnels: Tunnels::new(pool.clone()),
@@ -697,8 +731,9 @@ impl App {
             tunnels_panels: TunnelsPanels::new(saved.tunnels_panel_width),
             tunnel_retries,
             bindings: Bindings::current(&settings.keys.map),
-            theme: theme::graphite_theme(settings.theme),
-            tokens: theme::tokens(settings.theme),
+            // Replaced by `retheme` below, once the scheme set and settings are in.
+            theme: theme::chrome_theme(&theme::DARK),
+            tokens: &theme::DARK,
             settings,
             profiles,
             notices,
@@ -761,6 +796,7 @@ impl App {
             fullscreen: Default::default(),
             maximized: Default::default(),
             open_windows: Default::default(),
+            blur_views: HashMap::new(),
             held_still: Default::default(),
             chrome: app_chrome_cell(),
             chrome_base: (chrome::setup().look, chrome::setup().chrome),
@@ -775,6 +811,7 @@ impl App {
             schemes,
             scheme_errors,
             scheme_notices: Vec::new(),
+            feature_notices: Vec::new(),
             pending_release: Vec::new(),
             app_active: true,
             style,
@@ -799,11 +836,26 @@ impl App {
             gallery_generation: 0,
             gallery_loading: false,
             gallery_io: crate::schemes_window::gallery::GalleryIo::default(),
+            font_io: crate::theme_fonts::FontIo::default(),
+            installed_fonts: Vec::new(),
+            scheme_fonts: HashMap::new(),
+            fonts_scanning: false,
+            fonts_rescan: false,
+            fonts_monospace: false,
+            fonts_monospace_next: false,
             ask_welcome: !cfg!(test),
             demo_update: debug_env("FBTERM_DEMO_UPDATE").map(|v| v.to_string_lossy().into_owned()),
         };
+        app.retheme();
         app.update_output_rate();
+        if app.settings.use_theme_fonts {
+            app.refresh_installed_fonts();
+        } else {
+            app.rebuild_scheme_fonts();
+        }
         app.refresh_scheme_notices();
+        app.refresh_feature_notices();
+        app.warm_ligature_sets();
         // A report the last run left: said once (debug-aid runs that keep no state leave the
         // marker for a real run).
         if app.state_saving_enabled
@@ -872,9 +924,6 @@ impl App {
     }
 
     pub fn title(&self, id: window::Id) -> String {
-        if self.schemes_window() == Some(id) {
-            return "Color schemes · fbterm".into();
-        }
         if self.archive_window() == Some(id) {
             return self.archive_title().into();
         }
@@ -1063,6 +1112,8 @@ impl App {
             self.reveal_active_tabs(),
             self.sync_panel_focus(),
             self.sync_tunnels_focus(),
+            // The blur style, a scheme or the active tab changed: re-tune the blur views.
+            self.sync_blur_views(),
         ]
         .into_iter()
         .flatten()
@@ -1080,10 +1131,7 @@ impl App {
             Message::Terminal(wid, pane, output) => self.terminal_output(wid, pane, output),
             Message::Tiles(wid, msg) => self.tiles_msg(wid, msg),
             Message::Drag(wid, msg) => self.drag_msg(wid, msg),
-            Message::ResizeSettled(pane, generation) => {
-                self.resize_settled(pane, generation);
-                Task::none()
-            }
+            Message::ResizeSettled(pane, generation) => self.resize_settled(pane, generation),
             Message::NewTab => self.action(None, Action::NewTab),
             Message::CloseTab(i) => match self.focused_window() {
                 Some(wid) => self.close_tab_asking(wid, i),
@@ -1125,7 +1173,7 @@ impl App {
                     // Not gated on `blur_here`: on Windows its probe may still run when the
                     // first window opens, and a build without backdrops refuses harmlessly.
                     let blur = if backdrop.blur {
-                        chrome::system_backdrop(id)
+                        self.add_system_backdrop(id)
                     } else {
                         Task::none()
                     };
@@ -1243,6 +1291,7 @@ impl App {
             Message::WindowClosed(id) => {
                 self.close_context_menu(id);
                 self.os_scales.remove(&id);
+                self.blur_views.remove(&id);
                 self.sidebar_scroll.remove(&id);
                 self.sidebar_shown.remove(&id);
                 self.sidebar_widths.remove(&id);
@@ -1258,9 +1307,6 @@ impl App {
                 for page in pages {
                     // The window is going: nothing of what the page leaves behind needs a task.
                     let _ = self.page_closed(page);
-                }
-                if self.schemes_window() == Some(id) {
-                    self.schemes_win = None;
                 }
                 // Dropping the state wipes typed passwords and an opened archive.
                 if self.archive_window() == Some(id) {
@@ -1339,7 +1385,6 @@ impl App {
                 if self.windows.is_empty()
                     && self.editor.is_none()
                     && self.settings_win.is_none()
-                    && self.schemes_win.is_none()
                     && self.archive_win.is_none()
                 {
                     self.exit_when_idle()
@@ -1372,6 +1417,7 @@ impl App {
             Message::Export(msg) => self.export_msg(msg),
             Message::Settings(msg) => self.settings_msg(msg),
             Message::Schemes(msg) => self.schemes_msg(msg),
+            Message::FontsScanned(faces) => self.fonts_scanned(&faces),
             Message::Tunnels(msg) => self.tunnels_msg(msg),
             Message::Archive(msg) => self.archive_msg(msg),
             Message::Prompt(msg) => self.prompt_msg(msg),
@@ -1384,7 +1430,7 @@ impl App {
             }
             Message::WindowScale(id, s) => {
                 tracing::info!(window = ?id, scale = s, "window scale");
-                // Kept for every open window: the editor, Settings and Color schemes windows
+                // Kept for every open window: the editor, Settings and Color schemes tabs
                 // draw their hairlines from it too (`physical_scale`).
                 let open = self.open_windows.contains(&id) || self.windows.contains_key(&id);
                 if open && s.is_finite() && s > 0.0 {
@@ -1526,7 +1572,7 @@ impl App {
         let target = match self.screenshot_window {
             ShotWindow::Editor => self.editor_window(),
             ShotWindow::Settings => self.settings_window(),
-            ShotWindow::Schemes => self.schemes_window(),
+            ShotWindow::Schemes => self.page_tab(crate::tabs::Page::Schemes).map(|(w, _)| w),
             ShotWindow::Archive => self.archive_window(),
             ShotWindow::Terminal => self.windows.keys().next().copied(),
         };

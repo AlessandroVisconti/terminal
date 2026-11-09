@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.8.3"
+version = "0.9.0"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -13,7 +13,7 @@ all = "warn"
 [workspace.dependencies]
 iced = "0.14.0"
 # Terminal emulation (our fork, see LICENSES.md). Change it in the feathercritty repo, then bump the rev.
-feathercritty = { git = "https://github.com/featherbitplatform/feathercritty", rev = "3c290b8c1f0c89b6e726c27e1f5eb15fb08742be" }
+feathercritty = { git = "https://github.com/featherbitplatform/feathercritty", rev = "938bbbd9372e53ba8db10c6015ee8eb1632e7d97" }
 russh = { version = "0.65.0", default-features = false, features = ["flate2", "ring", "rsa"] }
 # SFTP client over a russh channel stream (it does not depend on russh itself).
 russh-sftp = "3.0.1"

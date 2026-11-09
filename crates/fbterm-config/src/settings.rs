@@ -5,14 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::keys::KeyOverrides;
 use crate::store::{ConfigError, atomic_write, line_of};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ThemeMode {
-    #[default]
-    Dark,
-    Light,
-}
-
 /// Where saved passwords and key passphrases live (`secret_storage`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -78,6 +70,60 @@ impl TabBar {
             Self::Top => "top",
             Self::Left => "left",
         }
+    }
+}
+
+/// How a blurred window looks on macOS (`macos_blur_style`). Other systems ignore it.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub enum MacosBlurStyle {
+    /// The system's own blur look.
+    #[default]
+    Native,
+    /// fbterm's earlier, clearer blur, recreated with the system's public blur view.
+    Classic,
+    /// A value from the file that is neither `"native"` nor `"classic"`, as written.
+    /// [`Settings::clamp`] replaces it with [`MacosBlurStyle::Native`], so loaded settings
+    /// never hold it.
+    Invalid(String),
+}
+
+impl MacosBlurStyle {
+    /// The value as written in `settings.toml` (an invalid value writes the default).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Native | Self::Invalid(_) => "native",
+            Self::Classic => "classic",
+        }
+    }
+}
+
+impl Serialize for MacosBlurStyle {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for MacosBlurStyle {
+    /// Lenient: any string, number or boolean loads, and what is not allowed is kept as
+    /// [`MacosBlurStyle::Invalid`] for [`Settings::clamp`] to report, so a typo does not
+    /// reject the whole file (a table or array is still a type error).
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged, expecting = "\"native\" or \"classic\"")]
+        enum Raw {
+            Int(i64),
+            Float(f64),
+            Bool(bool),
+            Str(String),
+        }
+        Ok(match Raw::deserialize(d)? {
+            Raw::Str(s) if s == "native" => Self::Native,
+            Raw::Str(s) if s == "classic" => Self::Classic,
+            Raw::Str(s) => Self::Invalid(format!("{s:?}")),
+            Raw::Int(n) => Self::Invalid(n.to_string()),
+            Raw::Float(f) => Self::Invalid(format!("{f:?}")),
+            Raw::Bool(b) => Self::Invalid(b.to_string()),
+        })
     }
 }
 
@@ -163,20 +209,40 @@ impl<'de> Deserialize<'de> for MaxFps {
 pub struct Settings {
     pub font_family: String,
     pub font_size: f32,
+    /// Draw ligatures (`->`, `!=` ...) in fonts that have them, including ligatures a font keeps
+    /// in a stylistic set. Off turns every ligature feature off.
+    pub ligatures: bool,
+    /// Extra OpenType features for the terminal font, applied after `ligatures`: `"ss11"`,
+    /// `"-calt"`, `"cv01=2"`. Entries that do not parse are reported and skipped.
+    pub font_features: Vec<String>,
     pub scrollback_lines: usize,
-    pub theme: ThemeMode,
+    /// Keep the history that is not near the screen compressed, saving memory at the cost of
+    /// CPU. Off by default.
+    pub history_compression: bool,
+    /// With `history_compression`: how many of the newest history lines stay uncompressed.
+    /// `None`: absent from the file, which counts as [`UNCOMPRESSED_DEFAULT`] (less than
+    /// `scrollback_lines`). Always below `scrollback_lines` once loaded with compression on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uncompressed_history_lines: Option<usize>,
     /// Id of the terminal color scheme used by every session without its own (a built-in id or
     /// `user-<uuid>`). Not validated here: the app reports ids it does not know.
     pub color_scheme: String,
     /// Let programs turn on the kitty keyboard protocol (off: requests are ignored and keys keep
     /// their legacy encoding).
     pub kitty_keyboard: bool,
+    /// Start every new terminal with grapheme clusters on (DEC private mode 2027): joined emoji,
+    /// flags and skin tones in one cell. Programs can turn it on and off themselves; a change
+    /// applies to new terminals and after a reset or restart, never to a running program.
+    pub grapheme_clusters: bool,
     /// Opacity of the terminal's default background and the window chrome around it, from
     /// `0.05` (nearly clear) to `1.0` (opaque). Text, the cursor, the selection and cells with their own
     /// background stay opaque.
     pub background_opacity: f32,
     /// Blur what shows through a translucent background, where the platform supports it.
     pub background_blur: bool,
+    /// How blur looks on macOS: the system's look or fbterm's earlier, clearer one. Ignored
+    /// elsewhere.
+    pub macos_blur_style: MacosBlurStyle,
     /// Who draws the window title bar on Linux; ignored elsewhere.
     pub window_decorations: WindowDecorations,
     /// Where open sessions are listed. `None`: never answered (absent from the file), which
@@ -186,6 +252,9 @@ pub struct Settings {
     /// Fold the sidebar's rows into the profiles' groups (only with tabs on the left).
     #[serde(default)]
     pub tab_groups: bool,
+    /// Draw each pane in its color scheme's suggested font when that font is installed (a
+    /// scheme's own `font_family` still wins; a missing font falls back to `font_family`).
+    pub use_theme_fonts: bool,
     /// Most redraws per second caused by program output.
     pub max_fps: MaxFps,
     /// Automatic reconnect attempts for a tunnel whose connection dropped (0 = off).
@@ -206,15 +275,21 @@ impl Default for Settings {
         Self {
             font_family: "Geist Mono".into(),
             font_size: 13.0,
+            ligatures: true,
+            font_features: Vec::new(),
             scrollback_lines: 10_000,
-            theme: ThemeMode::Dark,
+            history_compression: false,
+            uncompressed_history_lines: None,
             color_scheme: "graphite".into(),
             kitty_keyboard: false,
+            grapheme_clusters: false,
             background_opacity: 1.0,
             background_blur: false,
+            macos_blur_style: MacosBlurStyle::Native,
             window_decorations: WindowDecorations::Fbterm,
             tab_bar: None,
             tab_groups: false,
+            use_theme_fonts: false,
             max_fps: MaxFps::default(),
             tunnel_max_retries: 10,
             check_updates: None,
@@ -239,7 +314,28 @@ pub const SCROLLBACK_RANGE: (usize, usize) = (0, 1_000_000);
 /// 0.3 s. The owner chose to warn above 100,000.
 pub const SCROLLBACK_WARN_ABOVE: usize = 100_000;
 
+/// The fewest uncompressed history lines `uncompressed_history_lines` may be. With
+/// `scrollback_lines` at or below it there is nothing worth compressing.
+pub const UNCOMPRESSED_FLOOR: usize = 1_000;
+/// The default `uncompressed_history_lines`, lowered to stay below `scrollback_lines`.
+pub const UNCOMPRESSED_DEFAULT: usize = 10_000;
+
 impl Settings {
+    /// How many of the newest history lines stay uncompressed, or `None` when history is not
+    /// compressed: the switch is off, or `scrollback_lines` is at most [`UNCOMPRESSED_FLOOR`].
+    /// Otherwise the setting (or, when absent, [`UNCOMPRESSED_DEFAULT`] capped below
+    /// `scrollback_lines`), within `UNCOMPRESSED_FLOOR..=scrollback_lines - 1`.
+    pub fn history_compression_keep(&self) -> Option<usize> {
+        if !self.history_compression || self.scrollback_lines <= UNCOMPRESSED_FLOOR {
+            return None;
+        }
+        let top = self.scrollback_lines - 1;
+        let wanted = self
+            .uncompressed_history_lines
+            .unwrap_or_else(|| UNCOMPRESSED_DEFAULT.min(top));
+        Some(wanted.clamp(UNCOMPRESSED_FLOOR, top))
+    }
+
     /// Load settings. A missing file gives defaults; a malformed file is an
     /// error carrying the 1-based line, and the file is never modified.
     /// Missing fields in a partial file take their defaults. Out-of-range values are
@@ -266,6 +362,21 @@ impl Settings {
             ConfigError::new(path, line, e.message().to_string())
         })?;
         let problems = settings.clamp();
+        let removed_theme = if problems.is_empty() {
+            top_level_key_line(&text, "theme")
+        } else {
+            None
+        };
+        if let Some(line) = removed_theme {
+            return Ok((
+                settings,
+                Some(ConfigError::new(
+                    path,
+                    Some(line),
+                    THEME_REMOVED.to_string(),
+                )),
+            ));
+        }
         let warning = (!problems.is_empty()).then(|| {
             let line = problems
                 .iter()
@@ -313,6 +424,22 @@ impl Settings {
                 ),
             ));
             self.scrollback_lines = used;
+        }
+        // Only checked while compression is on and applies: with it off the value is kept as
+        // written, so switching it on later does not surprise.
+        if let (Some(keep), Some(set)) = (
+            self.history_compression_keep(),
+            self.uncompressed_history_lines,
+        ) && set != keep
+        {
+            problems.push((
+                "uncompressed_history_lines".into(),
+                format!(
+                    "uncompressed_history_lines {set} is out of range ({UNCOMPRESSED_FLOOR} to {}), using {keep}",
+                    self.scrollback_lines - 1
+                ),
+            ));
+            self.uncompressed_history_lines = Some(keep);
         }
         let (lo, hi) = TUNNEL_RETRIES_RANGE;
         if !(lo..=hi).contains(&self.tunnel_max_retries) {
@@ -364,6 +491,15 @@ impl Settings {
             ));
             self.max_fps = MaxFps::Fixed(used);
         }
+        if let MacosBlurStyle::Invalid(raw) = &self.macos_blur_style {
+            problems.push((
+                "macos_blur_style".into(),
+                format!(
+                    "macos_blur_style {raw} is not \"native\" or \"classic\", using \"native\""
+                ),
+            ));
+            self.macos_blur_style = MacosBlurStyle::Native;
+        }
         for (name, why) in std::mem::take(&mut self.keys.invalid) {
             let message = format!("keys.{name} {why}");
             problems.push((name, message));
@@ -414,19 +550,38 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 # Font size in points, from 6.0 to 72.0.
 #font_size = 13.0
 
+# Draw each tab in its color scheme's suggested font when that font is installed (true or
+# false). A scheme that sets its own font keeps it; a missing font falls back to font_family.
+# fbterm never downloads fonts.
+#use_theme_fonts = false
+
+# Draw sequences such as -> and != as one symbol when the font has them (true or false).
+#ligatures = true
+
+# Extra OpenType features for the terminal font, such as "ss02", "-calt" or "cv01=2".
+#font_features = []
+
 # Lines of history kept per tab, from 0 to 1000000. Applies to open tabs at once: lowering it
 # drops their oldest lines (the Settings tab asks first). Above 100000, resizing a window
 # can pause briefly while history rewraps.
 #scrollback_lines = 10000
 
-# Color theme: "dark" or "light".
-#theme = "dark"
+# Keep older history compressed to save memory, at the cost of CPU when it is read and when
+# output scrolls into it. Recommended for very large histories (100000 lines or more).
+#history_compression = false
 
-# Terminal color scheme for every session (a scheme id; see the Color schemes window).
+# With history_compression: how many of the newest lines stay uncompressed.
+#uncompressed_history_lines = 10000  # 1000 to scrollback_lines - 1
+
+# Terminal color scheme for every session (a scheme id; see the Color schemes tab).
 #color_scheme = "graphite"
 
 # Let programs turn on the kitty keyboard protocol (true or false).
 #kitty_keyboard = false
+
+# Keep joined emoji, flags and skin tones in one cell in new tabs (true or false). Programs can
+# turn this on themselves.
+#grapheme_clusters = false
 
 # Opacity of the terminal background and tab bar, from 0.05 (nearly clear) to 1.0 (opaque).
 #background_opacity = 1.0
@@ -434,6 +589,11 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 # Blur what shows through a see-through background (true or false), where the system
 # supports it: macOS, Windows 11 and Linux desktops that offer blur.
 #background_blur = false
+
+# How blur looks on macOS: "native" (the system's look, with its own tint) or "classic"
+# (fbterm's earlier, clearer blur: no tint of its own, so the opacity drives the look).
+# Ignored on other systems.
+#macos_blur_style = "native"  # or "classic"; macOS only
 
 # Window title bar on Linux: "fbterm" draws it in the tab bar, "system" uses the desktop's.
 #window_decorations = "fbterm"
@@ -520,6 +680,18 @@ impl Settings {
         }
         Ok(true)
     }
+}
+
+/// Shown when a settings file still has the removed `theme` key.
+const THEME_REMOVED: &str = "theme is no longer used: the window follows color_scheme. For a light window, choose Graphite Light.";
+
+/// Line of `key` among the top-level keys (before the first `[table]`).
+fn top_level_key_line(text: &str, key: &str) -> Option<usize> {
+    let end = text
+        .lines()
+        .position(|l| l.trim_start().starts_with('['))
+        .unwrap_or(usize::MAX);
+    key_line(text, key).filter(|&line| line - 1 < end)
 }
 
 /// The 1-based line on which `key` is assigned at the top level, if any.

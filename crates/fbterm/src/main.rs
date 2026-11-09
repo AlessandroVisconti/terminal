@@ -21,16 +21,16 @@
 //! - `FBTERM_SCREENSHOT=<path.png>`: once the first window has rendered for a moment, capture
 //!   that window only (never the screen), write it as PNG and exit.
 //! - `FBTERM_SCREENSHOT_WINDOW=editor|settings|schemes|archive`: capture the window showing the
-//!   Profiles tab, the one showing the Settings tab, the Color schemes window or the export and
-//!   import window instead.
+//!   Profiles tab, the one showing the Settings tab, the one showing the Color schemes tab or
+//!   the export and import window instead.
 //! - `FBTERM_OPEN_EDITOR=<profile name>`: open the Profiles tab at startup, that profile
 //!   selected.
 //! - `FBTERM_OPEN_SETTINGS=1`: open the Settings tab at startup (`secrets`: scrolled to the
 //!   Saved secrets section).
 //! - `FBTERM_DEMO_VAULT=1`: with `FBTERM_SECRETS=memory`, make the in-memory backend's vault
 //!   (in its temporary folder, main password `demo`) so Settings shows `Reset vault`.
-//! - `FBTERM_OPEN_SCHEMES=1`: open the Color schemes window at startup (any other value: the
-//!   name of the scheme to select).
+//! - `FBTERM_OPEN_SCHEMES=1`: open the Color schemes tab in the first window at startup (any
+//!   other value: the name of the scheme to select).
 //!   With `FBTERM_DEMO_GALLERY=1` as well, it shows the theme gallery with a sample catalog,
 //!   never fetched (with `FBTERM_CONFIG_DIR`, its installed themes are written there first);
 //!   `FBTERM_DEMO_GALLERY=question` also asks about updating the edited sample theme.
@@ -73,6 +73,10 @@ mod archive_import;
 #[cfg(test)]
 mod archive_import_tests;
 mod archive_window;
+// The pure layer logic builds and is tested everywhere; only macOS uses it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod blur_layers;
+mod blur_style;
 mod chrome;
 mod config_files;
 mod context_menu;
@@ -117,6 +121,11 @@ mod tab_menu;
 mod tab_sidebar;
 mod tabs;
 mod theme;
+#[cfg(test)]
+mod theme_app_tests;
+mod theme_fonts;
+#[cfg(test)]
+mod theme_fonts_tests;
 mod tiles;
 mod tooltip;
 mod tunnels;

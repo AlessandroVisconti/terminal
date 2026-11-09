@@ -160,6 +160,7 @@ impl FindBar {
                 below,
                 limit: MATCH_CAP,
                 snippets: false,
+                drop_cache: true,
             },
             cancel: self.cancel.clone(),
         })
@@ -213,19 +214,26 @@ impl FindBar {
     /// Search again for output that arrived since, keeping the current match. `alt` is
     /// whether the terminal shows the alternate screen now: after a switch the old positions
     /// mean nothing, so the search starts over from the bottom of the view.
+    ///
+    /// Program output drives it, so its search never drops the terminal's history read cache.
     pub fn refresh(&mut self, alt: bool, view_bottom: i64) -> Option<SearchRun> {
         self.refresh_scheduled = false;
         if self.pending.is_some() {
             return None;
         }
-        if alt != self.alt_screen {
+        let run = if alt != self.alt_screen {
             self.hits.clear();
             self.current = None;
             self.resume = None;
-            return self.restart(Some(Self::bottom(view_bottom)), Kind::Fresh);
-        }
-        let anchor = self.current_match().map(|m| m.start).or(self.anchor);
-        self.restart(anchor, Kind::Refresh)
+            self.restart(Some(Self::bottom(view_bottom)), Kind::Fresh)
+        } else {
+            let anchor = self.current_match().map(|m| m.start).or(self.anchor);
+            self.restart(anchor, Kind::Refresh)
+        };
+        run.map(|mut run| {
+            run.request.drop_cache = false;
+            run
+        })
     }
 
     /// The terminal was resized to `cols` columns. Rows alone keep positions, so the current
@@ -514,6 +522,33 @@ mod tests {
         ));
         assert_eq!(bar.current_match(), Some(m(20, 0)));
         assert_eq!(bar.counter(), "3 of 4");
+    }
+
+    /// Searches the user starts drop the terminal's history read cache when done; a refresh
+    /// for program output (including one that starts over after a screen switch) never does.
+    #[test]
+    fn only_user_searches_drop_the_read_cache() {
+        let mut bar = FindBar::new("", false);
+        let run = bar.set_query("x".into(), 100).unwrap();
+        assert!(run.request.drop_cache, "typing");
+        bar.apply(run.seq, outcome(&[9, 8], Some(8)), Instant::now());
+        bar.next();
+        let Step::Fetch(more) = bar.next() else {
+            panic!("older matches are fetched");
+        };
+        assert!(more.request.drop_cache, "moving past the oldest");
+        bar.apply(more.seq, outcome(&[5], None), Instant::now());
+        let refresh = bar.refresh(false, 100).unwrap();
+        assert!(!refresh.request.drop_cache, "refresh for output");
+        bar.apply(refresh.seq, outcome(&[9], None), Instant::now());
+        let switched = bar.refresh(true, 100).unwrap();
+        assert!(
+            !switched.request.drop_cache,
+            "refresh after a screen switch"
+        );
+        bar.apply(switched.seq, outcome(&[9], None), Instant::now());
+        let resized = bar.resized(40, 100).unwrap();
+        assert!(resized.request.drop_cache, "a resize");
     }
 
     fn lines(from: i64, to: i64) -> Vec<i64> {

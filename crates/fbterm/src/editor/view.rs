@@ -299,7 +299,7 @@ fn field<'a>(
 }
 
 /// The profile's scheme list (`Use global scheme` or one scheme; a still value when read-only)
-/// and the way to the Color schemes window.
+/// and the way to the Color schemes tab.
 fn scheme_pick<'a>(
     t: &'static Tokens,
     d: &'a Draft,

@@ -36,7 +36,8 @@ pub enum SessionEvent {
     Disconnected(String),
     /// A session task that was closed on purpose has let go of its terminal. Sent only after a
     /// close (a program ending by itself sends nothing), once the task's own reference is
-    /// dropped, so the app can tell when closing the tab freed its terminal.
+    /// dropped, so the app can tell when closing the tab freed its terminal. The app also sends
+    /// it itself (any id) when the history worker let go of a closed tab's terminal last.
     Released,
 }
 
@@ -280,14 +281,18 @@ impl Feeder {
     /// them; a title is reported only when it changes. Once the handle is closed the bytes are
     /// dropped (checked under the terminal lock, so nothing lands after `close` returns).
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
-        let term_events = {
+        let (term_events, history_jobs) = {
             let mut term = self.terminal.lock();
             if self.is_detached() {
                 return Vec::new();
             }
             term.feed(bytes);
-            term.take_events()
+            (term.take_events(), term.has_history_jobs())
         };
+        if history_jobs {
+            // After the lock is released, so the worker can take the jobs at once.
+            fbterm_term::history_worker::enqueue(&self.terminal);
+        }
         let mut replies = Vec::new();
         for ev in term_events {
             match ev {

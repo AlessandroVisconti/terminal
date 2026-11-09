@@ -300,6 +300,7 @@ fn run_search(
             below: None,
             limit,
             snippets,
+            drop_cache: true,
         },
         &AtomicBool::new(false),
     )
@@ -504,6 +505,182 @@ fn find_in_all_tabs_matches_the_golden_file() {
         "find_all_tabs.json",
         pretty(&Value::Object(states)).as_bytes(),
     );
+}
+
+// Compression-on variants. The golden files hold a 150-line history, less than one history
+// block, so nothing in them could be compressed. Instead each stream is fed twice, with filler
+// lines between, to a terminal with history compression off and to one with it on and every
+// history job run: the first copy and the filler lie in compressed blocks, the second copy
+// leaves the terminal in the state the golden files describe. Every read below must be
+// byte-identical between the two, in all three states (the resizes reflow the history, and
+// the jobs run again after each).
+
+/// Scrollback of the variants: holds both copies and the filler, so nothing is evicted.
+const BIG_HISTORY: usize = 100_000;
+
+/// History blocks waiting to be compressed or decompressed (taking jobs changes nothing).
+fn pending(t: &mut Terminal) -> usize {
+    t.next_history_jobs(usize::MAX).len()
+}
+
+/// Run every pending history job of `t` as the worker does (take, run off the terminal,
+/// install), asserting every result was installed and none is left. Returns how many ran.
+/// (A copy of `cold_tests::run_jobs`, which an integration test cannot reach.)
+fn run_jobs(t: &mut Terminal) -> usize {
+    let jobs = t.next_history_jobs(usize::MAX);
+    let n = jobs.len();
+    for job in jobs {
+        let done = feathercritty::term::HistoryJob::run(job);
+        assert!(t.install_history_job(done), "a result was refused");
+    }
+    // The flag stays up after an install until a look for more jobs finds none.
+    assert!(t.next_history_jobs(usize::MAX).is_empty(), "every job ran");
+    assert!(!t.has_history_jobs(), "no job is left");
+    n
+}
+
+/// The stream, `\e[?1049l` (back to the normal screen, so the filler scrolls into history),
+/// filler until two more blocks can be compressed than after the first copy, then the stream
+/// again: fed to a terminal with compression off and one with it on (jobs run).
+fn cold_pair(bytes: &[u8]) -> (SharedTerminal, SharedTerminal) {
+    let mut on = Terminal::new(size(COLS_WIDE), BIG_HISTORY);
+    on.set_history_compression(Some(1));
+    let mut fed = bytes.to_vec();
+    fed.extend_from_slice(b"\x1b[?1049l");
+    on.feed(&fed);
+    let start = pending(&mut on);
+    let mut n = 0;
+    while pending(&mut on) < start + 2 {
+        let filler: Vec<u8> = (n..n + 500)
+            .flat_map(|i| format!("~~ filler {i:07}\r\n").into_bytes())
+            .collect();
+        n += 500;
+        on.feed(&filler);
+        fed.extend(filler);
+    }
+    on.feed(bytes);
+    fed.extend_from_slice(bytes);
+    assert!(on.history_len() < BIG_HISTORY, "nothing was evicted");
+    assert!(run_jobs(&mut on) > 0);
+    let mut off = Terminal::new(size(COLS_WIDE), BIG_HISTORY);
+    for piece in fed.chunks(997) {
+        off.feed(piece);
+    }
+    let shared = |t| Arc::new(parking_lot::Mutex::new(t));
+    (shared(off), shared(on))
+}
+
+/// [`walk`] over both terminals at once, running the compressed one's jobs after each resize.
+fn walk_pair(
+    off: &SharedTerminal,
+    on: &SharedTerminal,
+    mut each: impl FnMut(&str, &SharedTerminal, &SharedTerminal),
+) {
+    for (state, cols) in [
+        ("initial", None),
+        ("narrow", Some(COLS_NARROW)),
+        ("restored", Some(COLS_WIDE)),
+    ] {
+        if let Some(cols) = cols {
+            off.lock().resize(size(cols));
+            let mut t = on.lock();
+            t.resize(size(cols));
+            run_jobs(&mut t);
+        }
+        each(state, off, on);
+    }
+}
+
+/// Everything the find bar, find-in-all-tabs and selections read, over the whole history:
+/// every match of each query (paging with `resume`), the find-in-all-tabs list, the visible
+/// matches at the top and the bottom of the history, the selections (plus two in the oldest
+/// rows), and the links.
+fn reads_json(shared: &SharedTerminal) -> Value {
+    let mut out = Vec::new();
+    for (label, pat) in queries() {
+        let mut pages = Vec::new();
+        let mut below = None;
+        loop {
+            let o = search(
+                shared,
+                &SearchRequest {
+                    pattern: pat.clone(),
+                    below,
+                    limit: MATCH_CAP,
+                    snippets: true,
+                    drop_cache: true,
+                },
+                &AtomicBool::new(false),
+            );
+            pages.push(outcome_json(&o));
+            match o.resume {
+                Some(resume) => below = Some(resume),
+                None => break,
+            }
+        }
+        let all_tabs = outcome_json(&run_search(shared, &pat, ALL_TABS_LIMIT, true));
+        let mut t = shared.lock();
+        t.scroll_to_top();
+        let top = t.visible_matches_within(&pat, std::time::Duration::MAX);
+        t.scroll_to_bottom();
+        let bottom = t.visible_matches_within(&pat, std::time::Duration::MAX);
+        out.push(json!({
+            "query": label,
+            "pages": pages,
+            "all_tabs": all_tabs,
+            "visible": format!("{top:?} {bottom:?}"),
+        }));
+    }
+    let oldest = {
+        use feathercritty::grid::Dimensions;
+        let t = shared.lock();
+        let top = t.term().grid().topmost_line().0;
+        let mut map = serde_json::Map::new();
+        for (name, a, b) in [
+            ("oldest", p(top, 0), p(top + 60, 100)),
+            ("oldest_reversed", p(top + 45, 90), p(top + 2, 3)),
+        ] {
+            let mut s = Selection::start(a);
+            s.update(b);
+            map.insert(name.into(), Value::String(s.text(&t)));
+        }
+        Value::Object(map)
+    };
+    json!({
+        "find": out,
+        "selections": selection_json(shared),
+        "oldest": oldest,
+        "links": links_json(shared),
+    })
+}
+
+#[test]
+fn exports_are_the_same_with_compression_on() {
+    for (name, bytes) in streams() {
+        let (off, on) = cold_pair(&bytes);
+        walk_pair(&off, &on, |state, off, on| {
+            // `export` writes the text; gzip is applied by `write_file`.
+            for format in [ExportFormat::Plain, ExportFormat::Ansi] {
+                let (a, b) = (export_text(off, format), export_text(on, format));
+                assert!(!a.is_empty());
+                assert!(
+                    a == b,
+                    "{name} {state} {format:?} differs with compression on"
+                );
+            }
+        });
+    }
+}
+
+#[test]
+fn search_selection_and_links_are_the_same_with_compression_on() {
+    for (name, bytes) in streams() {
+        let (off, on) = cold_pair(&bytes);
+        walk_pair(&off, &on, |state, off, on| {
+            let (a, b) = (pretty(&reads_json(off)), pretty(&reads_json(on)));
+            assert!(a == b, "{name} {state} differs with compression on");
+        });
+    }
 }
 
 fn pretty(v: &Value) -> String {
