@@ -632,30 +632,32 @@ pub(crate) fn release_when_worker_idle() -> Task<Message> {
 /// How long the release waits for the history worker to drain before it releases anyway.
 const RELEASE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Mark a release as waiting; `false` if one already was (process-wide; per thread in tests,
-/// which run the release on their own thread).
+/// Mark a release as waiting; `false` if one already was.
 fn mark_release_pending() -> bool {
-    #[cfg(not(test))]
-    {
-        !PENDING.swap(true, std::sync::atomic::Ordering::SeqCst)
-    }
-    #[cfg(test)]
-    PENDING.with(|p| !p.replace(true))
+    !release_pending().swap(true, std::sync::atomic::Ordering::SeqCst)
 }
 
 fn clear_release_pending() {
-    #[cfg(not(test))]
-    PENDING.store(false, std::sync::atomic::Ordering::SeqCst);
-    #[cfg(test)]
-    PENDING.with(|p| p.set(false));
+    release_pending().store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
-#[cfg(not(test))]
-static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-#[cfg(test)]
-thread_local! {
-    static PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+/// Whether a release is waiting: process-wide in the app. Tests get one flag per thread (they
+/// run the release on their own thread, and run in parallel), so only where the flag lives
+/// differs and the code that sets and clears it is the same.
+fn release_pending() -> &'static std::sync::atomic::AtomicBool {
+    #[cfg(not(test))]
+    {
+        static PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        &PENDING
+    }
+    #[cfg(test)]
+    {
+        thread_local! {
+            static PENDING: &'static std::sync::atomic::AtomicBool =
+                Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false)));
+        }
+        PENDING.with(|p| *p)
+    }
 }
 
 /// Wait up to [`RELEASE_WAIT`] for the history worker to drain, then ask for the memory release
