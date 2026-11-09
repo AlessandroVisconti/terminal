@@ -1,10 +1,11 @@
 //! The app's chrome colors follow the global color scheme, against a temporary config
 //! directory.
 
-use crate::app::Message;
+use crate::app::{DEFAULT_GRID, Message};
 use crate::restore_tests::profile;
 use crate::schemes_tests::{app_with, builtin, rgb, user_scheme, with_scheme};
 use crate::schemes_window::{Entry, SchemesMsg};
+use crate::tabs::{Pane, Tab};
 use crate::theme::{DARK, tokens_for};
 use crate::watch::Changed;
 
@@ -33,12 +34,38 @@ fn global_scheme_colors_the_chrome() {
 
 #[test]
 fn profile_override_leaves_the_chrome() {
+    // A guard: the chrome must come from the global scheme, never from the focused pane's.
     let night = user_scheme("Night", 0x102030);
     let dawn = user_scheme("Dawn", 0xf0e8d0);
+    let plain = profile("plain");
     let a = with_scheme(&profile("a"), &dawn.id);
-    let (mut app, _, wid, _) = app_with(&[a], &global(&night.id), &[night.clone(), dawn]);
+    let (mut app, paths, wid, _) = app_with(
+        std::slice::from_ref(&plain),
+        "",
+        &[night.clone(), dawn.clone()],
+    );
+    // A second tab whose profile overrides the scheme, opened and focused.
+    let mut pane = Pane::for_profile(&a);
+    let term = app.new_terminal(DEFAULT_GRID);
+    app.scheme_colors(&pane).apply_to(&mut term.lock());
+    pane.placeholder = Some(term);
+    app.windows.get_mut(&wid).unwrap().push(Tab::single(pane));
     app.focused = Some(wid);
+    let _ = app.update(Message::SelectTab(1));
+    let _ = app.update(Message::WindowFocused(wid));
+    // Change the global scheme, so the chrome is derived again while that tab is focused.
+    std::fs::write(paths.settings(), global(&night.id)).unwrap();
     let _ = app.update(Message::ConfigChanged(SETTINGS_CHANGED));
+
+    let w = &app.windows[&wid];
+    assert_eq!(w.active, 1);
+    let focused = w.active_tab().unwrap().focused_pane();
+    assert_eq!(app.scheme_for(focused).id, dawn.id, "the override is live");
+    assert_eq!(app.pane_background(focused), rgb(0xf0e8d0));
+    assert_ne!(
+        *tokens_for(&dawn.id, &dawn.colors),
+        *tokens_for(&night.id, &night.colors)
+    );
     assert_eq!(*app.tokens, *tokens_for(&night.id, &night.colors));
     assert_eq!(app.chrome_scheme().id, night.id);
 }
