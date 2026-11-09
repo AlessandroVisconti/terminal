@@ -67,7 +67,7 @@ A scheme can suggest a font that suits it, with a link to the font's official do
 
 In the Color schemes window, the selected scheme (and each gallery row) shows **Suggested font** with the family and:
 
-- **Download** opens the font's page in your browser; the button shows the site it leads to, such as `Download (github.com)`. Download and install the font there, the way your system installs fonts.
+- **Download** opens the font's page in your browser; the button shows the site it leads to, such as `Download (github.com)` (a long host name shows its end, the part that names the site's owner). Download and install the font there, the way your system installs fonts.
 - **Use font** makes it the global **Font family** in Settings. It is available once the font is installed; the suggestion itself is not written into the scheme, so an installed gallery theme keeps receiving updates.
 - **In use** when the scheme's sessions already use that font, or **Not installed** when your system does not have it. A scheme that sets its own font (under **Font**) keeps it for its sessions, and the line says so.
 
@@ -133,7 +133,7 @@ license = "OFL-1.1"
 | `name` | Name shown in the list and in Settings. Required. |
 | `font_family`, `font_size` | Optional font for the scheme's sessions. `font_size` must be a positive number. |
 | `[colors]` | Every key shown above, each as `"#rrggbb"`. `selection` is the selection background as it should look on the background (a solid color, not a transparency). |
-| `[suggested_font]` | Optional [suggestion](#suggested-fonts): `family` (the name exactly as your system lists the installed font), `url` (the font's official page, `https://` only) and `license` (one of `OFL-1.1`, `Apache-2.0`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Unlicense`, `CC0-1.0`, `Zlib`), all three required, each at most 2000 characters. A table that breaks these rules, or holds hidden or direction-changing characters, is ignored with a line in the banner; the scheme still loads. It travels with the scheme like the credit (duplicate, export, archives) and never counts as a change to a gallery theme. |
+| `[suggested_font]` | Optional [suggestion](#suggested-fonts): `family` (the name exactly as your system lists the installed font), `url` (the font's official page: a plain `https://` link whose host is a name, with no user part, `%` escapes or backslashes) and `license` (one of `OFL-1.1`, `Apache-2.0`, `MIT`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Unlicense`, `CC0-1.0`, `Zlib`), all three required, each at most 2000 characters. A table that breaks these rules, or holds hidden or direction-changing characters, is ignored with a line in the banner; the scheme still loads. It travels with the scheme like the credit (duplicate, export, archives) and never counts as a change to a gallery theme. |
 
 The 256-color cube and the grayscale ramp are computed and are not part of a scheme.
 
