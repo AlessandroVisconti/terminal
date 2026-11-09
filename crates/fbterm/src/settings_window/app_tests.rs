@@ -2,7 +2,7 @@
 //! own-write suppression and edits on disk.
 
 use fbterm_config::keys::Action;
-use fbterm_config::{Paths, ProfileId, SETTINGS_TEMPLATE, Settings, TabBar, ThemeMode};
+use fbterm_config::{Paths, ProfileId, SETTINGS_TEMPLATE, Settings, TabBar};
 
 use super::SettingsMsg;
 use crate::app::{App, Message};
@@ -36,15 +36,14 @@ fn read(paths: &Paths) -> Option<String> {
 fn a_click_applies_live_and_writes_the_template_with_the_key_set() {
     let (mut app, paths) = app();
     assert_eq!(read(&paths), None);
-    send(&mut app, SettingsMsg::Theme(ThemeMode::Light));
-    assert_eq!(app.settings.theme, ThemeMode::Light);
-    assert_eq!(app.tokens, crate::theme::tokens(ThemeMode::Light));
+    send(&mut app, SettingsMsg::Kitty(true));
+    assert!(app.settings.kitty_keyboard);
     let text = read(&paths).unwrap();
     assert_eq!(
         text,
         SETTINGS_TEMPLATE.replace(
-            "#theme = \"dark\"\n",
-            "#theme = \"dark\"\ntheme = \"light\"\n"
+            "#kitty_keyboard = false\n",
+            "#kitty_keyboard = false\nkitty_keyboard = true\n"
         )
     );
     // The watcher's report of our own write changes nothing.
@@ -52,7 +51,7 @@ fn a_click_applies_live_and_writes_the_template_with_the_key_set() {
     let before = app.notices.clone();
     let _ = app.update(Message::ConfigChanged(SETTINGS_CHANGED));
     assert_eq!(app.notices, before);
-    assert_eq!(app.settings.theme, ThemeMode::Light);
+    assert!(app.settings.kitty_keyboard);
 }
 
 #[test]
@@ -151,7 +150,7 @@ fn an_edit_on_disk_not_yet_reported_is_applied_not_hidden_by_our_write() {
     assert_eq!(app.settings.font_size, 20.0);
     // A broken save that our write cannot merge turns the window read-only.
     std::fs::write(paths.settings(), "font_size = = 1\n").unwrap();
-    send(&mut app, SettingsMsg::Theme(ThemeMode::Light));
+    send(&mut app, SettingsMsg::Ligatures(false));
     assert_eq!(read(&paths).as_deref(), Some("font_size = = 1\n"));
     assert!(app.settings_win.as_ref().unwrap().1.read_only.is_some());
 }

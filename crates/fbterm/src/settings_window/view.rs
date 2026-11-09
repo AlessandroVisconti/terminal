@@ -3,9 +3,7 @@
 
 use fbterm_config::keys::{Action, ActionGroup, Bindings, FixedShortcut, fixed_shortcuts, risk};
 use fbterm_config::settings::{FONT_SIZE_RANGE, OPACITY_RANGE};
-use fbterm_config::{
-    MacosBlurStyle, SecretStorage, Settings, TabBar, ThemeMode, WindowDecorations,
-};
+use fbterm_config::{MacosBlurStyle, SecretStorage, Settings, TabBar, WindowDecorations};
 use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, slider, text, text_input, toggler,
 };
@@ -243,22 +241,6 @@ fn appearance<'a>(
     opaque_windows: bool,
 ) -> Vec<Element<'a, Message>> {
     let v = &state.values;
-    let theme = row![
-        segment(
-            t,
-            "Dark",
-            v.theme == ThemeMode::Dark,
-            editable.then(|| msg(SettingsMsg::Theme(ThemeMode::Dark))),
-        ),
-        segment(
-            t,
-            "Light",
-            v.theme == ThemeMode::Light,
-            editable.then(|| msg(SettingsMsg::Theme(ThemeMode::Light))),
-        ),
-    ]
-    .spacing(2);
-    let theme = container(theme).padding(2).style(move |_| well(t));
     let fonts = pick_list(state.fonts.as_slice(), state.selected_font(), |f| {
         msg(SettingsMsg::Font(f))
     })
@@ -362,7 +344,6 @@ fn appearance<'a>(
         );
     }
     let mut rows = vec![
-        setting(t, "Theme", None, false, theme),
         setting(t, "Font family", None, false, fonts),
         setting(t, "Color scheme", None, false, scheme),
         setting(t, "Font size", None, false, size),

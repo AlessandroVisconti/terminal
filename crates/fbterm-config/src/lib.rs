@@ -18,7 +18,7 @@ pub use profile::{
     StartMode, TunnelDef, TunnelKind,
 };
 pub use settings::{
-    MacosBlurStyle, MaxFps, SETTINGS_TEMPLATE, SecretStorage, Settings, TabBar, ThemeMode,
+    MacosBlurStyle, MaxFps, SETTINGS_TEMPLATE, SecretStorage, Settings, TabBar,
     UNCOMPRESSED_DEFAULT, UNCOMPRESSED_FLOOR, WindowDecorations,
 };
 pub use settings_edit::SettingChange;

@@ -45,7 +45,6 @@ use_theme_fonts = false
 ligatures = true
 font_features = []
 scrollback_lines = 10000
-theme = "dark"
 color_scheme = "graphite"
 kitty_keyboard = false
 grapheme_clusters = false

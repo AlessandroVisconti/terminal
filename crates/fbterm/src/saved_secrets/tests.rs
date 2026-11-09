@@ -794,7 +794,7 @@ fn a_hand_edit_of_secret_storage_waits_for_the_next_launch() {
     let paths = app.paths.clone();
     std::fs::write(
         paths.settings(),
-        "secret_storage = \"vault\"\ntheme = \"light\"\n",
+        "secret_storage = \"vault\"\nligatures = false\n",
     )
     .unwrap();
     let _ = app.update(Message::ConfigChanged(crate::watch::Changed {
@@ -802,11 +802,7 @@ fn a_hand_edit_of_secret_storage_waits_for_the_next_launch() {
         settings: true,
         schemes: false,
     }));
-    assert_eq!(
-        app.settings.theme,
-        fbterm_config::ThemeMode::Light,
-        "reloaded"
-    );
+    assert!(!app.settings.ligatures, "reloaded");
     assert_eq!(app.settings.secret_storage, SecretStorage::Auto);
     assert_eq!(app.storage(), Storage::System, "nothing moved");
 }

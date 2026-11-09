@@ -309,15 +309,14 @@ fn missing_settings_file_gives_defaults() {
     assert_eq!(s.font_size, 13.0);
     assert_eq!(s.scrollback_lines, 10_000);
     assert_eq!(s.font_family, "Geist Mono");
-    assert_eq!(s.theme, ThemeMode::Dark);
 }
 
 #[test]
 fn partial_settings_file_uses_defaults() {
     let path = tmp("settings.toml");
-    std::fs::write(&path, "theme = \"light\"\n").unwrap();
+    std::fs::write(&path, "scrollback_lines = 5000\n").unwrap();
     let s = Settings::load_or_default(&path);
-    assert_eq!(s.theme, ThemeMode::Light);
+    assert_eq!(s.scrollback_lines, 5000);
     assert_eq!(s.font_size, 13.0);
     assert!(
         !s.kitty_keyboard,
@@ -328,7 +327,7 @@ fn partial_settings_file_uses_defaults() {
 #[test]
 fn grapheme_clusters_setting_defaults_off_and_parses() {
     let path = tmp("settings.toml");
-    std::fs::write(&path, "theme = \"light\"\n").unwrap();
+    std::fs::write(&path, "font_size = 14.0\n").unwrap();
     assert!(!Settings::load_or_default(&path).grapheme_clusters);
     std::fs::write(&path, "grapheme_clusters = true\n").unwrap();
     assert!(Settings::load_or_default(&path).grapheme_clusters);
@@ -337,7 +336,7 @@ fn grapheme_clusters_setting_defaults_off_and_parses() {
 #[test]
 fn ligature_settings_default_and_parse() {
     let path = tmp("settings.toml");
-    std::fs::write(&path, "theme = \"light\"\n").unwrap();
+    std::fs::write(&path, "font_size = 14.0\n").unwrap();
     let s = Settings::load_or_default(&path);
     assert!(s.ligatures, "ligatures are on by default");
     assert!(s.font_features.is_empty());
@@ -380,7 +379,7 @@ fn paths_filenames() {
 #[test]
 fn broken_settings_reports_line() {
     let path = tmp("settings.toml");
-    let bytes = b"theme = \"dark\"\nfont_size = [\n";
+    let bytes = b"font_size = 14.0\nfont_size = [\n";
     std::fs::write(&path, bytes).unwrap();
     let err = Settings::load(&path).unwrap_err();
     assert!(matches!(err.line, Some(n) if n >= 2));
@@ -399,18 +398,13 @@ fn missing_settings_load_is_ok_defaults() {
 #[test]
 fn out_of_range_settings_are_clamped_and_reported() {
     let path = tmp("settings.toml");
-    std::fs::write(
-        &path,
-        "theme = \"light\"\nfont_size = 200.0\nscrollback_lines = 5000000\n",
-    )
-    .unwrap();
+    std::fs::write(&path, "font_size = 200.0\nscrollback_lines = 5000000\n").unwrap();
     let (s, warning) = Settings::load_checked(&path).unwrap();
     assert_eq!(s.font_size, 72.0);
     assert_eq!(s.scrollback_lines, 1_000_000);
-    assert_eq!(s.theme, ThemeMode::Light);
     let w = warning.expect("out-of-range values are reported");
     assert_eq!(w.path, path);
-    assert_eq!(w.line, Some(2));
+    assert_eq!(w.line, Some(1));
     assert!(w.message.contains("font_size"), "{}", w.message);
     assert!(w.message.contains("scrollback_lines"), "{}", w.message);
     // `load` applies the same clamping, without the warning.
@@ -468,7 +462,7 @@ fn background_settings_parse() {
 #[test]
 fn out_of_range_opacity_is_clamped_and_reported() {
     let path = tmp("settings.toml");
-    std::fs::write(&path, "theme = \"dark\"\nbackground_opacity = 1.5\n").unwrap();
+    std::fs::write(&path, "font_size = 14.0\nbackground_opacity = 1.5\n").unwrap();
     let (s, warning) = Settings::load_checked(&path).unwrap();
     assert_eq!(s.background_opacity, 1.0);
     let w = warning.expect("an out-of-range opacity is reported");
@@ -535,7 +529,7 @@ fn out_of_range_max_fps_is_clamped_and_reported() {
         ("241", 240),
         ("100000", 240),
     ] {
-        std::fs::write(&path, format!("theme = \"dark\"\nmax_fps = {value}\n")).unwrap();
+        std::fs::write(&path, format!("font_size = 14.0\nmax_fps = {value}\n")).unwrap();
         let (s, warning) = Settings::load_checked(&path).unwrap();
         assert_eq!(s.max_fps, MaxFps::Fixed(used), "{value}");
         let w = warning.expect(value);
@@ -753,7 +747,10 @@ fn color_scheme_write_field_round_trips() {
         text.contains("# Terminal color scheme for every session"),
         "{text}"
     );
-    assert!(text.contains("# Color theme:"), "comments kept");
+    assert!(
+        text.contains("# Let programs turn on the kitty"),
+        "comments kept"
+    );
     assert_eq!(Settings::load(&path).unwrap().color_scheme, "harbor");
 }
 
@@ -1458,4 +1455,48 @@ fn macos_blur_style_write_field_round_trips() {
         Settings::load(&path).unwrap().macos_blur_style,
         MacosBlurStyle::Native
     );
+}
+
+const THEME_NOTICE: &str = "theme is no longer used: the window follows color_scheme. For a light window, choose Graphite Light.";
+
+#[test]
+fn old_theme_key_notices_once() {
+    let path = tmp("settings.toml");
+    std::fs::write(&path, "font_size = 14.0\ntheme = \"light\"\n").unwrap();
+    let (s, warning) = Settings::load_checked(&path).unwrap();
+    assert_eq!(s.font_size, 14.0);
+    let w = warning.expect("the removed key is noticed");
+    assert_eq!(w.line, Some(2));
+    assert_eq!(w.message, THEME_NOTICE);
+    let (_, again) = Settings::load_checked(&path).unwrap();
+    let again = again.expect("same notice on every load");
+    assert_eq!(
+        (again.line, again.message.as_str()),
+        (Some(2), THEME_NOTICE)
+    );
+}
+
+#[test]
+fn old_theme_key_yields_to_another_problem() {
+    let path = tmp("settings.toml");
+    std::fs::write(&path, "theme = \"dark\"\nfont_size = 200.0\n").unwrap();
+    let (_, warning) = Settings::load_checked(&path).unwrap();
+    let w = warning.unwrap();
+    assert!(w.message.contains("font_size"), "{}", w.message);
+    assert!(!w.message.contains("theme"), "{}", w.message);
+}
+
+#[test]
+fn template_has_no_theme_line() {
+    assert!(!SETTINGS_TEMPLATE.contains("theme ="));
+    assert!(!SETTINGS_TEMPLATE.contains("Color theme"));
+}
+
+#[test]
+fn write_field_never_writes_theme() {
+    let path = tmp("settings.toml");
+    std::fs::write(&path, SETTINGS_TEMPLATE).unwrap();
+    Settings::write_field(&path, &SettingChange::FontSize(15.0)).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(!text.lines().any(|l| l.trim_start().starts_with("theme")));
 }

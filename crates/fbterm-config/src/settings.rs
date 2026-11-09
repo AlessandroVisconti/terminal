@@ -5,14 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::keys::KeyOverrides;
 use crate::store::{ConfigError, atomic_write, line_of};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ThemeMode {
-    #[default]
-    Dark,
-    Light,
-}
-
 /// Where saved passwords and key passphrases live (`secret_storage`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -232,7 +224,6 @@ pub struct Settings {
     /// `scrollback_lines`). Always below `scrollback_lines` once loaded with compression on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uncompressed_history_lines: Option<usize>,
-    pub theme: ThemeMode,
     /// Id of the terminal color scheme used by every session without its own (a built-in id or
     /// `user-<uuid>`). Not validated here: the app reports ids it does not know.
     pub color_scheme: String,
@@ -289,7 +280,6 @@ impl Default for Settings {
             scrollback_lines: 10_000,
             history_compression: false,
             uncompressed_history_lines: None,
-            theme: ThemeMode::Dark,
             color_scheme: "graphite".into(),
             kitty_keyboard: false,
             grapheme_clusters: false,
@@ -372,6 +362,21 @@ impl Settings {
             ConfigError::new(path, line, e.message().to_string())
         })?;
         let problems = settings.clamp();
+        let removed_theme = if problems.is_empty() {
+            top_level_key_line(&text, "theme")
+        } else {
+            None
+        };
+        if let Some(line) = removed_theme {
+            return Ok((
+                settings,
+                Some(ConfigError::new(
+                    path,
+                    Some(line),
+                    THEME_REMOVED.to_string(),
+                )),
+            ));
+        }
         let warning = (!problems.is_empty()).then(|| {
             let line = problems
                 .iter()
@@ -568,9 +573,6 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 # With history_compression: how many of the newest lines stay uncompressed.
 #uncompressed_history_lines = 10000  # 1000 to scrollback_lines - 1
 
-# Color theme: "dark" or "light".
-#theme = "dark"
-
 # Terminal color scheme for every session (a scheme id; see the Color schemes window).
 #color_scheme = "graphite"
 
@@ -681,6 +683,25 @@ impl Settings {
 }
 
 /// The 1-based line on which `key` is assigned at the top level, if any.
+/// Shown when a settings file still has the removed `theme` key.
+const THEME_REMOVED: &str = "theme is no longer used: the window follows color_scheme. For a light window, choose Graphite Light.";
+
+/// Line of `key` among the top-level keys (before the first `[table]`).
+fn top_level_key_line(text: &str, key: &str) -> Option<usize> {
+    for (i, l) in text.lines().enumerate() {
+        let t = l.trim_start();
+        if t.starts_with('[') {
+            return None;
+        }
+        if t.strip_prefix(key)
+            .is_some_and(|rest| rest.trim_start().starts_with('='))
+        {
+            return Some(i + 1);
+        }
+    }
+    None
+}
+
 fn key_line(text: &str, key: &str) -> Option<usize> {
     text.lines()
         .position(|l| {

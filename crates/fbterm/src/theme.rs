@@ -2,7 +2,6 @@
 
 use std::sync::Mutex;
 
-use fbterm_config::ThemeMode;
 use fbterm_config::profile::Rgb;
 use fbterm_config::schemes::{self, SchemeColors};
 use iced::theme::{Palette, palette};
@@ -74,24 +73,17 @@ pub const LIGHT: Tokens = Tokens {
     terminal: color!(0x0b0b0e),
 };
 
-pub fn tokens(mode: ThemeMode) -> &'static Tokens {
-    match mode {
-        ThemeMode::Dark => &DARK,
-        ThemeMode::Light => &LIGHT,
-    }
-}
-
-/// The app theme: Graphite neutrals, violet as the single accent.
-pub fn graphite_theme(mode: ThemeMode) -> Theme {
-    let name = match mode {
-        ThemeMode::Dark => "Graphite",
-        ThemeMode::Light => "Graphite Light",
-    };
-    theme_named(name, tokens(mode))
+/// The tokens of the built-in Graphite scheme. Temporary stand-in until the window follows
+/// the global color scheme.
+pub fn graphite_tokens() -> &'static Tokens {
+    let graphite = schemes::builtins()
+        .into_iter()
+        .find(|s| s.id == "graphite")
+        .expect("Graphite is built in");
+    tokens_for("graphite", &graphite.colors)
 }
 
 /// The iced theme for a token set: the same extended-palette overrides for every scheme.
-#[allow(dead_code)] // wired into the app in a later task
 pub fn chrome_theme(t: &Tokens) -> Theme {
     theme_named("Chrome", t)
 }
@@ -260,7 +252,6 @@ static INTERNED: Mutex<Vec<&'static Tokens>> = Mutex::new(Vec::new());
 /// The chrome tokens for a scheme. `graphite` and `graphite-light` give [`DARK`] and
 /// [`LIGHT`] value for value (with `terminal` set to the scheme's background); every other
 /// scheme gets [`derive`]d tokens. Equal results are the same `&'static` value.
-#[allow(dead_code)] // wired into the app in a later task
 pub fn tokens_for(id: &str, colors: &SchemeColors) -> &'static Tokens {
     let tokens = match id {
         "graphite" => Tokens {
@@ -288,7 +279,7 @@ mod tests {
 
     #[test]
     fn dark_palette_uses_graphite_values() {
-        let p = graphite_theme(ThemeMode::Dark).palette();
+        let p = chrome_theme(&DARK).palette();
         assert_eq!(p.background, color!(0x101013));
         assert_eq!(p.text, color!(0xf5f5f7));
         assert_eq!(p.primary, color!(0x7c49e3));
@@ -492,7 +483,7 @@ mod tests {
 
     #[test]
     fn light_palette_comes_from_the_light_tokens() {
-        let p = graphite_theme(ThemeMode::Light).palette();
+        let p = chrome_theme(&LIGHT).palette();
         assert_eq!(p.background, color!(0xfafafb));
         assert_eq!(p.text, color!(0x1c1c22));
         assert_eq!(p.primary, color!(0x7c49e3));

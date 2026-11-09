@@ -14,7 +14,6 @@ use super::{SettingsMsg, SettingsState, WRITE_DEBOUNCE, Write, fonts, thousands}
 use crate::app::{App, Message, SettingsSource};
 use crate::chrome::Chrome;
 use crate::tabs::{Page, Pane, Tab};
-use crate::theme;
 
 /// `name` as a `'static` str: iced wants font names that live for the whole process. Each
 /// distinct name is allocated once, however often the setting changes.
@@ -374,10 +373,6 @@ impl App {
             || new.font_features != self.settings.font_features;
         if restyle {
             self.style = terminal_style(&new);
-        }
-        if new.theme != self.settings.theme {
-            self.theme = theme::graphite_theme(new.theme);
-            self.tokens = theme::tokens(new.theme);
         }
         if new.kitty_keyboard != self.settings.kitty_keyboard {
             let panes = self

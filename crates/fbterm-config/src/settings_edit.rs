@@ -7,8 +7,8 @@ use toml_edit::{DocumentMut, Item, Value};
 
 use crate::keys::{Action, Overrides};
 use crate::settings::{
-    DEFAULT_MAX_FPS, MacosBlurStyle, MaxFps, SecretStorage, Settings, TabBar, ThemeMode,
-    UNCOMPRESSED_FLOOR, WindowDecorations,
+    DEFAULT_MAX_FPS, MacosBlurStyle, MaxFps, SecretStorage, Settings, TabBar, UNCOMPRESSED_FLOOR,
+    WindowDecorations,
 };
 use crate::store::{ConfigError, atomic_write, line_of};
 
@@ -24,7 +24,6 @@ pub enum SettingChange {
     /// as written while compression is off).
     HistoryCompression(bool),
     UncompressedHistoryLines(usize),
-    Theme(ThemeMode),
     ColorScheme(String),
     KittyKeyboard(bool),
     GraphemeClusters(bool),
@@ -59,7 +58,6 @@ impl SettingChange {
             Self::ScrollbackLines(_) => "scrollback_lines",
             Self::HistoryCompression(_) => "history_compression",
             Self::UncompressedHistoryLines(_) => "uncompressed_history_lines",
-            Self::Theme(_) => "theme",
             Self::ColorScheme(_) => "color_scheme",
             Self::KittyKeyboard(_) => "kitty_keyboard",
             Self::GraphemeClusters(_) => "grapheme_clusters",
@@ -98,7 +96,6 @@ impl SettingChange {
                 }
             }
             Self::UncompressedHistoryLines(v) => settings.uncompressed_history_lines = Some(*v),
-            Self::Theme(v) => settings.theme = *v,
             Self::ColorScheme(v) => settings.color_scheme.clone_from(v),
             Self::KittyKeyboard(v) => settings.kitty_keyboard = *v,
             Self::GraphemeClusters(v) => settings.grapheme_clusters = *v,
@@ -128,8 +125,6 @@ impl SettingChange {
             Self::ScrollbackLines(v) | Self::UncompressedHistoryLines(v) => {
                 Value::from(i64::try_from(*v).unwrap_or(i64::MAX))
             }
-            Self::Theme(ThemeMode::Dark) => Value::from("dark"),
-            Self::Theme(ThemeMode::Light) => Value::from("light"),
             Self::KittyKeyboard(v)
             | Self::GraphemeClusters(v)
             | Self::Ligatures(v)
@@ -458,7 +453,6 @@ mod tests {
             SettingChange::ScrollbackLines(25_000),
             SettingChange::HistoryCompression(true),
             SettingChange::UncompressedHistoryLines(5_000),
-            SettingChange::Theme(ThemeMode::Light),
             SettingChange::KittyKeyboard(true),
             SettingChange::GraphemeClusters(true),
             SettingChange::Ligatures(false),
@@ -647,7 +641,7 @@ mod tests {
     #[test]
     fn an_existing_key_keeps_its_place_and_comments() {
         let before = "# My settings.\n\
-                      theme = \"dark\"   # night owl\n\
+                      ligatures = true   # night owl\n\
                       \n\
                       # Bigger text.\n\
                       font_size = 14.0\n\
@@ -656,17 +650,17 @@ mod tests {
         assert_eq!(
             after,
             "# My settings.\n\
-             theme = \"dark\"   # night owl\n\
+             ligatures = true   # night owl\n\
              \n\
              # Bigger text.\n\
              font_size = 16.0\n\
              kitty_keyboard = false\n"
         );
-        let after = edit_text(before, &SettingChange::Theme(ThemeMode::Light)).unwrap();
+        let after = edit_text(before, &SettingChange::Ligatures(false)).unwrap();
         assert_eq!(
             after,
             "# My settings.\n\
-             theme = \"light\"   # night owl\n\
+             ligatures = false   # night owl\n\
              \n\
              # Bigger text.\n\
              font_size = 14.0\n\
@@ -728,11 +722,11 @@ mod tests {
         let dotfiles = dir.join("dotfiles");
         std::fs::create_dir_all(&dotfiles).unwrap();
         let real = dotfiles.join("settings.toml");
-        std::fs::write(&real, "# mine\ntheme = \"dark\"\n").unwrap();
+        std::fs::write(&real, "# mine\nligatures = true\n").unwrap();
         std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
         let link = dir.join("settings.toml");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        Settings::write_field(&link, &SettingChange::Theme(ThemeMode::Light)).unwrap();
+        Settings::write_field(&link, &SettingChange::Ligatures(false)).unwrap();
         assert!(
             std::fs::symlink_metadata(&link)
                 .unwrap()
@@ -741,7 +735,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(&real).unwrap(),
-            "# mine\ntheme = \"light\"\n"
+            "# mine\nligatures = false\n"
         );
         let mode = std::fs::metadata(&real).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
@@ -941,7 +935,7 @@ mod tests {
     #[test]
     fn lowering_scrollback_beside_an_invalid_key_writes_nothing() {
         for text in [
-            "theme = \"purple\"\nscrollback_lines = 20000\nuncompressed_history_lines = 8000\n",
+            "tab_bar = \"purple\"\nscrollback_lines = 20000\nuncompressed_history_lines = 8000\n",
             "scrollback_lines = 20000\nuncompressed_history_lines = \"lots\"\n",
         ] {
             let (line, _) = edit_text(text, &SettingChange::ScrollbackLines(5_000)).unwrap_err();
