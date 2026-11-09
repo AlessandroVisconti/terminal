@@ -2,6 +2,17 @@
 
 All notable changes to featherbit terminal (`fbterm`). The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each version links to its GitHub release, where the downloads are.
 
+## [0.10.0] - 2026-11-09
+
+### Added
+
+- Rename tabs: double-click a tab, choose `Rename tab` from its right-click menu, or press `Cmd+Shift+R` (`Ctrl+Shift+R` on Linux and Windows). `Enter` or a click elsewhere keeps the name, `Escape` cancels, and an empty name brings back the automatic one. The name shows on the tab bar, in the side list and in the window title, and is saved with the layout. The Profiles, Settings, Color schemes and Welcome tabs keep their names ([#96](https://github.com/featherbitplatform/terminal/pull/96)).
+
+### Fixed
+
+- fbterm could quit while the mouse moved over a pane whose session had just restarted, for example while it waited for a password ([#94](https://github.com/featherbitplatform/terminal/pull/94)).
+- In the theme gallery, a long `Download` link no longer squeezes the `Use font` button until its label spills out: the buttons move to a new line and the link wraps ([#95](https://github.com/featherbitplatform/terminal/pull/95)).
+
 ## [0.9.0] - 2026-11-09
 
 ### Added
@@ -209,6 +220,7 @@ The first release: the daily driver milestone, macOS only.
 - Compact scrollback history: a live `scrollback_lines` setting with a Settings confirmation, and memory given back when tabs close ([#2](https://github.com/featherbitplatform/terminal/pull/2)).
 - Unsigned macOS `.dmg` packaging and the release workflow ([#1](https://github.com/featherbitplatform/terminal/pull/1)).
 
+[0.10.0]: https://github.com/featherbitplatform/terminal/releases/tag/v0.10.0
 [0.9.0]: https://github.com/featherbitplatform/terminal/releases/tag/v0.9.0
 [0.8.3]: https://github.com/featherbitplatform/terminal/releases/tag/v0.8.3
 [0.8.2]: https://github.com/featherbitplatform/terminal/releases/tag/v0.8.2
