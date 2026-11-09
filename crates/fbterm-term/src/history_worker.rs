@@ -14,7 +14,8 @@
 //! waits in its queue entry for its next turn.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Once, OnceLock, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use feathercritty::term::HistoryJob;
@@ -39,6 +40,10 @@ struct Entry {
 struct Queue {
     entries: VecDeque<Entry>,
     busy: bool,
+    /// Terminals one of whose jobs panicked: never queued again in this session. The weak
+    /// reference keeps the allocation, so no other terminal can reuse the pointer while it is
+    /// listed; dead ones are pruned when another is added.
+    poisoned: Vec<Weak<Mutex<Terminal>>>,
 }
 
 /// Ends a turn when dropped, also when a job panicked: clears `busy` and wakes waiters, so
@@ -65,11 +70,18 @@ pub struct Worker {
     /// The terminal (as a pointer) of every install hold, in order.
     #[cfg(test)]
     installs: Mutex<Vec<usize>>,
+    /// Results installed, and results refused as stale.
+    #[cfg(test)]
+    installed: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    refused: std::sync::atomic::AtomicUsize,
     /// A test's code run once, right before the next batch's jobs run.
     #[cfg(test)]
     before_run: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// Called when a turn let go of the last reference to a terminal (see [`on_released`]).
     released: Mutex<Option<Released>>,
+    /// Whether the worker's thread runs (see [`Worker::start`]).
+    running: AtomicBool,
 }
 
 /// See [`on_released`].
@@ -92,7 +104,9 @@ impl Worker {
     pub fn enqueue(&self, term: &SharedTerminal) {
         let mut queue = self.queue.lock();
         let ptr = Arc::as_ptr(term);
-        if queue.entries.iter().any(|e| e.term.as_ptr() == ptr) {
+        if queue.entries.iter().any(|e| e.term.as_ptr() == ptr)
+            || queue.poisoned.iter().any(|p| p.as_ptr() == ptr)
+        {
             return;
         }
         queue.entries.push_back(Entry {
@@ -152,7 +166,7 @@ impl Worker {
         }
     }
 
-    /// The worker thread's loop: never returns.
+    /// The worker thread's loop: returns only by unwinding (see [`Worker::start`]).
     fn run(&self) -> ! {
         loop {
             let entry = {
@@ -194,8 +208,9 @@ impl Worker {
             f();
         }
         // A job that panics must not take the thread (and every terminal's compression) down:
-        // drop its batch and turn compression off for this terminal, so the same block is not
-        // offered again and panics in a loop.
+        // drop its batch, turn compression off for this terminal and never queue it again in
+        // this session (with compression off its cold blocks become decompression jobs, and if
+        // decompressing is what panicked, each later feed would panic again).
         let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             jobs.into_iter()
                 .map(|job| {
@@ -216,7 +231,17 @@ impl Worker {
         };
         let Ok(done) = done else {
             tracing::error!("a history compression job panicked; compression is off for its tab");
-            term.lock().set_history_compression(None);
+            {
+                let mut queue = self.queue.lock();
+                queue.poisoned.retain(|p| p.strong_count() > 0);
+                queue.poisoned.push(Arc::downgrade(&term));
+            }
+            let off = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                term.lock().set_history_compression(None);
+            }));
+            if off.is_err() {
+                tracing::error!("turning history compression off for a tab panicked");
+            }
             self.let_go(term);
             return;
         };
@@ -224,7 +249,14 @@ impl Worker {
             let mut t = term.lock();
             for d in done {
                 // `false`: stale (the history changed meanwhile); the result is dropped.
-                t.install_history_job(d);
+                let _installed = t.install_history_job(d);
+                #[cfg(test)]
+                if _installed {
+                    &self.installed
+                } else {
+                    &self.refused
+                }
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
             let next = t.next_history_jobs(BATCH);
             let more = !next.is_empty() || t.has_history_jobs();
@@ -256,6 +288,12 @@ impl Worker {
         let mut queue = self.queue.lock();
         let ptr = Arc::as_ptr(term);
         if let Some(entry) = queue.entries.iter_mut().find(|e| e.term.as_ptr() == ptr) {
+            // Only a turn gives an entry a batch, and the turn's own entry was taken, so with one
+            // worker thread a queued entry never holds one here.
+            debug_assert!(
+                entry.jobs.is_empty(),
+                "a queued entry already holds a batch"
+            );
             if entry.jobs.is_empty() {
                 entry.jobs = jobs;
             }
@@ -269,7 +307,7 @@ impl Worker {
 }
 
 /// Queue a terminal that has history jobs on the process-wide worker, starting its thread on
-/// the first call.
+/// the first call (and again after the thread ended, see [`Worker::start`]).
 pub fn enqueue(term: &SharedTerminal) {
     global().enqueue(term);
 }
@@ -297,18 +335,46 @@ pub fn wait_idle_for(timeout: Duration) -> bool {
 static WORKER: OnceLock<Worker> = OnceLock::new();
 
 fn global() -> &'static Worker {
-    static START: Once = Once::new();
     let worker = WORKER.get_or_init(Worker::new);
-    START.call_once(|| {
-        // If the thread cannot start, history simply stays uncompressed.
-        let _ = std::thread::Builder::new()
+    worker.start();
+    worker
+}
+
+impl Worker {
+    /// Start the worker's thread unless it runs. The thread's loop never returns, but a panic
+    /// outside a job's guard (taking or installing jobs) ends it: a guard then clears the flag,
+    /// so the next enqueue starts a new thread and the queued terminals are served again.
+    pub fn start(&'static self) {
+        // A plain load first: this runs after every feed that leaves jobs.
+        if self.running.load(Ordering::Relaxed) || self.running.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let spawned = std::thread::Builder::new()
             .name("fbterm-history-worker".into())
             .spawn(move || {
+                let _exit = ThreadExit(&self.running);
                 lower_priority();
-                worker.run()
+                self.run()
             });
-    });
-    worker
+        if let Err(e) = spawned {
+            // History stays uncompressed until a later enqueue starts the thread; said once.
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            if !WARNED.swap(true, Ordering::Relaxed) {
+                tracing::warn!("cannot start the history compression worker: {e}");
+            }
+            self.running.store(false, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Clears the worker's `running` flag when its thread ends, which is only ever by a panic.
+struct ThreadExit<'a>(&'a AtomicBool);
+
+impl Drop for ThreadExit<'_> {
+    fn drop(&mut self) {
+        tracing::error!("the history compression worker stopped; it restarts with the next output");
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 /// Lower the calling thread's priority, so compression yields to parsing and drawing. A
@@ -385,6 +451,9 @@ mod tests {
         worker.enqueue(&term);
         worker.run_until_idle();
 
+        // Every result was installed: none was refused as stale.
+        assert!(worker.installed.load(Ordering::SeqCst) > 0);
+        assert_eq!(worker.refused.load(Ordering::SeqCst), 0);
         let t = term.lock();
         assert!(!t.has_history_jobs());
         let plain = terminal(5_000, None, &bytes);
@@ -473,10 +542,63 @@ mod tests {
     #[test]
     fn worker_skips_dropped_terminal() {
         let term = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        let weak = Arc::downgrade(&term);
         let worker = Worker::new();
         worker.enqueue(&term);
         drop(term);
         worker.run_until_idle();
+        assert!(worker.queue.lock().entries.is_empty());
+        assert_eq!(weak.strong_count(), 0);
+        assert!(worker.installs.lock().is_empty());
+    }
+
+    /// A panic outside a job's `catch_unwind` (here before the batch runs) ends the thread; the
+    /// next enqueue starts it again, and the queued work is done.
+    #[test]
+    fn a_dead_worker_thread_starts_again() {
+        let worker: &'static Worker = Box::leak(Box::new(Worker::new()));
+        *worker.before_run.lock() = Some(Box::new(|| panic!("test: the worker thread dies")));
+        let first = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        worker.start();
+        worker.enqueue(&first);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while worker.running.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "the thread did not end");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // The turn that died let go of its entry; the terminal is queued again by its next feed.
+        let later = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        worker.start();
+        worker.enqueue(&first);
+        worker.enqueue(&later);
+        assert!(worker.wait_idle_for(Duration::from_secs(30)), "nothing ran");
+        assert!(!first.lock().has_history_jobs());
+        assert!(!later.lock().has_history_jobs());
+    }
+
+    /// A terminal whose job panicked is skipped for the rest of the session: with compression
+    /// on again (its blocks would be offered once more), enqueuing it runs nothing.
+    #[test]
+    fn a_terminal_that_panicked_is_not_queued_again() {
+        let bad = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        let worker = Worker::new();
+        worker.panic_next.store(true, Ordering::SeqCst);
+        worker.enqueue(&bad);
+        worker.run_until_idle();
+        assert_eq!(bad.lock().history_compression(), None);
+
+        bad.lock().set_history_compression(Some(1_000));
+        assert!(bad.lock().has_history_jobs());
+        worker.enqueue(&bad);
+        assert!(worker.queue.lock().entries.is_empty());
+        worker.run_until_idle();
+        assert!(worker.installs.lock().is_empty());
+        assert!(bad.lock().has_history_jobs());
+        // Others are still served.
+        let good = shared(terminal(5_000, Some(1_000), &output(20_000, 40)));
+        worker.enqueue(&good);
+        worker.run_until_idle();
+        assert!(!good.lock().has_history_jobs());
     }
 
     /// The tab of a terminal is closed while a turn runs its jobs: the worker holds no
