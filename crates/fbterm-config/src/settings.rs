@@ -682,26 +682,19 @@ impl Settings {
     }
 }
 
-/// The 1-based line on which `key` is assigned at the top level, if any.
 /// Shown when a settings file still has the removed `theme` key.
 const THEME_REMOVED: &str = "theme is no longer used: the window follows color_scheme. For a light window, choose Graphite Light.";
 
 /// Line of `key` among the top-level keys (before the first `[table]`).
 fn top_level_key_line(text: &str, key: &str) -> Option<usize> {
-    for (i, l) in text.lines().enumerate() {
-        let t = l.trim_start();
-        if t.starts_with('[') {
-            return None;
-        }
-        if t.strip_prefix(key)
-            .is_some_and(|rest| rest.trim_start().starts_with('='))
-        {
-            return Some(i + 1);
-        }
-    }
-    None
+    let end = text
+        .lines()
+        .position(|l| l.trim_start().starts_with('['))
+        .unwrap_or(usize::MAX);
+    key_line(text, key).filter(|&line| line - 1 < end)
 }
 
+/// The 1-based line on which `key` is assigned at the top level, if any.
 fn key_line(text: &str, key: &str) -> Option<usize> {
     text.lines()
         .position(|l| {

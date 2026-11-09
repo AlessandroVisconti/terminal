@@ -232,6 +232,8 @@ fn edit_one(text: &str, change: &SettingChange) -> Result<String, (Option<usize>
         let line = e.span().map(|s| line_of(text, s.start));
         (line, e.message().to_string())
     })?;
+    // The obsolete top-level `theme` key goes with the next write (keys in tables stay).
+    doc.remove("theme");
     if let SettingChange::Keys(wanted) = change {
         // Compare with the entries as written (before load drops conflicting or reserved
         // ones), so an entry the app ignored is not left behind to apply on the next load.
@@ -495,10 +497,10 @@ mod tests {
             )
         );
         // Without the template's `#[keys]`, the table is added after a blank line.
-        let after = edit_text("theme = \"dark\"", &keys(&[(Action::Quit, "ctrl+shift+k")]));
+        let after = edit_text("ligatures = true", &keys(&[(Action::Quit, "ctrl+shift+k")]));
         assert_eq!(
             after.unwrap(),
-            "theme = \"dark\"\n\n[keys]\nquit = \"ctrl+shift+k\"\n"
+            "ligatures = true\n\n[keys]\nquit = \"ctrl+shift+k\"\n"
         );
         let after = edit_text(
             SETTINGS_TEMPLATE,
@@ -528,7 +530,7 @@ mod tests {
 
     #[test]
     fn key_edits_keep_comments_and_untouched_entries() {
-        let before = "theme = \"dark\"\n\
+        let before = "ligatures = true\n\
                       \n\
                       # My shortcuts.\n\
                       [keys]\n\
@@ -548,7 +550,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             after,
-            "theme = \"dark\"\n\
+            "ligatures = true\n\
              \n\
              # My shortcuts.\n\
              [keys]\n\
@@ -562,7 +564,7 @@ mod tests {
         let after = edit_text(&after, &keys(&[])).unwrap();
         assert_eq!(
             after,
-            "theme = \"dark\"\n\
+            "ligatures = true\n\
              \n\
              # My shortcuts.\n\
              [keys]\n\
@@ -689,10 +691,10 @@ mod tests {
 
     #[test]
     fn a_missing_key_joins_the_top_level_keys() {
-        let after = edit_text("theme = \"light\"\n", &SettingChange::FontSize(15.0)).unwrap();
-        assert_eq!(after, "theme = \"light\"\nfont_size = 15.0\n");
+        let after = edit_text("ligatures = true\n", &SettingChange::FontSize(15.0)).unwrap();
+        assert_eq!(after, "ligatures = true\nfont_size = 15.0\n");
         // A commented key after a table header is not where a top-level key can go.
-        let text = "theme = \"light\"\n\n[extra]\n#font_size = 13.0\n";
+        let text = "ligatures = true\n\n[extra]\n#font_size = 13.0\n";
         let after = edit_text(text, &SettingChange::FontSize(15.0)).unwrap();
         assert_eq!(
             toml::from_str::<Settings>(&after).unwrap().font_size,
@@ -709,7 +711,7 @@ mod tests {
         let s: Settings = toml::from_str(&after).unwrap();
         assert_eq!(s.font_size, 15.0, "{after}");
         assert_eq!(s.font_family, "#font_size = 13.0\n");
-        let text = "theme = \"dark\"\nextra = [\n#font_size = 13.0\n1]\n";
+        let text = "ligatures = true\nextra = [\n#font_size = 13.0\n1]\n";
         let after = edit_text(text, &SettingChange::FontSize(15.0)).unwrap();
         assert_eq!(toml::from_str::<Settings>(&after).unwrap().font_size, 15.0);
     }
@@ -744,11 +746,11 @@ mod tests {
 
     #[test]
     fn line_endings_and_a_missing_final_newline_are_respected() {
-        let text = "# a\r\n#font_size = 13.0\r\ntheme = \"dark\"\r\n";
+        let text = "# a\r\n#font_size = 13.0\r\nligatures = true\r\n";
         let after = edit_text(text, &SettingChange::FontSize(15.0)).unwrap();
         assert_eq!(
             after,
-            "# a\r\n#font_size = 13.0\r\nfont_size = 15.0\r\ntheme = \"dark\"\r\n"
+            "# a\r\n#font_size = 13.0\r\nfont_size = 15.0\r\nligatures = true\r\n"
         );
         let after = edit_text("#font_size = 13.0", &SettingChange::FontSize(15.0)).unwrap();
         assert_eq!(after, "#font_size = 13.0\nfont_size = 15.0\n");
@@ -757,7 +759,7 @@ mod tests {
     #[test]
     fn a_broken_file_is_refused() {
         let (line, _) = edit_text(
-            "theme = \"dark\"\nfont_size = = 3\n",
+            "ligatures = true\nfont_size = = 3\n",
             &SettingChange::FontSize(15.0),
         )
         .unwrap_err();

@@ -1493,10 +1493,30 @@ fn template_has_no_theme_line() {
 }
 
 #[test]
-fn write_field_never_writes_theme() {
+fn a_settings_write_drops_the_old_theme_key() {
     let path = tmp("settings.toml");
-    std::fs::write(&path, SETTINGS_TEMPLATE).unwrap();
+    std::fs::write(&path, "font_size = 14.0\ntheme = \"light\"\n").unwrap();
     Settings::write_field(&path, &SettingChange::FontSize(15.0)).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();
-    assert!(!text.lines().any(|l| l.trim_start().starts_with("theme")));
+    assert!(
+        !text.lines().any(|l| l.trim_start().starts_with("theme")),
+        "{text}"
+    );
+    let (s, warning) = Settings::load_checked(&path).unwrap();
+    assert_eq!(s.font_size, 15.0);
+    assert!(warning.is_none(), "{warning:?}");
+}
+
+#[test]
+fn a_settings_write_keeps_theme_inside_a_table() {
+    let path = tmp("settings.toml");
+    std::fs::write(
+        &path,
+        "use_theme_fonts = true\n\n[keys]\ntheme = \"ctrl+t\"\n",
+    )
+    .unwrap();
+    Settings::write_field(&path, &SettingChange::FontSize(15.0)).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("use_theme_fonts = true"), "{text}");
+    assert!(text.contains("[keys]\ntheme = \"ctrl+t\""), "{text}");
 }
