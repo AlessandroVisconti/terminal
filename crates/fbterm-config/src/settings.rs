@@ -196,6 +196,9 @@ pub struct Settings {
     /// Fold the sidebar's rows into the profiles' groups (only with tabs on the left).
     #[serde(default)]
     pub tab_groups: bool,
+    /// Draw each pane in its color scheme's suggested font when that font is installed (a
+    /// scheme's own `font_family` still wins; a missing font falls back to `font_family`).
+    pub use_theme_fonts: bool,
     /// Most redraws per second caused by program output.
     pub max_fps: MaxFps,
     /// Automatic reconnect attempts for a tunnel whose connection dropped (0 = off).
@@ -228,6 +231,7 @@ impl Default for Settings {
             window_decorations: WindowDecorations::Fbterm,
             tab_bar: None,
             tab_groups: false,
+            use_theme_fonts: false,
             max_fps: MaxFps::default(),
             tunnel_max_retries: 10,
             check_updates: None,
@@ -426,6 +430,11 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 
 # Font size in points, from 6.0 to 72.0.
 #font_size = 13.0
+
+# Draw each tab in its color scheme's suggested font when that font is installed (true or
+# false). A scheme that sets its own font keeps it; a missing font falls back to font_family.
+# fbterm never downloads fonts.
+#use_theme_fonts = false
 
 # Draw sequences such as -> and != as one symbol when the font has them (true or false).
 #ligatures = true

@@ -960,7 +960,8 @@ fn plan_schemes(
     let mut seen: HashMap<&str, &str> = HashMap::new();
     // An archive is outside input. A `[gallery]` block is only ever written by Install on
     // this machine, so an archived copy of a gallery theme counts as edited (Update asks);
-    // a `[credit]` that could hide or reorder text is dropped, the colors stay.
+    // a `[credit]` or `[suggested_font]` that could hide or reorder text is dropped, the
+    // colors stay.
     let sanitized: Vec<Scheme> = archive
         .schemes
         .iter()
@@ -968,6 +969,7 @@ fn plan_schemes(
         .map(|mut s| {
             s.gallery = None;
             schemes::sanitize_credit(&mut s);
+            schemes::sanitize_suggested_font(&mut s);
             s
         })
         .collect();

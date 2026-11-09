@@ -74,6 +74,9 @@ pub enum SettingsMsg {
     Clusters(bool),
     /// `Ligatures`.
     Ligatures(bool),
+    /// `Use each theme's suggested font`, the same setting as the Color schemes window's
+    /// checkbox.
+    UseThemeFonts(bool),
     MaxFps(MaxFps),
     /// `Check for updates automatically`.
     CheckUpdates(bool),
@@ -480,6 +483,7 @@ impl SettingsState {
             SettingsMsg::Kitty(v) => self.change(SettingChange::KittyKeyboard(v), false),
             SettingsMsg::Clusters(v) => self.change(SettingChange::GraphemeClusters(v), false),
             SettingsMsg::Ligatures(v) => self.change(SettingChange::Ligatures(v), false),
+            SettingsMsg::UseThemeFonts(v) => self.change(SettingChange::UseThemeFonts(v), false),
             SettingsMsg::MaxFps(v) => self.change(SettingChange::MaxFps(v), false),
             SettingsMsg::CheckUpdates(v) => self.change(SettingChange::CheckUpdates(v), false),
             SettingsMsg::Record(action)

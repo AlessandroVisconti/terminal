@@ -9,8 +9,8 @@
 use serde::Deserialize;
 
 use crate::schemes::{
-    ColorsFile, Credit, GALLERY_PREFIX, GalleryInfo, Scheme, install_hash, is_edited,
-    is_unsafe_char, is_valid_user, unsafe_credit_field,
+    ColorsFile, Credit, GALLERY_PREFIX, GalleryInfo, Scheme, install_hash, is_edited, is_https_url,
+    is_unsafe_char, is_valid_user, suggested_font_from, unsafe_credit_field,
 };
 
 /// The one place the catalog is fetched from.
@@ -64,6 +64,9 @@ pub struct Catalog {
     pub themes: Vec<CatalogTheme>,
     /// One line per skipped theme: `"<id or index>: reason"`.
     pub skipped: Vec<String>,
+    /// One line per theme kept without part of its entry (a `[suggested_font]` table that was
+    /// dropped): `"<id>: reason"`.
+    pub notes: Vec<String>,
 }
 
 /// Why a whole catalog could not be used.
@@ -119,6 +122,9 @@ struct ThemeEntry {
     colors: ColorsFile,
     #[serde(default)]
     credit: Option<Credit>,
+    /// Read as any value: a malformed table is dropped with a note, the theme kept.
+    #[serde(default)]
+    suggested_font: Option<toml::Value>,
 }
 
 /// Parse a downloaded catalog. Whole-catalog problems are errors; a bad theme is only
@@ -169,10 +175,18 @@ pub fn parse_catalog(bytes: &[u8]) -> Result<Catalog, CatalogError> {
             Err(why) => catalog
                 .skipped
                 .push(format!("{label}: {}", truncate_reason(&why))),
-            Ok(theme) if catalog.themes.iter().any(|t| t.id == theme.id) => {
+            Ok((theme, _)) if catalog.themes.iter().any(|t| t.id == theme.id) => {
                 catalog.skipped.push(format!("{label}: duplicate id"));
             }
-            Ok(theme) => catalog.themes.push(theme),
+            Ok((theme, note)) => {
+                if let Some(why) = note {
+                    catalog.notes.push(format!(
+                        "{label}: suggested_font ignored: {}",
+                        truncate_reason(&why)
+                    ));
+                }
+                catalog.themes.push(theme);
+            }
         }
     }
     Ok(catalog)
@@ -211,17 +225,10 @@ fn is_license_file(path: &str) -> bool {
     })
 }
 
-/// An `https://` URL with a host and no whitespace or control characters.
-fn is_https_url(url: &str) -> bool {
-    url.strip_prefix("https://").is_some_and(|rest| {
-        !rest.is_empty()
-            && !rest.starts_with('/')
-            && !rest.chars().any(|c| c.is_whitespace() || c.is_control())
-    })
-}
-
-/// Check one `[[themes]]` entry and build its scheme.
-fn theme_from(value: &toml::Value) -> Result<CatalogTheme, String> {
+/// Check one `[[themes]]` entry and build its scheme, with why its `[suggested_font]` was
+/// dropped, if it was (the theme is kept without it; the table is checked by the scheme file
+/// rule, [`suggested_font_from`]).
+fn theme_from(value: &toml::Value) -> Result<(CatalogTheme, Option<String>), String> {
     let entry: ThemeEntry = value
         .clone()
         .try_into()
@@ -289,6 +296,11 @@ fn theme_from(value: &toml::Value) -> Result<CatalogTheme, String> {
         return Err("credit url is not https://".into());
     }
 
+    let (suggested_font, note) = match entry.suggested_font.as_ref().map(suggested_font_from) {
+        None => (None, None),
+        Some(Ok(font)) => (Some(font), None),
+        Some(Err(why)) => (None, Some(why)),
+    };
     let mut scheme = Scheme {
         id: format!("{GALLERY_PREFIX}{}", entry.id),
         name: entry.name,
@@ -297,6 +309,7 @@ fn theme_from(value: &toml::Value) -> Result<CatalogTheme, String> {
         font_size: entry.font_size,
         credit: Some(credit),
         gallery: None,
+        suggested_font,
         builtin: false,
     };
     scheme.gallery = Some(GalleryInfo {
@@ -307,13 +320,16 @@ fn theme_from(value: &toml::Value) -> Result<CatalogTheme, String> {
     if !is_valid_user(&scheme) {
         return Err("not a valid color scheme".into());
     }
-    Ok(CatalogTheme {
-        id: entry.id,
-        version: entry.version,
-        dark,
-        withdrawn: entry.withdrawn,
-        scheme,
-    })
+    Ok((
+        CatalogTheme {
+            id: entry.id,
+            version: entry.version,
+            dark,
+            withdrawn: entry.withdrawn,
+            scheme,
+        },
+        note,
+    ))
 }
 
 /// The status of `theme`, given the installed scheme with id `gallery-<id>`, if any.
@@ -342,9 +358,11 @@ pub fn status(theme: &CatalogTheme, installed: Option<&Scheme>) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schemes::SuggestedFont;
 
-    /// Two entries copied from the published catalog (`one-dark` and `tokyo-night-day`), so
-    /// this parser stays pinned to the shape `terminal-themes` publishes.
+    /// Two entries copied from the published catalog (`one-dark` and `tokyo-night-day`, their
+    /// descriptions shortened), so this parser stays pinned to the shape `terminal-themes`
+    /// publishes, `[suggested_font]` included.
     const PUBLISHED: &str = r##"format = 1
 
 [[themes]]
@@ -385,6 +403,11 @@ license_file = "LICENSES/atom-one-MIT.txt"
 description = "Dark syntax theme. The palette has no terminal colors; the 16 are a mapping of it."
 derived = true
 
+[themes.suggested_font]
+family = "Fira Code"
+url = "https://github.com/tonsky/FiraCode"
+license = "OFL-1.1"
+
 [[themes]]
 id = "tokyo-night-day"
 name = "Tokyo Night Day"
@@ -422,6 +445,11 @@ copyright = "Copyright (c) 2018-present Enkia"
 license_file = "LICENSES/tokyonight-nvim-Apache-2.0.txt"
 description = "Tokyo Night, Day style."
 derived = false
+
+[themes.suggested_font]
+family = "JetBrains Mono"
+url = "https://www.jetbrains.com/lp/mono/"
+license = "OFL-1.1"
 "##;
 
     /// One theme entry with every field, for building test catalogs.
@@ -527,6 +555,65 @@ derived = false
         assert!(!catalog.themes[0].withdrawn);
         assert!(catalog.themes[1].withdrawn);
         assert_eq!(catalog.themes[1].version, 3);
+    }
+
+    #[test]
+    fn entries_carry_their_suggested_font() {
+        let catalog = parse(PUBLISHED);
+        assert!(catalog.notes.is_empty(), "{:?}", catalog.notes);
+        let one = &catalog.themes[0].scheme;
+        assert_eq!(
+            one.suggested_font,
+            Some(SuggestedFont {
+                family: "Fira Code".into(),
+                url: "https://github.com/tonsky/FiraCode".into(),
+                license: "OFL-1.1".into(),
+            })
+        );
+        assert_eq!(
+            catalog.themes[1]
+                .scheme
+                .suggested_font
+                .as_ref()
+                .unwrap()
+                .family,
+            "JetBrains Mono"
+        );
+        // The suggestion is not part of what Update compares.
+        let mut bare = one.clone();
+        bare.suggested_font = None;
+        assert_eq!(install_hash(&bare), install_hash(one));
+        // Entries without one (catalogs published before the table existed) still parse.
+        let catalog = parse(&catalog_of(&[entry("a")]));
+        assert_eq!(catalog.themes.len(), 1);
+        assert!(catalog.themes[0].scheme.suggested_font.is_none());
+    }
+
+    #[test]
+    fn bad_suggested_font_is_dropped_with_a_note() {
+        let good = "\n[themes.suggested_font]\nfamily = \"Fira Code\"\n\
+                    url = \"https://github.com/tonsky/FiraCode\"\nlicense = \"OFL-1.1\"\n";
+        let text = catalog_of(&[format!("{}{good}", entry("a"))]);
+        let catalog = parse(&text);
+        assert!(catalog.themes[0].scheme.suggested_font.is_some());
+        for (from, to) in [
+            (
+                "url = \"https://github.com/tonsky/FiraCode\"",
+                "url = \"http://example.org\"",
+            ),
+            ("license = \"OFL-1.1\"", "license = \"Proprietary\""),
+            ("license = \"OFL-1.1\"", ""),
+            ("family = \"Fira Code\"", "family = 7"),
+            ("family = \"Fira Code\"", "family = \"Fira\\u202eCode\""),
+        ] {
+            let bad = text.replacen(from, to, 1);
+            let catalog = parse(&bad);
+            assert_eq!(catalog.themes.len(), 1, "{to}: the theme stays");
+            assert!(catalog.skipped.is_empty(), "{:?}", catalog.skipped);
+            assert!(catalog.themes[0].scheme.suggested_font.is_none(), "{to}");
+            assert_eq!(catalog.notes.len(), 1, "{to}");
+            assert!(catalog.notes[0].starts_with("a: "), "{:?}", catalog.notes);
+        }
     }
 
     #[test]

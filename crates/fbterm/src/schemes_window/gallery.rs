@@ -13,7 +13,7 @@ use fbterm_config::catalog::{
 use fbterm_config::schemes::{Credit, Scheme, SchemeColors, SchemeSet, new_user_id, save_user};
 use iced::Task;
 
-use super::SchemesMsg;
+use super::{FontContext, FontLine, SchemesMsg};
 use crate::app::{App, Message};
 
 /// The start of the line shown when the catalog could not be loaded.
@@ -72,6 +72,8 @@ pub struct GalleryRow {
     pub button: Option<RowButton>,
     pub note: Option<&'static str>,
     pub colors: SchemeColors,
+    /// The theme's `Suggested font` line, when it suggests one.
+    pub font: Option<FontLine>,
 }
 
 /// `s` in at most `max` characters: cut with an ellipsis (spaces before it dropped) when
@@ -97,12 +99,14 @@ pub fn credit_line(credit: &Credit) -> String {
 /// The rows of `catalog` against the `installed` schemes, sorted by name (ignoring case).
 /// `filter` keeps the themes whose name, credit project or credit author contains it
 /// (ignoring case and surrounding spaces); `variant` keeps only dark (`Some(true)`) or light
-/// (`Some(false)`) themes. A withdrawn theme shows only while installed, with a note.
+/// (`Some(false)`) themes. A withdrawn theme shows only while installed, with a note. Each
+/// row's suggested font is measured against `fonts`.
 pub fn gallery_rows(
     catalog: &Catalog,
     installed: &SchemeSet,
     filter: &str,
     variant: Option<bool>,
+    fonts: &FontContext<'_>,
 ) -> Vec<GalleryRow> {
     let needle = filter.trim().to_lowercase();
     let matches = |t: &CatalogTheme| {
@@ -138,6 +142,7 @@ pub fn gallery_rows(
                 button,
                 note,
                 colors: t.scheme.colors,
+                font: fonts.line(&t.scheme),
             })
         })
         .collect();
@@ -438,13 +443,14 @@ impl App {
     }
 }
 
-/// One theme of the demo catalog: neutral sample colors and credit.
+/// One theme of the demo catalog: neutral sample colors and credit, and a suggested font
+/// (family, page).
 fn demo_theme(
     id: &str,
     name: &str,
     version: u32,
     withdrawn: bool,
-    author: &str,
+    (author, font): (&str, (&str, &str)),
     (dark, fg, bg, ansi): (bool, &str, &str, [&str; 16]),
 ) -> String {
     const KEYS: [&str; 16] = [
@@ -483,13 +489,23 @@ fn demo_theme(
          license_file = \"LICENSES/sample-themes-MIT.txt\"\n\
          description = \"A sample theme.\"\nderived = false\n"
     ));
+    out.push_str(&format!(
+        "\n[themes.suggested_font]\nfamily = \"{}\"\nurl = \"{}\"\nlicense = \"OFL-1.1\"\n",
+        font.0, font.1
+    ));
     out
 }
 
 /// The `FBTERM_DEMO_GALLERY` scene: a catalog of sample themes and the installed schemes
 /// that give one row of each kind (Install, Installed, Update, and a withdrawn theme still
-/// installed), plus a worst-case row with a very long name and credit.
+/// installed), plus a worst-case row with a very long name, credit and font family. Each
+/// theme suggests a font: Geist Mono (bundled, so installed) and families that may be
+/// missing, so both states show.
 pub fn demo_catalog() -> (Catalog, Vec<Scheme>) {
+    const GEIST: (&str, &str) = ("Geist Mono", "https://vercel.com/font");
+    const PLEX: (&str, &str) = ("IBM Plex Mono", "https://github.com/IBM/plex");
+    const JETBRAINS: (&str, &str) = ("JetBrains Mono", "https://www.jetbrains.com/lp/mono/");
+    const FIRA: (&str, &str) = ("Fira Code", "https://github.com/tonsky/FiraCode");
     let lagoon = (
         true,
         "#d8dee6",
@@ -529,27 +545,38 @@ pub fn demo_catalog() -> (Catalog, Vec<Scheme>) {
     let catalog = |meadow_version: u32, all: bool| {
         let mut text = String::from("format = 1\n");
         let a = "Example Author";
-        text.push_str(&demo_theme("lagoon", "Lagoon", 1, false, a, lagoon));
+        text.push_str(&demo_theme(
+            "lagoon",
+            "Lagoon",
+            1,
+            false,
+            (a, GEIST),
+            lagoon,
+        ));
         text.push_str(&demo_theme(
             "meadow",
             "Meadow",
             meadow_version,
             false,
-            a,
+            (a, PLEX),
             meadow,
         ));
-        text.push_str(&demo_theme("slate", "Slate", 1, all, a, slate));
+        text.push_str(&demo_theme("slate", "Slate", 1, all, (a, JETBRAINS), slate));
         if all {
-            text.push_str(&demo_theme("dusk", "Dusk", 1, false, a, dusk));
+            text.push_str(&demo_theme("dusk", "Dusk", 1, false, (a, FIRA), dusk));
             // The worst case: a 120-character name and a 400-character author.
             let name = format!("{}Ends Here", "A Very Long Sample Theme Name ".repeat(4));
             let author = "Example Author With A Rather Long Credit, ".repeat(10);
+            let family = format!("{}Mono", "Sample Font Family With A Long Name ".repeat(3));
             text.push_str(&demo_theme(
                 "long-sample",
                 name.trim(),
                 1,
                 false,
-                author.trim_end_matches([',', ' ']),
+                (
+                    author.trim_end_matches([',', ' ']),
+                    (&family, "https://example.org/sample-font"),
+                ),
                 slate,
             ));
         }

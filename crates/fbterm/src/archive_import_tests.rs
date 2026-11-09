@@ -899,6 +899,9 @@ fn archived_gallery_schemes_count_as_edited() {
     let imported = &p.schemes[0].scheme;
     assert_eq!(imported.id, "gallery-nord");
     assert_eq!(imported.credit, theirs.credit);
+    // The suggested font travels like the credit.
+    assert!(theirs.suggested_font.is_some());
+    assert_eq!(imported.suggested_font, theirs.suggested_font);
     assert!(imported.gallery.is_none());
     assert!(schemes::is_edited(imported));
     let dir = key_dir();
@@ -941,6 +944,20 @@ fn archived_unsafe_credit_is_dropped() {
     assert!(p.schemes[0].scheme.credit.is_none());
     assert_eq!(p.schemes[0].scheme.colors, theirs.colors);
     assert_eq!(p.schemes[1].scheme.credit, ok.credit);
+}
+
+#[test]
+fn archived_unsafe_suggested_font_is_dropped() {
+    let mut theirs = gallery_scheme("nord");
+    theirs.suggested_font.as_mut().unwrap().url = "javascript:alert(1)".into();
+    let ok = user_scheme("user-ok", "Fine");
+    let mut a = archive(ArchiveKind::Full, &[]);
+    a.schemes = vec![theirs.clone(), ok.clone()];
+    let p = plan(&ProfileStore::default(), &a, &no_schemes()).unwrap();
+    assert!(p.schemes[0].scheme.suggested_font.is_none());
+    assert_eq!(p.schemes[0].scheme.colors, theirs.colors);
+    assert_eq!(p.schemes[0].scheme.credit, theirs.credit);
+    assert_eq!(p.schemes[1].scheme.suggested_font, ok.suggested_font);
 }
 
 #[test]

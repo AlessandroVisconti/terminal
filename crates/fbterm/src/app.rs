@@ -472,6 +472,12 @@ pub struct App {
     pub(crate) gallery_loading: bool,
     /// How the theme gallery fetches its catalog and opens credit links (fakes in tests).
     pub(crate) gallery_io: crate::schemes_window::gallery::GalleryIo,
+    /// Reads the installed monospace families from the font database (a fake in tests).
+    pub(crate) font_list: crate::theme_fonts::FontList,
+    /// The installed families as last read through `font_list`: when `use_theme_fonts` turns
+    /// on, and each time the Color schemes window shows a scheme's details. Never read per
+    /// frame; see `crate::theme_fonts`.
+    pub(crate) installed_fonts: Vec<String>,
     /// Whether the Welcome tab may open at this launch: off in unit tests, and off once it
     /// opened (or was found not due) this run. See `crate::welcome`.
     pub(crate) ask_welcome: bool,
@@ -803,10 +809,15 @@ impl App {
             gallery_generation: 0,
             gallery_loading: false,
             gallery_io: crate::schemes_window::gallery::GalleryIo::default(),
+            font_list: crate::theme_fonts::system_font_list(),
+            installed_fonts: Vec::new(),
             ask_welcome: !cfg!(test),
             demo_update: debug_env("FBTERM_DEMO_UPDATE").map(|v| v.to_string_lossy().into_owned()),
         };
         app.update_output_rate();
+        if app.settings.use_theme_fonts {
+            app.refresh_installed_fonts();
+        }
         app.refresh_scheme_notices();
         app.refresh_feature_notices();
         app.warm_ligature_sets();

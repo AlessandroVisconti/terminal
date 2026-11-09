@@ -25,7 +25,10 @@ impl App {
     /// it to the front and select `select` there.
     pub(crate) fn open_schemes(&mut self, select: Option<String>) -> Task<Message> {
         let select = select.unwrap_or_else(|| self.settings.color_scheme.clone());
+        // The details show: read the installed fonts again, for the suggestion line.
+        self.refresh_installed_fonts();
         if let Some((id, state)) = &mut self.schemes_win {
+            state.set_installed(self.installed_fonts.clone());
             state.update(SchemesMsg::Select(select));
             return window::gain_focus(*id);
         }
@@ -35,11 +38,9 @@ impl App {
             exit_on_close_request: false,
             ..window::Settings::default()
         });
-        let mut state = SchemesState::new(
-            &self.schemes,
-            Some(&select),
-            crate::settings_window::installed_monospace(),
-        );
+        let mut state =
+            SchemesState::new(&self.schemes, Some(&select), self.installed_fonts.clone());
+        state.sync_settings(&self.settings);
         if self.gallery_loading {
             // The fetch started before the window closed is still running.
             state.gallery = super::GalleryLoad::Loading;
@@ -52,6 +53,16 @@ impl App {
     }
 
     pub(crate) fn schemes_msg(&mut self, msg: SchemesMsg) -> Task<Message> {
+        // A scheme's details, or the gallery, are shown: the installed fonts are read once
+        // for this showing (a font installed while fbterm runs is then found), never per frame.
+        if matches!(msg, SchemesMsg::Select(_) | SchemesMsg::ShowGallery(true))
+            && self.schemes_win.is_some()
+        {
+            self.refresh_installed_fonts();
+            if let Some((_, state)) = &mut self.schemes_win {
+                state.set_installed(self.installed_fonts.clone());
+            }
+        }
         let msg = match self.gallery_msg(msg) {
             Ok(task) => return task,
             Err(msg) => msg,
@@ -79,6 +90,19 @@ impl App {
             SchemesMsg::Imported(path) => Self::read_import(path),
             SchemesMsg::ImportRead(result) => self.imported(*result),
             SchemesMsg::ImportChoice(choice) => self.import_choice(choice),
+            SchemesMsg::DownloadFont(url) => {
+                self.open_font_page(&url);
+                Task::none()
+            }
+            SchemesMsg::UseFont(family) => {
+                if crate::theme_fonts::is_installed(&self.installed_fonts, &family) {
+                    self.set_setting(SettingChange::FontFamily(family))
+                } else {
+                    tracing::warn!(%family, "suggested font not used: not installed");
+                    Task::none()
+                }
+            }
+            SchemesMsg::UseThemeFonts(on) => self.set_setting(SettingChange::UseThemeFonts(on)),
             SchemesMsg::Export => self.pick_export(),
             SchemesMsg::Exported(path) => self.exported(path),
             SchemesMsg::Preview(_) => Task::none(),
@@ -88,6 +112,17 @@ impl App {
                 }
                 Task::none()
             }
+        }
+    }
+
+    /// A suggested font's official page, in the system browser through the gallery's opener
+    /// (a user click only); anything but an `https://` link is refused. fbterm never
+    /// downloads the font itself.
+    fn open_font_page(&self, url: &str) {
+        if super::gallery::credit_link_ok(url) {
+            (self.gallery_io.open)(url);
+        } else {
+            tracing::warn!(%url, "font page not opened: not an https link");
         }
     }
 
@@ -381,8 +416,10 @@ impl App {
         // A `[gallery]` block is only ever written by Install on this machine: an imported
         // copy, even of a gallery theme, counts as edited, so Update asks before replacing it.
         scheme.gallery = None;
-        // `read_file` drops an unsafe `[credit]` already; checked again for any other source.
+        // `read_file` drops an unsafe `[credit]` or `[suggested_font]` already; checked again
+        // for any other source. Both travel with the colors.
         fbterm_config::schemes::sanitize_credit(&mut scheme);
+        fbterm_config::schemes::sanitize_suggested_font(&mut scheme);
         if BUILTIN_IDS.contains(&scheme.id.as_str()) || !is_plain_id(&scheme.id) {
             scheme.id = new_user_id();
         } else if let Some(existing) = self
