@@ -2,8 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use feathercritty::index::{Column, Point};
-use feathercritty::term::cell::Hyperlink;
+use feathercritty::grid::Grid;
+use feathercritty::index::{Boundary, Column, Point};
+use feathercritty::term::cell::{Cell, Hyperlink};
 use iced::advanced::Clipboard;
 use iced::advanced::clipboard::Kind;
 use iced::keyboard::{self, Key, Modifiers};
@@ -99,6 +100,12 @@ fn is_modifier_key(key: &Key) -> bool {
 }
 
 /// The chord that opens links: Cmd on macOS, Ctrl elsewhere.
+/// The grid point under `pos`, kept inside `grid`. The view can be larger than the terminal
+/// until the terminal's resize lands, and reading a cell outside the grid panics.
+fn point_in(grid: &Grid<Cell>, pos: iced::Point, view: GridSize) -> Point {
+    pixel_to_point(pos, view, grid.display_offset()).grid_clamp(grid, Boundary::Grid)
+}
+
 fn link_modifier(m: Modifiers) -> bool {
     if cfg!(target_os = "macos") {
         m.logo()
@@ -416,8 +423,7 @@ impl InputState {
         let mut term = ctx.term.lock();
         let mode = term.mode();
         let cell = pixel_to_cell(pos, ctx.grid);
-        let offset = term.term().grid().display_offset();
-        let point = pixel_to_point(pos, ctx.grid, offset);
+        let point = point_in(term.term().grid(), pos, ctx.grid);
         if button == mouse::Button::Left && link_modifier(self.modifiers) {
             // Read the link from the clicked cell: the content may have changed under a still
             // pointer since the hover was last computed.
@@ -559,7 +565,7 @@ impl InputState {
         }
         if let Some((anchor, started)) = self.drag {
             let mut term = ctx.term.lock();
-            let point = pixel_to_point(pos, ctx.grid, term.term().grid().display_offset());
+            let point = point_in(term.term().grid(), pos, ctx.grid);
             if !started && point == anchor {
                 return Effect::CAPTURE;
             }
@@ -585,7 +591,7 @@ impl InputState {
         }
         let term = ctx.term.lock();
         let grid = term.term().grid();
-        let point = pixel_to_point(pos, ctx.grid, grid.display_offset());
+        let point = point_in(grid, pos, ctx.grid);
         if self.hover_cell == Some(point) {
             return Effect::NONE;
         }
@@ -1197,5 +1203,53 @@ mod tests {
             inputs(out),
             vec![b"\x1b[27u".to_vec(), b"\x1b[27;1:3u".to_vec()]
         );
+    }
+
+    /// A view larger than its terminal (a terminal whose resize has not landed yet): hovering,
+    /// link clicks, double and triple clicks and drags past its last column and line read
+    /// clamped cells instead of panicking.
+    #[test]
+    fn pointer_past_a_smaller_terminal_stays_inside_its_grid() {
+        let term = shared(filled(24));
+        let view = GridSize {
+            cols: 60,
+            rows: 30,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        };
+        // Column 50 of the view, past the terminal's 40 (lines outside the grid read as empty
+        // cells, columns are not checked), on a line inside it.
+        let at = iced::Point::new(10.0 + 8.0 * 50.0 + 4.0, 20.0 + 16.0 * 5.0 + 8.0);
+        let ctx = Context {
+            term: &term,
+            focused: true,
+            bounds: Rectangle::new(iced::Point::new(10.0, 20.0), iced::Size::new(480.0, 480.0)),
+            grid: view,
+            cursor: mouse::Cursor::Available(at),
+            right_click: RightClick::CopyOrMenu,
+        };
+        let mut st = InputState::default();
+        let mut clip = TestClipboard::default();
+        let mut out = Vec::new();
+        let moved = Event::Mouse(mouse::Event::CursorMoved { position: at });
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        st.handle(&ctx, &moved, &mut clip, &mut out);
+        for _ in 0..3 {
+            st.handle(&ctx, &press, &mut clip, &mut out);
+            st.handle(&ctx, &release, &mut clip, &mut out);
+        }
+        st.handle(&ctx, &press, &mut clip, &mut out);
+        st.handle(&ctx, &moved, &mut clip, &mut out);
+        st.handle(&ctx, &release, &mut clip, &mut out);
+        let link = if cfg!(target_os = "macos") {
+            Modifiers::LOGO
+        } else {
+            Modifiers::CTRL
+        };
+        let mods = Event::Keyboard(keyboard::Event::ModifiersChanged(link));
+        st.handle(&ctx, &mods, &mut clip, &mut out);
+        st.handle(&ctx, &press, &mut clip, &mut out);
+        st.handle(&ctx, &moved, &mut clip, &mut out);
     }
 }
