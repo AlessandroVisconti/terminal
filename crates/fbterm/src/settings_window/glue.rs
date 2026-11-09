@@ -210,6 +210,20 @@ impl App {
     /// edited on disk since we last saw it (and the watcher has not reported it yet), that edit
     /// is not ours to hide: after writing, the file is reloaded as for any edit on disk.
     /// A change that cannot be written stays pending (a later write retries it) and is reported.
+    /// Apply a value typed into a Settings field and still waiting on its quiet period, as
+    /// Enter would (the tab is closing). Leaves the write to the caller.
+    pub(crate) fn flush_typed_setting(&mut self) -> Task<Message> {
+        let Some((_, state)) = &mut self.settings_win else {
+            return Task::none();
+        };
+        let Some(change) = state.flush_typed().apply else {
+            return Task::none();
+        };
+        let mut next = self.settings.clone();
+        change.apply(&mut next);
+        self.apply_settings(next, SettingsSource::Window)
+    }
+
     pub(crate) fn write_pending_settings(&mut self) {
         // Callers that drop the task are closing the window or the app: no find bar to refresh.
         drop(self.write_pending_settings_task());

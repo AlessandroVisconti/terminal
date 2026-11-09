@@ -885,3 +885,63 @@ fn a_reflow_queues_the_terminal_for_recompression() {
     );
     super::glue::release_when_idle();
 }
+
+/// A stored `uncompressed_history_lines` out of range while compression is off: switching it on
+/// in the Settings tab writes the clamped value with the switch, so the file loads with no
+/// notice and the field shows no error.
+#[test]
+fn switching_on_in_the_tab_writes_a_clamped_uncompressed_value() {
+    let (mut app, paths) = app();
+    std::fs::write(
+        paths.settings(),
+        "scrollback_lines = 5000\nuncompressed_history_lines = 8000\n",
+    )
+    .unwrap();
+    let _ = app.update(Message::ConfigChanged(SETTINGS_CHANGED));
+    assert_eq!(app.settings.uncompressed_history_lines, Some(8_000));
+    send(&mut app, SettingsMsg::HistoryCompression(true));
+    let (loaded, notice) = Settings::load_checked(&paths.settings()).unwrap();
+    assert!(notice.is_none(), "{notice:?}");
+    assert!(loaded.history_compression);
+    assert_eq!(loaded.uncompressed_history_lines, Some(4_999));
+    assert_eq!(app.settings.uncompressed_history_lines, Some(4_999));
+    let state = &app.settings_win.as_ref().unwrap().1;
+    assert_eq!(state.uncompressed_error(), None);
+    assert_eq!(state.uncompressed_text, "4999");
+}
+
+/// A value typed into the uncompressed field and still waiting on its quiet period is applied
+/// and written when the Settings tab closes.
+#[test]
+fn closing_the_tab_applies_a_typed_uncompressed_value() {
+    let (mut app, paths) = app();
+    send(&mut app, SettingsMsg::HistoryCompression(true));
+    send(&mut app, SettingsMsg::UncompressedText("5000".into()));
+    send(&mut app, SettingsMsg::Close);
+    assert!(app.settings_window().is_none());
+    assert_eq!(app.settings.uncompressed_history_lines, Some(5_000));
+    assert_eq!(
+        Settings::load(&paths.settings())
+            .unwrap()
+            .uncompressed_history_lines,
+        Some(5_000)
+    );
+}
+
+/// Quitting writes a value still typed into the uncompressed field.
+#[test]
+fn quit_writes_a_typed_uncompressed_value() {
+    let (mut app, paths) = app();
+    send(&mut app, SettingsMsg::HistoryCompression(true));
+    send(&mut app, SettingsMsg::UncompressedText("5000".into()));
+    let _ = app.update(Message::Shortcut(
+        app.settings_window().unwrap(),
+        crate::keys::Action::Quit,
+    ));
+    assert_eq!(
+        Settings::load(&paths.settings())
+            .unwrap()
+            .uncompressed_history_lines,
+        Some(5_000)
+    );
+}

@@ -1028,6 +1028,9 @@ fn uncompressed_in_range_saves_and_shows_default_when_absent() {
     let mut s = state();
     s.update(SettingsMsg::HistoryCompression(true));
     s.take_pending();
+    // Absent: the field shows the default, kept below the scrollback of 10,000.
+    assert_eq!(s.values.uncompressed_history_lines, None);
+    assert_eq!(s.uncompressed_text, "9999");
     let e = s.update(SettingsMsg::UncompressedText("5,000".into()));
     assert_eq!(e.apply, None, "typing waits for Enter or the quiet period");
     let Write::After(n) = e.write else {
@@ -1040,6 +1043,123 @@ fn uncompressed_in_range_saves_and_shows_default_when_absent() {
         Some(SettingChange::UncompressedHistoryLines(5_000))
     );
     assert_eq!(e.write, Write::Now);
+    assert_eq!(s.values.uncompressed_history_lines, Some(5_000));
+    assert_eq!(
+        s.take_pending(),
+        [SettingChange::UncompressedHistoryLines(5_000)]
+    );
+}
+
+/// A state whose saved settings have `scrollback` lines and `uncompressed_history_lines` set
+/// to `keep`, with compression off.
+fn with_stored_uncompressed(scrollback: usize, keep: usize) -> SettingsState {
+    let mut s = state();
+    s.sync(&Settings {
+        scrollback_lines: scrollback,
+        uncompressed_history_lines: Some(keep),
+        ..Settings::default()
+    });
+    s
+}
+
+/// A stored value out of range is kept as written while compression is off; switching it on
+/// in the tab clamps it into range and saves that, so no error shows under the field and no
+/// notice comes at the next launch.
+#[test]
+fn switching_on_normalizes_an_out_of_range_stored_value() {
+    for (keep, want) in [(8_000, 4_999), (200, 1_000)] {
+        let mut s = with_stored_uncompressed(5_000, keep);
+        let e = s.update(SettingsMsg::HistoryCompression(true));
+        assert_eq!(e.apply, Some(SettingChange::HistoryCompression(true)));
+        assert_eq!(e.write, Write::Now);
+        assert_eq!(s.values.uncompressed_history_lines, Some(want), "{keep}");
+        assert_eq!(s.uncompressed_text, want.to_string());
+        assert_eq!(s.uncompressed_error(), None);
+    }
+    // In range: left as it is.
+    let mut s = with_stored_uncompressed(5_000, 2_000);
+    s.update(SettingsMsg::HistoryCompression(true));
+    assert_eq!(s.values.uncompressed_history_lines, Some(2_000));
+}
+
+/// Typed text that is not saved (and its error) does not survive switching off and on.
+#[test]
+fn toggling_compression_resyncs_the_uncompressed_field() {
+    let mut s = state();
+    s.update(SettingsMsg::HistoryCompression(true));
+    s.update(SettingsMsg::UncompressedText("500".into()));
+    assert!(s.uncompressed_error().is_some());
+    s.update(SettingsMsg::HistoryCompression(false));
+    assert_eq!(s.uncompressed_text, "9999");
+    s.update(SettingsMsg::HistoryCompression(true));
+    assert_eq!(s.uncompressed_text, "9999");
+    assert_eq!(s.uncompressed_error(), None);
+    // A value waiting on its quiet period is dropped too.
+    s.update(SettingsMsg::UncompressedText("2000".into()));
+    s.update(SettingsMsg::HistoryCompression(false));
+    s.take_pending();
+    for n in 0..=s.generation {
+        assert_eq!(s.update(SettingsMsg::Flush(n)).apply, None);
+    }
+    assert_eq!(s.values.uncompressed_history_lines, None);
+}
+
+/// The view leaves the disabled field read-only; the handlers ignore its messages as well.
+#[test]
+fn a_disabled_uncompressed_field_ignores_input() {
+    for mut s in [state(), {
+        let mut s = with_scrollback(1_000);
+        s.update(SettingsMsg::HistoryCompression(true));
+        s.take_pending();
+        s
+    }] {
+        assert!(!s.uncompressed_enabled());
+        let shown = s.uncompressed_text.clone();
+        let values = s.values.clone();
+        assert_eq!(
+            s.update(SettingsMsg::UncompressedText("5000".into())),
+            Effect::NONE
+        );
+        assert_eq!(s.uncompressed_text, shown);
+        assert_eq!(s.update(SettingsMsg::UncompressedSubmit), Effect::NONE);
+        assert_eq!(s.uncompressed_text, shown);
+        assert_eq!(s.values, values);
+        assert!(!s.has_pending());
+    }
+}
+
+/// With a scrollback of 1,000 or less the field is disabled and shows the clamped effective
+/// value, never a stored one above the scrollback.
+#[test]
+fn a_small_scrollback_shows_the_clamped_value() {
+    let s = with_stored_uncompressed(800, 8_000);
+    assert_eq!(s.uncompressed_text, "799");
+    let mut s = with_stored_uncompressed(5_000, 2_000);
+    s.update(SettingsMsg::ScrollbackText("900".into()));
+    s.update(SettingsMsg::ScrollbackSubmit);
+    assert_eq!(s.values.scrollback_lines, 900);
+    assert_eq!(s.uncompressed_text, "899");
+}
+
+/// A typed value still waiting on its quiet period is applied when the tab closes, as Enter
+/// would; an out-of-range one is not.
+#[test]
+fn closing_applies_a_held_uncompressed_value() {
+    let mut s = state();
+    s.update(SettingsMsg::HistoryCompression(true));
+    s.take_pending();
+    s.update(SettingsMsg::UncompressedText("5000".into()));
+    let e = s.flush_typed();
+    assert_eq!(
+        e.apply,
+        Some(SettingChange::UncompressedHistoryLines(5_000))
+    );
+    assert_eq!(e.write, Write::Now);
+    assert_eq!(s.flush_typed(), Effect::NONE);
+    s.take_pending();
+    s.update(SettingsMsg::UncompressedText("50000".into()));
+    assert_eq!(s.flush_typed().apply, None);
+    assert!(!s.has_pending());
 }
 
 /// Typing `20000` over `10000` one key at a time applies none of `2`, `20`, `200`, `2000` (a

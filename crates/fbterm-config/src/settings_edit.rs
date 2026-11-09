@@ -20,6 +20,8 @@ pub enum SettingChange {
     /// Lowering it also lowers a stored `uncompressed_history_lines` that would no longer be
     /// below it (see [`UNCOMPRESSED_FLOOR`]).
     ScrollbackLines(usize),
+    /// Switching it on also clamps a stored `uncompressed_history_lines` into range (it is kept
+    /// as written while compression is off).
     HistoryCompression(bool),
     UncompressedHistoryLines(usize),
     Theme(ThemeMode),
@@ -82,7 +84,13 @@ impl SettingChange {
                     settings.uncompressed_history_lines = Some(dragged_down(keep, *v));
                 }
             }
-            Self::HistoryCompression(v) => settings.history_compression = *v,
+            Self::HistoryCompression(v) => {
+                settings.history_compression = *v;
+                if *v && let Some(keep) = settings.uncompressed_history_lines {
+                    settings.uncompressed_history_lines =
+                        Some(clamped(keep, settings.scrollback_lines));
+                }
+            }
             Self::UncompressedHistoryLines(v) => settings.uncompressed_history_lines = Some(*v),
             Self::Theme(v) => settings.theme = *v,
             Self::ColorScheme(v) => settings.color_scheme.clone_from(v),
@@ -146,6 +154,17 @@ fn dragged_down(keep: usize, scrollback: usize) -> usize {
     }
 }
 
+/// `keep` (an `uncompressed_history_lines`) brought into its range for `scrollback`, as when
+/// compression is switched on. A scrollback at or below [`UNCOMPRESSED_FLOOR`] leaves no range
+/// (compression does not apply), so it is left alone.
+fn clamped(keep: usize, scrollback: usize) -> usize {
+    if scrollback > UNCOMPRESSED_FLOOR {
+        keep.clamp(UNCOMPRESSED_FLOOR, scrollback - 1)
+    } else {
+        keep
+    }
+}
+
 /// `v` as the shortest decimal that reads back as it (0.85, not 0.8500000238418579).
 fn short_f64(v: f32) -> f64 {
     v.to_string().parse().unwrap_or(f64::from(v))
@@ -181,17 +200,26 @@ impl Settings {
 pub fn edit_text(text: &str, change: &SettingChange) -> Result<String, (Option<usize>, String)> {
     let edited = edit_one(text, change)?;
     // Lowering the scrollback also lowers an `uncompressed_history_lines` that is present and
-    // would no longer be below it.
-    if let SettingChange::ScrollbackLines(v) = change {
-        let keep = toml::from_str::<Settings>(&edited)
-            .ok()
-            .and_then(|s| s.uncompressed_history_lines);
-        if let Some(keep) = keep.filter(|k| dragged_down(*k, *v) != *k) {
-            return edit_one(
-                &edited,
-                &SettingChange::UncompressedHistoryLines(dragged_down(keep, *v)),
-            );
-        }
+    // would no longer be below it; switching compression on clamps one into range. `edit_one`
+    // refused a file that does not load as settings, so the edited one loads too.
+    let follow = |s: Settings| match change {
+        SettingChange::ScrollbackLines(v) => s
+            .uncompressed_history_lines
+            .map(|k| (k, dragged_down(k, *v))),
+        SettingChange::HistoryCompression(true) => s
+            .uncompressed_history_lines
+            .map(|k| (k, clamped(k, s.scrollback_lines))),
+        _ => None,
+    };
+    if matches!(
+        change,
+        SettingChange::ScrollbackLines(_) | SettingChange::HistoryCompression(true)
+    ) && let Some((_, keep)) = toml::from_str::<Settings>(&edited)
+        .ok()
+        .and_then(follow)
+        .filter(|(was, now)| was != now)
+    {
+        return edit_one(&edited, &SettingChange::UncompressedHistoryLines(keep));
     }
     Ok(edited)
 }
@@ -899,6 +927,47 @@ mod tests {
             let (line, _) = edit_text(text, &SettingChange::ScrollbackLines(5_000)).unwrap_err();
             assert!(line.is_some(), "{text}");
         }
+    }
+
+    #[test]
+    fn switching_compression_on_clamps_a_stored_uncompressed_value() {
+        for (keep, want) in [(8_000, 4_999), (200, 1_000), (2_000, 2_000)] {
+            let mut s = Settings {
+                scrollback_lines: 5_000,
+                uncompressed_history_lines: Some(keep),
+                ..Settings::default()
+            };
+            SettingChange::HistoryCompression(true).apply(&mut s);
+            assert_eq!(s.uncompressed_history_lines, Some(want), "{keep}");
+        }
+        // Absent stays absent; off, or a scrollback at the floor, leaves it as written.
+        let mut s = Settings::default();
+        SettingChange::HistoryCompression(true).apply(&mut s);
+        assert_eq!(s.uncompressed_history_lines, None);
+        for (scrollback, on) in [(5_000, false), (1_000, true)] {
+            let mut s = Settings {
+                scrollback_lines: scrollback,
+                uncompressed_history_lines: Some(8_000),
+                ..Settings::default()
+            };
+            SettingChange::HistoryCompression(on).apply(&mut s);
+            assert_eq!(s.uncompressed_history_lines, Some(8_000));
+        }
+        // In the file: the clamped value is written with the switch, and the file then loads
+        // with no problem to report.
+        let text = "scrollback_lines = 5000\nuncompressed_history_lines = 8000\n";
+        let edited = edit_text(text, &SettingChange::HistoryCompression(true)).unwrap();
+        assert_eq!(
+            edited,
+            "scrollback_lines = 5000\nuncompressed_history_lines = 4999\nhistory_compression = true\n"
+        );
+        let mut loaded: Settings = toml::from_str(&edited).unwrap();
+        assert!(loaded.clamp().is_empty());
+        let edited = edit_text(text, &SettingChange::HistoryCompression(false)).unwrap();
+        assert!(
+            edited.contains("uncompressed_history_lines = 8000"),
+            "{edited}"
+        );
     }
 
     #[test]

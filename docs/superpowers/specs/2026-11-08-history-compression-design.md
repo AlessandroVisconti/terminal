@@ -124,6 +124,9 @@ In the Settings tab, under the Scrollback row:
   near the bottom never decompresses.
 - **In the Settings tab:** typing an out-of-range value saves nothing and shows the range
   inline, the way other number fields do.
+- **Switching compression on in the Settings tab** with a stored value out of range (kept as
+  written while compression is off) clamps it into range and saves it with the switch, so no
+  error shows under the field and no notice comes at the next launch.
 - **In a hand-edited `settings.toml`:** an out-of-range value is replaced by the nearest valid
   one, and the window banner shows a notice once per distinct line, like the existing
   `scrollback_lines` range notice.

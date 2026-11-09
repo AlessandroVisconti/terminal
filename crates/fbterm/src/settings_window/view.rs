@@ -190,7 +190,7 @@ fn setting<'a>(
     control: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let mut words = column![text(label).font(UI_FONT).size(13).color(if dimmed {
-        t.text_muted
+        dimmed_text(t)
     } else {
         t.text
     })]
@@ -212,6 +212,24 @@ fn setting<'a>(
         .align_y(Alignment::Center)
         .padding(Padding::from([12.0, 16.0]))
         .into()
+}
+
+/// The text color of a dimmed (disabled) row: its label, and the value of its own field.
+fn dimmed_text(t: &Tokens) -> Color {
+    t.text_muted
+}
+
+/// [`ui::input_style`] whose value, while disabled, is dimmed like the row's label.
+fn dimmed_input_style(t: &Tokens, status: text_input::Status) -> text_input::Style {
+    let style = ui::input_style(t, status);
+    if matches!(status, text_input::Status::Disabled) {
+        text_input::Style {
+            value: dimmed_text(t),
+            ..style
+        }
+    } else {
+        style
+    }
 }
 
 fn appearance<'a>(
@@ -775,7 +793,7 @@ fn uncompressed_row<'a>(
             .padding(Padding::from([6.0, 10.0]))
             .width(110)
             .align_x(Alignment::End)
-            .style(move |_, s| ui::input_style(t, s)),
+            .style(move |_, s| dimmed_input_style(t, s)),
         unit(t, "lines", Length::Shrink),
     ]
     .spacing(10)

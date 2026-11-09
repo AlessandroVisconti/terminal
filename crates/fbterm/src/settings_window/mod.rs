@@ -677,6 +677,12 @@ impl SettingsState {
             SettingsMsg::HistoryCompression(on) => {
                 self.change(SettingChange::HistoryCompression(on), false)
             }
+            // The view makes the field read-only while disabled; its messages are ignored too.
+            SettingsMsg::UncompressedText(_) | SettingsMsg::UncompressedSubmit
+                if !self.uncompressed_enabled() =>
+            {
+                Effect::NONE
+            }
             SettingsMsg::UncompressedText(s) => {
                 let parsed = parse_count(&s);
                 self.uncompressed_text = s;
@@ -790,12 +796,15 @@ impl SettingsState {
         })
     }
 
-    /// The value the uncompressed field shows: the setting, or its default for this scrollback.
+    /// The value the uncompressed field shows: the setting, or its default for this scrollback,
+    /// never above the scrollback (a stored value is kept as written while compression is off
+    /// or the scrollback is too small).
     fn uncompressed_effective(&self) -> usize {
         let top = self.values.scrollback_lines.saturating_sub(1);
         self.values
             .uncompressed_history_lines
-            .unwrap_or_else(|| UNCOMPRESSED_DEFAULT.min(top))
+            .unwrap_or(UNCOMPRESSED_DEFAULT)
+            .min(top)
     }
 
     /// The values the uncompressed field accepts: 1,000 up to one below the scrollback.
@@ -837,6 +846,19 @@ impl SettingsState {
         (shown > SCROLLBACK_WARN_ABOVE).then_some(SCROLLBACK_NOTE)
     }
 
+    /// The tab is closing: a value typed into the uncompressed field and still waiting on its
+    /// quiet period is applied now, as Enter would (an out-of-range one is not).
+    pub fn flush_typed(&mut self) -> Effect {
+        let Some((v, _)) = self.held_uncompressed.take() else {
+            return Effect::NONE;
+        };
+        if self.uncompressed_enabled() && self.uncompressed_range().contains(&v) {
+            self.change(SettingChange::UncompressedHistoryLines(v), false)
+        } else {
+            Effect::NONE
+        }
+    }
+
     /// Write whatever is pending now (Enter in a field that holds no new value).
     fn flush_now(&mut self) -> Effect {
         Effect {
@@ -862,8 +884,12 @@ impl SettingsState {
             };
         }
         self.values = next;
-        if matches!(change, SettingChange::ScrollbackLines(_)) {
-            // The saved uncompressed value may have been dragged down with it.
+        if matches!(
+            change,
+            SettingChange::ScrollbackLines(_) | SettingChange::HistoryCompression(_)
+        ) {
+            // The saved uncompressed value may have been dragged down or clamped with it, and
+            // text typed under the other state of the switch does not carry over.
             self.uncompressed_text = self.uncompressed_effective().to_string();
             self.held_uncompressed = None;
         }

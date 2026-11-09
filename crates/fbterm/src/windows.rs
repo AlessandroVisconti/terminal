@@ -181,8 +181,8 @@ impl App {
         }
     }
 
-    /// What a closed page tab leaves behind: the editor's drafts go, Settings writes what is
-    /// still waiting, the Welcome tab answers its open questions with the defaults.
+    /// What a closed page tab leaves behind: the editor's drafts go, Settings applies a value
+    /// still typed (as Enter would) and writes what is still waiting, the Welcome tab answers its open questions with the defaults.
     pub(crate) fn page_closed(&mut self, page: Page) -> Task<Message> {
         match page {
             Page::Profiles => {
@@ -190,9 +190,10 @@ impl App {
                 Task::none()
             }
             Page::Settings => {
+                let typed = self.flush_typed_setting();
                 self.write_pending_settings();
                 self.settings_win = None;
-                Task::none()
+                typed
             }
             Page::Welcome => self.welcome_closed(),
         }
@@ -366,7 +367,11 @@ impl App {
         if self.quitting {
             return Task::none();
         }
-        // Settings changes still waiting for their quiet period are written now.
+        // Settings changes still waiting for their quiet period are written now, with a value
+        // still typed in a field (queued, not applied: the app is ending).
+        if let Some((_, state)) = &mut self.settings_win {
+            let _ = state.flush_typed();
+        }
         self.write_pending_settings();
         self.save_state();
         self.quitting = true;
