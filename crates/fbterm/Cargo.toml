@@ -51,7 +51,7 @@ iced_tiny_skia = "=0.14.1"
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSNotification", "NSOperation", "NSProcessInfo", "NSString"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSGraphics", "NSMenu", "NSMenuItem", "NSResponder", "NSScreen", "NSToolbar", "NSView", "NSVisualEffectView", "NSWindow"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSAppearance", "NSApplication", "NSGraphics", "NSMenu", "NSMenuItem", "NSResponder", "NSScreen", "NSToolbar", "NSUserInterfaceItemIdentification", "NSView", "NSVisualEffectView", "NSWindow", "objc2-core-foundation"] }
 
 # `malloc_trim` for `memory::release_freed` (glibc only; macOS declares its own call, other targets do nothing).
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]

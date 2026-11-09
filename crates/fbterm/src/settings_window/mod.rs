@@ -12,7 +12,7 @@ use fbterm_config::settings::{
     TUNNEL_RETRIES_RANGE,
 };
 use fbterm_config::{
-    ConfigError, MaxFps, SecretStorage, SettingChange, Settings, TabBar, ThemeMode,
+    ConfigError, MacosBlurStyle, MaxFps, SecretStorage, SettingChange, Settings, TabBar, ThemeMode,
     WindowDecorations,
 };
 
@@ -54,6 +54,8 @@ pub enum SettingsMsg {
     OpacityText(String),
     OpacitySubmit,
     Blur(bool),
+    /// The `Blur style` row (macOS): how blur looks.
+    BlurStyle(MacosBlurStyle),
     /// Who draws the title bar (Linux).
     TitleBar(WindowDecorations),
     /// The Appearance card's `Tabs` row: where open sessions are listed.
@@ -474,6 +476,7 @@ impl SettingsState {
             SettingsMsg::Font(f) => self.change(SettingChange::FontFamily(f.family), false),
             SettingsMsg::ColorScheme(id) => self.change(SettingChange::ColorScheme(id), false),
             SettingsMsg::Blur(v) => self.change(SettingChange::BackgroundBlur(v), false),
+            SettingsMsg::BlurStyle(v) => self.change(SettingChange::MacosBlurStyle(v), false),
             SettingsMsg::TitleBar(v) => self.change(SettingChange::WindowDecorations(v), false),
             SettingsMsg::TabBar(v) => self.change(SettingChange::TabBar(v), false),
             SettingsMsg::TabGroups(v) => self.change(SettingChange::TabGroups(v), false),

@@ -73,6 +73,7 @@ mod archive_import;
 #[cfg(test)]
 mod archive_import_tests;
 mod archive_window;
+mod blur_style;
 mod chrome;
 mod config_files;
 mod context_menu;

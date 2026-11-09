@@ -403,6 +403,9 @@ pub struct App {
     pub maximized: std::collections::HashSet<window::Id>,
     /// Every open window, of any kind (their decorations switch with the chrome).
     pub(crate) open_windows: std::collections::HashSet<window::Id>,
+    /// The look each terminal window's macOS blur view has now, for the windows that have one
+    /// (opened with blur); re-tuned in place when it should change (`blur_style.rs`).
+    pub(crate) blur_views: HashMap<window::Id, chrome::BlurLook>,
     /// The windows the system may not move now: the pointer is over a tab or a button of
     /// their unified bar ([`chrome::Chrome::system_may_drag`]).
     pub(crate) held_still: std::collections::HashSet<window::Id>,
@@ -764,6 +767,7 @@ impl App {
             fullscreen: Default::default(),
             maximized: Default::default(),
             open_windows: Default::default(),
+            blur_views: HashMap::new(),
             held_still: Default::default(),
             chrome: app_chrome_cell(),
             chrome_base: (chrome::setup().look, chrome::setup().chrome),
@@ -1069,6 +1073,8 @@ impl App {
             self.reveal_active_tabs(),
             self.sync_panel_focus(),
             self.sync_tunnels_focus(),
+            // The blur style, a scheme or the active tab changed: re-tune the blur views.
+            self.sync_blur_views(),
         ]
         .into_iter()
         .flatten()
@@ -1131,7 +1137,7 @@ impl App {
                     // Not gated on `blur_here`: on Windows its probe may still run when the
                     // first window opens, and a build without backdrops refuses harmlessly.
                     let blur = if backdrop.blur {
-                        chrome::system_backdrop(id)
+                        self.add_system_backdrop(id)
                     } else {
                         Task::none()
                     };
@@ -1249,6 +1255,7 @@ impl App {
             Message::WindowClosed(id) => {
                 self.close_context_menu(id);
                 self.os_scales.remove(&id);
+                self.blur_views.remove(&id);
                 self.sidebar_scroll.remove(&id);
                 self.sidebar_shown.remove(&id);
                 self.sidebar_widths.remove(&id);

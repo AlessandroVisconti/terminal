@@ -333,6 +333,8 @@ impl App {
     /// `background_opacity` is read each frame too; a window can only show through if it was
     /// created transparent (always on macOS, see [`Chrome::backdrop`]), and `background_blur`
     /// is fixed when a window opens, so those apply to windows opened from now on.
+    /// `macos_blur_style` re-tunes the blur view of every open window that has one, in place
+    /// (the post-update `sync_blur_views`, which also follows scheme and tab changes).
     /// `window_decorations` (Linux) switches every open window's title bar at once.
     /// `check_updates` starts or stops the update check (its subscription); off also drops
     /// what it found.

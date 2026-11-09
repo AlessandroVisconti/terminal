@@ -19,7 +19,7 @@
 //! The chrome can change while fbterm runs ([`ChromeCell`]); open windows then switch their
 //! OS decorations.
 
-use fbterm_config::WindowDecorations;
+use fbterm_config::{MacosBlurStyle, WindowDecorations};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::mouse::{self, click};
 use iced::advanced::widget::{Operation, Tree, Widget, tree};
@@ -987,24 +987,200 @@ impl Chrome {
     }
 }
 
+/// A material of the macOS blur view (`NSVisualEffectMaterial`), by its AppKit value. Kept as
+/// the raw value so the pure code below builds and tests on every system, and so the debug
+/// override can also name the older materials AppKit still accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlurMaterial(pub isize);
+
+impl BlurMaterial {
+    pub const TITLEBAR: Self = Self(3);
+    pub const SELECTION: Self = Self(4);
+    pub const MENU: Self = Self(5);
+    pub const POPOVER: Self = Self(6);
+    pub const SIDEBAR: Self = Self(7);
+    pub const HEADER_VIEW: Self = Self(10);
+    pub const SHEET: Self = Self(11);
+    pub const WINDOW_BACKGROUND: Self = Self(12);
+    pub const HUD_WINDOW: Self = Self(13);
+    pub const FULL_SCREEN_UI: Self = Self(15);
+    pub const TOOL_TIP: Self = Self(17);
+    pub const CONTENT_BACKGROUND: Self = Self(18);
+    pub const UNDER_WINDOW_BACKGROUND: Self = Self(21);
+    pub const UNDER_PAGE_BACKGROUND: Self = Self(22);
+
+    /// The names `FBTERM_DEMO_BLUR` takes: every current public material, then the older
+    /// ones AppKit has deprecated but still draws (handy to compare, never a default).
+    pub const NAMED: &[(&'static str, Self)] = &[
+        ("titlebar", Self::TITLEBAR),
+        ("selection", Self::SELECTION),
+        ("menu", Self::MENU),
+        ("popover", Self::POPOVER),
+        ("sidebar", Self::SIDEBAR),
+        ("header-view", Self::HEADER_VIEW),
+        ("sheet", Self::SHEET),
+        ("window-background", Self::WINDOW_BACKGROUND),
+        ("hud-window", Self::HUD_WINDOW),
+        ("full-screen-ui", Self::FULL_SCREEN_UI),
+        ("tool-tip", Self::TOOL_TIP),
+        ("content-background", Self::CONTENT_BACKGROUND),
+        ("under-window-background", Self::UNDER_WINDOW_BACKGROUND),
+        ("under-page-background", Self::UNDER_PAGE_BACKGROUND),
+        ("appearance-based", Self(0)),
+        ("light", Self(1)),
+        ("dark", Self(2)),
+        ("medium-light", Self(8)),
+        ("ultra-dark", Self(9)),
+    ];
+}
+
+/// The appearance a blur view draws its material in: the window's own (which follows the
+/// system's light or dark mode), or one fixed to a scheme's variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlurAppearance {
+    Inherited,
+    Dark,
+    Light,
+}
+
+/// The tunable parameters of a window's macOS blur view. Blending (behind the window) and
+/// state (always active) never change.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlurLook {
+    pub material: BlurMaterial,
+    pub appearance: BlurAppearance,
+    /// The view's alpha: below 1 lets some of the unblurred background through.
+    pub alpha: f32,
+}
+
+impl BlurLook {
+    /// The blur view fbterm 0.8.3 shipped, unchanged: the `"native"` style.
+    pub const NATIVE: Self = Self {
+        material: BlurMaterial::UNDER_WINDOW_BACKGROUND,
+        appearance: BlurAppearance::Inherited,
+        alpha: 1.0,
+    };
+
+    /// The material of the `"classic"` style. The earlier blur (the window server's own,
+    /// radius 80) added no tint at all; every public material adds some, and full-screen UI
+    /// is the one that adds least while still blurring behind the window (the window and
+    /// under-window backgrounds, menus, popovers and the HUD lay a heavy wash or a dark gray
+    /// over what shows through). See `dev/blur/README.md` for the candidates.
+    pub const CLASSIC_MATERIAL: BlurMaterial = BlurMaterial::FULL_SCREEN_UI;
+}
+
+/// `FBTERM_DEMO_BLUR=<material>[:<alpha>]` (debug builds): replaces the classic style's
+/// material and alpha, to compare candidates on a real desktop without rebuilding.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DemoBlur {
+    pub material: BlurMaterial,
+    pub alpha: Option<f32>,
+}
+
+/// Read an `FBTERM_DEMO_BLUR` value: a name from [`BlurMaterial::NAMED`], optionally `:` and
+/// an alpha above 0 and at most 1. Anything else is no override.
+pub fn parse_demo_blur(value: &str) -> Option<DemoBlur> {
+    let (name, alpha) = match value.split_once(':') {
+        Some((name, alpha)) => {
+            let a: f32 = alpha.parse().ok()?;
+            (a.is_finite() && a > 0.0 && a <= 1.0).then_some(())?;
+            (name, Some(a))
+        }
+        None => (value, None),
+    };
+    let material = BlurMaterial::NAMED
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, m)| *m)?;
+    Some(DemoBlur { material, alpha })
+}
+
+/// The `FBTERM_DEMO_BLUR` override, read once (always `None` in release builds).
+pub fn demo_blur() -> Option<DemoBlur> {
+    static DEMO: OnceLock<Option<DemoBlur>> = OnceLock::new();
+    *DEMO.get_or_init(|| {
+        crate::app::debug_env("FBTERM_DEMO_BLUR").and_then(|v| v.to_str().and_then(parse_demo_blur))
+    })
+}
+
+/// The blur view's parameters for `style` in a window showing a dark scheme (`dark`) or a
+/// light one. Native is the system's look whatever the scheme; classic draws the clearest
+/// material in the scheme's own appearance, so a light system appearance cannot wash out a
+/// dark scheme (or the reverse), with `demo` replacing its material and alpha.
+pub fn blur_look(style: &MacosBlurStyle, dark: bool, demo: Option<DemoBlur>) -> BlurLook {
+    match style {
+        MacosBlurStyle::Classic => BlurLook {
+            material: demo.map_or(BlurLook::CLASSIC_MATERIAL, |d| d.material),
+            appearance: if dark {
+                BlurAppearance::Dark
+            } else {
+                BlurAppearance::Light
+            },
+            alpha: demo.and_then(|d| d.alpha).unwrap_or(1.0),
+        },
+        MacosBlurStyle::Native | MacosBlurStyle::Invalid(_) => BlurLook::NATIVE,
+    }
+}
+
 /// What blurs what shows through terminal window `id`, beyond what its window settings ask
 /// for (`blur` there covers the KDE blur protocol on Linux, see [`Chrome::window_blur`]): on
 /// Windows, the acrylic system backdrop; on macOS, the system's blur view behind the content,
-/// clipped to the window's own corners. Nothing elsewhere.
-pub fn system_backdrop<T: Send + 'static>(id: window::Id) -> iced::Task<T> {
+/// clipped to the window's own corners, drawn with `look`. Nothing elsewhere.
+pub fn system_backdrop<T: Send + 'static>(id: window::Id, look: BlurLook) -> iced::Task<T> {
     #[cfg(target_os = "windows")]
     {
+        let _ = look;
         window::run(id, set_acrylic_backdrop).discard()
     }
     #[cfg(target_os = "macos")]
     {
-        window::run(id, add_blur_view).discard()
+        window::run(id, move |w| add_blur_view(w, look)).discard()
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let _ = id;
+        let _ = (id, look);
         iced::Task::none()
     }
+}
+
+/// Give window `id`'s blur view (added by [`system_backdrop`]) the parameters of `look`, in
+/// place. Nothing when the window has no blur view, and nothing off macOS.
+pub fn retune_blur<T: Send + 'static>(id: window::Id, look: BlurLook) -> iced::Task<T> {
+    #[cfg(target_os = "macos")]
+    {
+        window::run(id, move |w| {
+            if let Some(view) = find_blur_view(w) {
+                tune_blur_view(&view, look);
+            }
+        })
+        .discard()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (id, look);
+        iced::Task::none()
+    }
+}
+
+/// The identifier fbterm's blur view carries, so it can be found again among the frame
+/// view's subviews (AppKit puts views of its own there too).
+#[cfg(target_os = "macos")]
+const BLUR_VIEW_ID: &str = "fbterm.blur";
+
+/// The window's frame view: the superview of its content view.
+#[cfg(target_os = "macos")]
+fn frame_view(
+    ns_window: &objc2_app_kit::NSWindow,
+) -> Option<(
+    objc2::rc::Retained<objc2_app_kit::NSView>,
+    objc2::rc::Retained<objc2_app_kit::NSView>,
+)> {
+    let content = ns_window.contentView()?;
+    // SAFETY: called on the main thread (every caller holds an `ns_window`, which is only
+    // `Some` there) with the window's live content view; the frame view that holds it is
+    // AppKit's and lives as long as the window.
+    let frame = unsafe { content.superview() }?;
+    Some((frame, content))
 }
 
 /// Put the system's blur view (`NSVisualEffectView`, blending behind the window) under
@@ -1012,12 +1188,13 @@ pub fn system_backdrop<T: Send + 'static>(id: window::Id) -> iced::Task<T> {
 /// window's frame view, so the window's corner mask clips it: the blur keeps the window's
 /// current shape. The content view still draws the terminal at its opacity on top of it.
 #[cfg(target_os = "macos")]
-fn add_blur_view(window: &dyn window::Window) {
+fn add_blur_view(window: &dyn window::Window, look: BlurLook) {
     use objc2::MainThreadMarker;
     use objc2_app_kit::{
-        NSAutoresizingMaskOptions, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
+        NSAutoresizingMaskOptions, NSUserInterfaceItemIdentification, NSVisualEffectBlendingMode,
         NSVisualEffectState, NSVisualEffectView, NSWindowOrderingMode,
     };
+    use objc2_foundation::NSString;
 
     let Some(ns_window) = ns_window(window) else {
         return;
@@ -1026,22 +1203,63 @@ fn add_blur_view(window: &dyn window::Window) {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
-    let Some(content) = ns_window.contentView() else {
+    let Some((frame_view, content)) = frame_view(&ns_window) else {
         return;
     };
-    // SAFETY: called on the main thread with the window's live content view; the frame view
-    // that holds it is AppKit's and lives as long as the window.
-    let Some(frame_view) = (unsafe { content.superview() }) else {
+    if find_blur_view(window).is_some() {
         return;
-    };
+    }
     let blur = NSVisualEffectView::initWithFrame(mtm.alloc(), frame_view.bounds());
+    blur.setIdentifier(Some(&NSString::from_str(BLUR_VIEW_ID)));
     blur.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-    blur.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
     blur.setState(NSVisualEffectState::Active);
+    tune_blur_view(&blur, look);
     blur.setAutoresizingMask(
         NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
     );
     frame_view.addSubview_positioned_relativeTo(&blur, NSWindowOrderingMode::Below, Some(&content));
+}
+
+/// fbterm's blur view in `window`, if it has one.
+#[cfg(target_os = "macos")]
+fn find_blur_view(
+    window: &dyn window::Window,
+) -> Option<objc2::rc::Retained<objc2_app_kit::NSVisualEffectView>> {
+    use objc2_app_kit::{NSUserInterfaceItemIdentification, NSVisualEffectView};
+
+    let ns_window = ns_window(window)?;
+    let (frame_view, _) = frame_view(&ns_window)?;
+    frame_view.subviews().iter().find_map(|view| {
+        let ours = view
+            .identifier()
+            .is_some_and(|id| id.to_string() == BLUR_VIEW_ID);
+        if ours {
+            view.downcast::<NSVisualEffectView>().ok()
+        } else {
+            None
+        }
+    })
+}
+
+/// Set the material, appearance and alpha of `look` on `view` (main thread only).
+#[cfg(target_os = "macos")]
+fn tune_blur_view(view: &objc2_app_kit::NSVisualEffectView, look: BlurLook) {
+    use objc2_app_kit::{
+        NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
+        NSVisualEffectMaterial,
+    };
+
+    view.setMaterial(NSVisualEffectMaterial(look.material.0));
+    // SAFETY: the appearance names are AppKit's own constants, read on the main thread.
+    let appearance = unsafe {
+        match look.appearance {
+            BlurAppearance::Inherited => None,
+            BlurAppearance::Dark => NSAppearance::appearanceNamed(NSAppearanceNameDarkAqua),
+            BlurAppearance::Light => NSAppearance::appearanceNamed(NSAppearanceNameAqua),
+        }
+    };
+    view.setAppearance(appearance.as_deref());
+    view.setAlphaValue(f64::from(look.alpha));
 }
 
 /// Ask DWM for the acrylic backdrop behind `window` (Windows 11 22H2 and later; older builds
@@ -1555,6 +1773,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TitleBar<'_, Mess
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fbterm_config::MacosBlurStyle;
 
     #[test]
     fn a_press_on_empty_bar_space_moves_the_window() {
@@ -1725,6 +1944,135 @@ mod tests {
         };
         for chrome in [Chrome::Unified, Chrome::Native, Chrome::Drawn] {
             assert!(!chrome.window_blur(clear));
+        }
+        // Whatever the blur style, a macOS window blurs through its blur view only: the style
+        // picks that view's parameters and never brings the library's blur back.
+        for style in [MacosBlurStyle::Native, MacosBlurStyle::Classic] {
+            for dark in [true, false] {
+                let look = blur_look(&style, dark, None);
+                assert!(look.alpha > 0.0, "{style:?}: the blur view shows");
+                assert!(!Chrome::Unified.window_blur(Chrome::Unified.backdrop(0.8, true)));
+            }
+        }
+    }
+
+    /// Native is exactly the blur view 0.8.3 shipped: under-window-background material,
+    /// the window's own appearance, fully opaque view.
+    #[test]
+    fn native_blur_is_the_shipped_blur_view() {
+        let native = BlurLook {
+            material: BlurMaterial::UNDER_WINDOW_BACKGROUND,
+            appearance: BlurAppearance::Inherited,
+            alpha: 1.0,
+        };
+        assert_eq!(BlurMaterial::UNDER_WINDOW_BACKGROUND, BlurMaterial(21));
+        assert_eq!(BlurLook::NATIVE, native);
+        for dark in [true, false] {
+            assert_eq!(blur_look(&MacosBlurStyle::Native, dark, None), native);
+            // The debug override tunes classic only.
+            let demo = DemoBlur {
+                material: BlurMaterial::HUD_WINDOW,
+                alpha: Some(0.5),
+            };
+            assert_eq!(blur_look(&MacosBlurStyle::Native, dark, Some(demo)), native);
+        }
+        // An invalid value never survives loading; were it to reach here, it is native.
+        assert_eq!(
+            blur_look(&MacosBlurStyle::Invalid("x".into()), true, None),
+            native
+        );
+    }
+
+    /// Classic: the least-tinted public material, the appearance of the scheme's variant (so
+    /// a light system appearance never washes out a dark scheme), the view fully shown.
+    #[test]
+    fn classic_blur_takes_the_scheme_variant_and_the_clearest_material() {
+        assert_eq!(BlurMaterial::FULL_SCREEN_UI, BlurMaterial(15));
+        assert_eq!(
+            blur_look(&MacosBlurStyle::Classic, true, None),
+            BlurLook {
+                material: BlurMaterial::FULL_SCREEN_UI,
+                appearance: BlurAppearance::Dark,
+                alpha: 1.0,
+            }
+        );
+        assert_eq!(
+            blur_look(&MacosBlurStyle::Classic, false, None),
+            BlurLook {
+                material: BlurMaterial::FULL_SCREEN_UI,
+                appearance: BlurAppearance::Light,
+                alpha: 1.0,
+            }
+        );
+        // The debug override replaces material and alpha, keeping the scheme's appearance.
+        let demo = DemoBlur {
+            material: BlurMaterial::SIDEBAR,
+            alpha: Some(0.6),
+        };
+        assert_eq!(
+            blur_look(&MacosBlurStyle::Classic, true, Some(demo)),
+            BlurLook {
+                material: BlurMaterial::SIDEBAR,
+                appearance: BlurAppearance::Dark,
+                alpha: 0.6,
+            }
+        );
+        let demo = DemoBlur {
+            material: BlurMaterial::TITLEBAR,
+            alpha: None,
+        };
+        assert_eq!(
+            blur_look(&MacosBlurStyle::Classic, false, Some(demo)).alpha,
+            1.0
+        );
+    }
+
+    #[test]
+    fn the_demo_blur_override_parses() {
+        assert_eq!(
+            parse_demo_blur("sidebar"),
+            Some(DemoBlur {
+                material: BlurMaterial::SIDEBAR,
+                alpha: None
+            })
+        );
+        assert_eq!(
+            parse_demo_blur("full-screen-ui:0.75"),
+            Some(DemoBlur {
+                material: BlurMaterial::FULL_SCREEN_UI,
+                alpha: Some(0.75)
+            })
+        );
+        assert_eq!(
+            parse_demo_blur("hud-window:1"),
+            Some(DemoBlur {
+                material: BlurMaterial::HUD_WINDOW,
+                alpha: Some(1.0)
+            })
+        );
+        // Every public material has a name, and each name reads back as its material.
+        for (name, material) in BlurMaterial::NAMED {
+            assert_eq!(
+                parse_demo_blur(name).map(|d| d.material),
+                Some(*material),
+                "{name}"
+            );
+        }
+        assert!(BlurMaterial::NAMED.len() >= 14);
+        // Unknown materials, alphas outside (0, 1] or not numbers: no override.
+        for bad in [
+            "",
+            "frosted",
+            "Sidebar",
+            "sidebar:",
+            "sidebar:0",
+            "sidebar:1.5",
+            "sidebar:-0.2",
+            "sidebar:nan",
+            "sidebar:half",
+            "sidebar:0.5:1",
+        ] {
+            assert_eq!(parse_demo_blur(bad), None, "{bad:?}");
         }
     }
 

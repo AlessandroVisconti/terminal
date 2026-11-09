@@ -448,6 +448,19 @@ fn luminance(c: Rgb) -> f32 {
     0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
 }
 
+/// Whether a scheme is a dark one: its background contrasts more with white than with black
+/// (relative luminance below about 0.18). Schemes carry no variant of their own; this is the
+/// one place that decides it.
+pub fn is_dark(colors: &SchemeColors) -> bool {
+    let white = Rgb {
+        r: 255,
+        g: 255,
+        b: 255,
+    };
+    let black = Rgb { r: 0, g: 0, b: 0 };
+    contrast_ratio(colors.background, white) > contrast_ratio(colors.background, black)
+}
+
 /// WCAG 2 contrast ratio between two colors (1.0 to 21.0).
 pub fn contrast_ratio(a: Rgb, b: Rgb) -> f32 {
     let (la, lb) = (luminance(a), luminance(b));
