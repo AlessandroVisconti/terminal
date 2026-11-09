@@ -129,6 +129,9 @@ pub struct Tab {
     pub maximized: Option<PaneId>,
     /// Panes by most recent focus, latest first.
     pub recent: Vec<PaneId>,
+    /// The name the user gave the tab (`crate::tab_rename`): shown instead of the profile
+    /// name and the program's title. Never set on a page tab.
+    pub label: Option<String>,
 }
 
 impl Tab {
@@ -143,6 +146,7 @@ impl Tab {
             focused: id,
             maximized: None,
             recent: vec![id],
+            label: None,
         }
     }
 
@@ -255,9 +259,20 @@ impl Tab {
         &self.focused_pane().title
     }
 
-    /// The focused pane's profile name (what the tab button shows).
+    /// The focused pane's profile name.
     pub fn name(&self) -> &str {
         &self.focused_pane().name
+    }
+
+    /// What the tab bar's button shows: the user's name for the tab, else the profile name.
+    pub fn shown_name(&self) -> &str {
+        self.label.as_deref().unwrap_or_else(|| self.name())
+    }
+
+    /// What the sidebar's row and the window title show: the user's name for the tab, else
+    /// the program's title.
+    pub fn shown_title(&self) -> &str {
+        self.label.as_deref().unwrap_or_else(|| self.title())
     }
 
     pub fn accent(&self) -> Option<Rgb> {

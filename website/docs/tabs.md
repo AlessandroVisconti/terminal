@@ -4,7 +4,7 @@ title: Tabs
 sidebar_label: Tabs
 ---
 
-Every open session is a tab. A tab shows its profile's name, a dot for the connection state (connecting, connected, disconnected) and the profile's accent as a stripe or as a tint over the whole tab (**Color as** in the profile editor). A tab with [split panes](tiling) shows the focused pane's name and a second dot when another pane of the tab is disconnected or its program has exited.
+Every open session is a tab. A tab shows its profile's name (or the [name you gave it](#renaming-a-tab)), a dot for the connection state (connecting, connected, disconnected) and the profile's accent as a stripe or as a tint over the whole tab (**Color as** in the profile editor). A tab with [split panes](tiling) shows the focused pane's name and a second dot when another pane of the tab is disconnected or its program has exited.
 
 ## The tab bar
 
@@ -26,14 +26,25 @@ With tabs on the left, turn on **Group tabs** in Settings (Appearance), or set `
 
 Click a header to fold or unfold its group. A folded header shows how many tabs it hides, in violet when the selected tab is among them. Tabs can be dragged only within their group, and a new tab opens at the end of its group. Next and previous tab and the number shortcuts walk the tabs you can see, skipping folded groups; choosing a tab any other way (the palette, a double-click in the Profiles page) unfolds its group. Which groups are folded is remembered per window. With tabs on top the setting does nothing.
 
+## Renaming a tab
+
+Double-click a tab, on the bar or in the column, to give it a name of its own. You can also choose **Rename tab** from the [tab menu](#the-tab-menu), or press `Cmd+Shift+R` (`Ctrl+Shift+R` on Linux and Windows) for the active tab. The palette lists it as **Rename tab** too.
+
+A field takes the place of the tab's name, with the current name selected. Press `Enter` or click anywhere else to keep what you typed, or `Escape` to keep the old name. While the field is open, keys go to it and never to the terminal, and shortcuts wait until it closes.
+
+The name replaces the profile's name on the bar, and the program's title in the column and in the window title. It belongs to the tab, so it stays when you move focus between the tab's panes. It is saved with the layout and comes back when fbterm restarts. To go back to the automatic name, rename the tab and leave the field empty.
+
+The Profiles, Settings, Color schemes and Welcome tabs cannot be renamed. Only you can rename a tab: nothing a program in a terminal sends changes the name.
+
 ## The tab menu
 
 Right-click a tab, on the bar or in the column, for a small menu:
 
+- **Rename tab** opens the field described in [Renaming a tab](#renaming-a-tab). It is not offered for the Profiles, Settings, Color schemes and Welcome tabs.
 - **Copy password** puts the saved password of the tab's SSH profile on the clipboard. It appears only for an SSH profile that logs in with a password, and copies only what is saved: nothing is asked for, and nothing is read from the running session. See [Copying a password](saved-secrets#copying-a-password) for what happens when no password is saved, when the vault is locked, and how the clipboard is cleared afterwards.
 - **Close tab** does what the tab's close button does, asking first when the tab has several live panes.
 
-Each item shows its shortcut when the key would do the same thing: the menu of the active tab shows `Cmd+Shift+K` (`Ctrl+Shift+K`) beside **Copy password**, and `Cmd+W` (`Ctrl+Shift+W`) beside **Close tab** when the tab has one pane (with several, the key closes only the focused pane). The menu of another tab shows no shortcuts, because the keys act on the active tab.
+Each item shows its shortcut when the key would do the same thing: the menu of the active tab shows `Cmd+Shift+R` (`Ctrl+Shift+R`) beside **Rename tab**, `Cmd+Shift+K` (`Ctrl+Shift+K`) beside **Copy password**, and `Cmd+W` (`Ctrl+Shift+W`) beside **Close tab** when the tab has one pane (with several, the key closes only the focused pane). The menu of another tab shows no shortcuts, because the keys act on the active tab.
 
 A right-click never selects the tab. Only your own right-click opens the menu: nothing a program in a terminal sends can.
 

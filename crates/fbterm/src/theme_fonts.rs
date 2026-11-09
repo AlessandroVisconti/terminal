@@ -198,7 +198,7 @@ fn owner_suffix(host: &str) -> &str {
 /// `host` as `Download` shows it: whole, or when longer than `max` characters its end after
 /// an ellipsis. The end always keeps the owner's labels ([`owner_suffix`]), never a bare
 /// public suffix such as `com` or `github.io`; when even those do not fit, the whole host is
-/// returned and the layout clips it. A partial label at the cut is dropped unless that would
+/// returned and `Download` wraps it. A partial label at the cut is dropped unless that would
 /// leave less than the owner's labels. Never the start, which a long crafted host could fill
 /// with a familiar name.
 pub(crate) fn host_label(host: &str, max: usize) -> String {

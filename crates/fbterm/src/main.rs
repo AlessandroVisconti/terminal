@@ -48,6 +48,8 @@
 //!   (about a second after startup, once output has arrived).
 //! - `FBTERM_FIND_ALL=<text>`: open the find-in-all-tabs box in the first window with this
 //!   query (also after about a second).
+//! - `FBTERM_DEMO_RENAME=<text>`: open the rename field on the first window's active tab with
+//!   this text (also after about a second).
 //! - `FBTERM_DEMO_CHROME=windows|linux[:<button-layout>]`: draw that system's window controls
 //!   (in GNOME's `button-layout` form for Linux, e.g. `linux:close,minimize,maximize:`) on
 //!   any system, for screenshots.
@@ -118,6 +120,7 @@ mod tab_drag;
 mod tab_groups;
 mod tab_look;
 mod tab_menu;
+mod tab_rename;
 mod tab_sidebar;
 mod tabs;
 mod theme;

@@ -12,7 +12,7 @@ mod shaped;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use fbterm_config::Rgb;
 use feathercritty::grid::RowReader;
@@ -188,11 +188,30 @@ struct State {
     reader: RefCell<RowReader<Cell>>,
     /// Grid text shaped with its features, kept across frames.
     shapes: RefCell<shaped::ShapeCache>,
-    /// Terminal and grid size last synced to the terminal, to avoid locking on every event.
-    synced: Option<(usize, GridSize)>,
+    /// Grid size last synced to the terminal, to avoid locking on every event.
+    synced: Option<GridSize>,
     input: input::InputState,
-    /// Terminal the input state belongs to.
-    input_term: Option<usize>,
+    /// The terminal this state belongs to. A `Weak` keeps its allocation reserved, so a new
+    /// terminal (a pane restart frees one and allocates the next, of the same size) can never
+    /// take its address and inherit `synced`, the input state or the draw cache.
+    held: Option<Weak<parking_lot::Mutex<crate::Terminal>>>,
+}
+
+impl State {
+    /// Make `term` the state's terminal, forgetting everything kept for a previous one.
+    fn hold(&mut self, term: &SharedTerminal) {
+        if self
+            .held
+            .as_ref()
+            .is_some_and(|w| std::ptr::eq(w.as_ptr(), Arc::as_ptr(term)))
+        {
+            return;
+        }
+        self.held = Some(Arc::downgrade(term));
+        self.synced = None;
+        self.input.reset();
+        *self.cache.borrow_mut() = None;
+    }
 }
 
 fn term_id(term: &SharedTerminal) -> usize {
@@ -225,11 +244,10 @@ impl<Message> TerminalView<'_, Message> {
             return;
         }
         let grid = grid_size_from_bounds(bounds.size(), m.cell);
-        let id = term_id(self.term);
-        if state.synced == Some((id, grid)) {
+        if state.synced == Some(grid) {
             return;
         }
-        state.synced = Some((id, grid));
+        state.synced = Some(grid);
         let mut term = self.term.lock();
         if term.size() != grid {
             term.resize(grid);
@@ -260,6 +278,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TerminalView<'_, 
         limits: &layout::Limits,
     ) -> layout::Node {
         let state = tree.state.downcast_mut::<State>();
+        state.hold(self.term);
         let (font, font_size) = (self.style.font, self.style.font_size);
         if needs_measure(state.measured, font, font_size) {
             let epoch = font_epoch();
@@ -291,11 +310,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TerminalView<'_, 
         _viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_mut::<State>();
-        let id = term_id(self.term);
-        if state.input_term != Some(id) {
-            state.input.reset();
-            state.input_term = Some(id);
-        }
+        state.hold(self.term);
         let bounds = layout.bounds();
         self.sync_size(state, bounds, shell);
         let Some(m) = state.measured else { return };
@@ -397,6 +412,44 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for TerminalView<'_, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn term() -> SharedTerminal {
+        let size = GridSize {
+            cols: 80,
+            rows: 24,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        };
+        Arc::new(parking_lot::Mutex::new(crate::Terminal::new(size, 10)))
+    }
+
+    /// A view given a new terminal forgets the size it synced to the old one, so the new
+    /// terminal is resized to the view; the old allocation stays reserved until then, so the
+    /// new terminal cannot share its address.
+    #[test]
+    fn a_new_terminal_is_synced_again() {
+        let synced = GridSize {
+            cols: 100,
+            rows: 30,
+            cell_width: 8.0,
+            cell_height: 16.0,
+        };
+        let mut state = State::default();
+        let first = term();
+        state.hold(&first);
+        state.synced = Some(synced);
+        state.hold(&first);
+        assert_eq!(state.synced, Some(synced), "same terminal: kept");
+        let old = Arc::as_ptr(&first);
+        drop(first);
+        let second = term();
+        assert!(
+            !std::ptr::eq(old, Arc::as_ptr(&second)),
+            "address still reserved"
+        );
+        state.hold(&second);
+        assert_eq!(state.synced, None, "new terminal: synced again");
+    }
 
     #[test]
     fn a_font_load_makes_views_measure_again() {

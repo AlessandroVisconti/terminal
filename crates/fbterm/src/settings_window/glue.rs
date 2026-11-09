@@ -77,6 +77,7 @@ impl App {
                 && self.focused == Some(wid)
                 && tab.focused == pane.id
                 && pane.find.is_none()
+                && !self.renaming_in(wid)
                 && !self.file_panels.has_focus(wid)
                 && !self.tunnels_panels.has_focus(wid),
             accent: None,

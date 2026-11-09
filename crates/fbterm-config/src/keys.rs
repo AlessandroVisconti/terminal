@@ -58,6 +58,9 @@ pub enum Action {
     /// Copy the saved password of the active tab's password SSH profile to the clipboard,
     /// as the tab menu's `Copy password` does: Cmd+Shift+K on macOS, Ctrl+Shift+K elsewhere.
     CopyPassword,
+    /// Give the active tab a name of its own, as a double-click on it or the tab menu's
+    /// `Rename tab` does (never a page tab): Cmd+Shift+R on macOS, Ctrl+Shift+R elsewhere.
+    RenameTab,
     /// The active tab's find bar: Cmd+F on macOS, Ctrl+Shift+F elsewhere.
     Find,
     /// The search over every tab: Cmd+Shift+F on macOS, Ctrl+Alt+F elsewhere.
@@ -129,7 +132,7 @@ impl ActionGroup {
 
 impl Action {
     /// Every action, in the order the Settings tab lists them.
-    pub const ALL: [Action; 47] = [
+    pub const ALL: [Action; 48] = [
         Action::NewTab,
         Action::CloseTab,
         Action::NextTab,
@@ -143,6 +146,7 @@ impl Action {
         Action::SelectTab(7),
         Action::SelectTab(8),
         Action::SelectTab(9),
+        Action::RenameTab,
         Action::ExportTab,
         Action::CopyPassword,
         Action::MergeTab,
@@ -211,6 +215,7 @@ impl Action {
             Self::RevealConfigFolder => "reveal_config_folder",
             Self::ExportTab => "export_tab",
             Self::CopyPassword => "copy_password",
+            Self::RenameTab => "rename_tab",
             Self::Find => "find",
             Self::FindAll => "find_all",
             Self::FindNext => "find_next",
@@ -262,6 +267,7 @@ impl Action {
             Self::RevealConfigFolder => "Reveal config folder".into(),
             Self::ExportTab => "Export tab to file".into(),
             Self::CopyPassword => "Copy password".into(),
+            Self::RenameTab => "Rename tab".into(),
             Self::Find => "Find in pane".into(),
             Self::FindAll => "Find in all tabs".into(),
             Self::FindNext => "Older match".into(),
@@ -292,6 +298,7 @@ impl Action {
             | Self::SelectTab(_)
             | Self::ExportTab
             | Self::CopyPassword
+            | Self::RenameTab
             | Self::MergeTab => ActionGroup::Tabs,
             Self::SplitRight
             | Self::SplitDown
@@ -818,6 +825,7 @@ pub fn default_chord(mac: bool, action: Action) -> Option<Chord> {
         Action::FilePanel => ('e', true),
         Action::VerticalTabs => ('b', true),
         Action::CopyPassword => ('k', true),
+        Action::RenameTab => ('r', true),
         Action::SelectTab(n @ 1..=9) => (char::from(b'0' + n), false),
         Action::EditProfiles => (',', true),
         Action::Settings if !mac => return Some(ctrl_chord(',', false, false)),
@@ -1613,6 +1621,18 @@ mod tests {
 
     /// `Copy password` is a bindable action of the Tabs group: Shift+Cmd+K on macOS,
     /// Ctrl+Shift+K elsewhere (K is no key programs in the terminal rely on).
+    #[test]
+    fn rename_tab_is_an_action_with_a_default_chord() {
+        let a = Action::RenameTab;
+        assert!(Action::ALL.contains(&a));
+        assert_eq!(a.name(), "rename_tab");
+        assert_eq!(Action::from_name("rename_tab"), Some(a));
+        assert_eq!(a.title(), "Rename tab");
+        assert_eq!(a.group(), ActionGroup::Tabs);
+        assert_eq!(default_chord(true, a), Some(c("shift+cmd+r")));
+        assert_eq!(default_chord(false, a), Some(c("ctrl+shift+r")));
+    }
+
     #[test]
     fn copy_password_is_an_action_with_a_default_chord() {
         let a = Action::CopyPassword;

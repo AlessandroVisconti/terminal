@@ -54,7 +54,7 @@ pub fn plan(state: &SavedState, store: &ProfileStore) -> Vec<SavedWindow> {
 }
 
 /// The tab without the panes of missing profiles; `None` when no pane is left. A tab reduced to
-/// one unzoomed pane is a plain profile tab again.
+/// one unzoomed pane is a plain profile tab again, unless the user named it.
 fn prune_tab(tab: &SavedTab, store: &ProfileStore) -> Option<SavedTab> {
     match tab {
         SavedTab::Profile(id) => store.get(*id).map(|_| SavedTab::Profile(*id)),
@@ -66,9 +66,16 @@ fn prune_tab(tab: &SavedTab, store: &ProfileStore) -> Option<SavedTab> {
                 .iter()
                 .position(|&i| i >= split.focused)
                 .unwrap_or(kept.len() - 1);
+            let label = split.label.clone();
             Some(match layout {
-                SavedLayout::Pane { profile, zoom: 0 } => SavedTab::Profile(profile),
-                layout => SavedTab::Split(SavedSplitTab { layout, focused }),
+                SavedLayout::Pane { profile, zoom: 0 } if label.is_none() => {
+                    SavedTab::Profile(profile)
+                }
+                layout => SavedTab::Split(SavedSplitTab {
+                    layout,
+                    focused,
+                    label,
+                }),
             })
         }
     }
@@ -135,6 +142,7 @@ pub fn build_tab(saved: &SavedTab, store: &ProfileStore) -> Option<Tab> {
                 focused,
                 maximized: None,
                 recent,
+                label: split.label.clone(),
             })
         }
     }
@@ -196,11 +204,12 @@ fn save_layout(layout: &Layout, tab: &Tab) -> SavedLayout {
     }
 }
 
-/// How a tab is written: a single unzoomed pane stays a bare profile id. Maximize is not saved.
+/// How a tab is written: a single unzoomed pane of an unnamed tab stays a bare profile id.
+/// Maximize is not saved.
 fn save_tab(tab: &Tab) -> SavedTab {
     if let Layout::Pane(_) = tab.layout {
         let pane = tab.focused_pane();
-        if pane.zoom == 0 {
+        if pane.zoom == 0 && tab.label.is_none() {
             return SavedTab::Profile(pane.profile);
         }
     }
@@ -212,6 +221,7 @@ fn save_tab(tab: &Tab) -> SavedTab {
             .iter()
             .position(|&p| p == tab.focused)
             .unwrap_or(0),
+        label: tab.label.clone(),
     })
 }
 
@@ -415,7 +425,11 @@ mod tests {
 
     fn split_window(layout: SavedLayout, focused: usize) -> SavedWindow {
         SavedWindow {
-            tabs: vec![SavedTab::Split(SavedSplitTab { layout, focused })],
+            tabs: vec![SavedTab::Split(SavedSplitTab {
+                layout,
+                focused,
+                label: None,
+            })],
             active: 0,
             size: (900.0, 500.0),
             sidebar_width: None,
@@ -465,6 +479,37 @@ mod tests {
     }
 
     #[test]
+    fn a_named_tab_keeps_its_name_through_save_prune_and_restore() {
+        let a = ProfileId::new();
+        let w = window::Id::unique();
+        let mut win = WindowState::new();
+        let mut tab = Tab::single(Pane::new(a, "a", None));
+        tab.label = Some("deploy".into());
+        win.push(tab);
+        let windows = BTreeMap::from([(w, win)]);
+        let state = snapshot(
+            &windows,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &Recency::new(),
+        );
+        let saved = &state.windows[0].tabs[0];
+        assert_eq!(
+            *saved,
+            SavedTab::Split(SavedSplitTab {
+                layout: leaf(a, 0),
+                focused: 0,
+                label: Some("deploy".into()),
+            }),
+            "a named one-pane tab is not a bare profile id"
+        );
+        let planned = plan(&state, &store(&[a]));
+        let restored = build_tab(&planned[0].tabs[0], &store(&[a])).expect("its profile exists");
+        assert_eq!(restored.label.as_deref(), Some("deploy"));
+    }
+
+    #[test]
     fn single_unzoomed_tab_is_written_as_profile() {
         let a = ProfileId::new();
         let w = window::Id::unique();
@@ -486,7 +531,8 @@ mod tests {
             state.windows[0].tabs[1],
             SavedTab::Split(SavedSplitTab {
                 layout: leaf(a, 2),
-                focused: 0
+                focused: 0,
+                label: None,
             })
         );
     }
