@@ -137,7 +137,7 @@ These actions are listed after your profiles, each with its shortcut when it has
 | File panel | Show or hide the [file panel](file-panel) beside the focused pane's terminal. |
 | Vertical tabs | List the tabs down the left side of every window, or along the top again; see [Tabs on the left](tabs#tabs-on-the-left). |
 | Tunnel: _profile_ / _name_ | One row per tunnel, with its state on the right. Choosing a row switches that tunnel on or off. |
-| Color schemes | Open the Color schemes window to duplicate, rename, edit and delete color schemes. It also opens from **Edit schemes…** in Settings and in the profile editor. |
+| Color schemes | Open the Color schemes tab to duplicate, rename, edit and delete color schemes. It also opens from **Edit schemes…** in Settings and in the profile editor. |
 | Open settings file | Open [`settings.toml`](files#settingstoml) in your default app. If the file does not exist yet, it is first created with every setting written out as a comment, showing its default. |
 | Reveal config folder | Show the config folder in your file manager, with `settings.toml` selected on macOS when it exists. The folder is created if it is missing. |
 | Export tab to file… | Save the active tab's text to a file; see [Exporting a tab](#exporting-a-tab). |
@@ -205,7 +205,7 @@ A shortcut is its modifiers and a key joined by `+`. Modifiers are `ctrl`, `alt`
 | `find_in_tab`, `merge_tab`, `move_tile`, `tile_to_tab` | Find in this tab (all panes of the tab), merge this tab into another, move the focused tile, move it to a tab of its own (no default shortcut) |
 | `select_tab_1` to `select_tab_8` | Select tab 1 to 8 |
 | `select_tab_9` | Last tab |
-| `new_window`, `edit_profiles`, `settings`, `edit_schemes`, `tunnels`, `file_panel`, `vertical_tabs` | New window, the profile editor, Settings, the Color schemes window, the tunnels panel (no default shortcut), the file panel (`Cmd+Shift+E`, `Ctrl+Shift+E`), tabs on the left or on top (`Cmd+Shift+B`, `Ctrl+Shift+B`) |
+| `new_window`, `edit_profiles`, `settings`, `edit_schemes`, `tunnels`, `file_panel`, `vertical_tabs` | New window, the profile editor, Settings, the Color schemes tab, the tunnels panel (no default shortcut), the file panel (`Cmd+Shift+E`, `Ctrl+Shift+E`), tabs on the left or on top (`Cmd+Shift+B`, `Ctrl+Shift+B`) |
 | `find`, `find_all`, `find_next`, `find_previous` | Find in pane, find in all tabs, older and newer match in the find bar |
 | `palette`, `open_settings_file`, `reveal_config_folder`, `quit` | The palette, the palette actions of the same names, quit |
 

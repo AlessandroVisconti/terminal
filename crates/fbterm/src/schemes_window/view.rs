@@ -1,4 +1,4 @@
-//! The Color schemes window: the schemes on the left, the selected one's preview, colors and
+//! The Color schemes tab: the schemes on the left, the selected one's preview, colors and
 //! font on the right (or the theme gallery), and a footer with Import, Export and Save.
 
 use fbterm_config::Rgb;
@@ -869,7 +869,7 @@ fn footer<'a>(t: &'static Tokens, state: &'a SchemesState, scale: f32) -> Elemen
         .into()
 }
 
-/// The delete question, over the window like the connection dialogs.
+/// The delete question, over the tab like the connection dialogs.
 fn confirm<'a>(t: &'static Tokens, ask: &'a DeleteAsk) -> Element<'a, Message> {
     let mut body = column![crate::prompt_view::header(
         t,

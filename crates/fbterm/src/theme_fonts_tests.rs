@@ -1,5 +1,5 @@
 //! Suggested fonts for themes: how a pane's font resolves with `use_theme_fonts`, the
-//! suggestion line of the Color schemes window and its gallery, and the Settings row, against
+//! suggestion line of the Color schemes tab and its gallery, and the Settings row, against
 //! a temporary config directory and a fake installed-font list. Nothing here opens a browser.
 
 use std::sync::Arc;
@@ -246,7 +246,7 @@ fn checkbox_and_settings_row_write_the_same_setting() {
     let file = std::fs::read_to_string(paths.settings()).unwrap();
     assert!(file.contains("use_theme_fonts = true"), "{file}");
 
-    // The Settings row writes the same key, and the Color schemes window follows.
+    // The Settings row writes the same key, and the Color schemes tab follows.
     let _ = app.update(Message::Settings(SettingsMsg::Open));
     let _ = app.update(Message::Settings(SettingsMsg::UseThemeFonts(false)));
     assert!(!app.settings.use_theme_fonts);
@@ -299,7 +299,7 @@ fn use_font_needs_the_font_installed_and_saves_font_family() {
     send(&mut app, SchemesMsg::UseFont("Sample Mono".into()));
     assert_eq!(app.settings.font_family, "Geist Mono");
 
-    // Installed while fbterm runs: the next showing of the window scans and loads it.
+    // Installed while fbterm runs: the next showing of the tab scans and loads it.
     let fake = fake_fonts(&mut app, &[], &["Sample Mono"]);
     send(&mut app, SchemesMsg::Open);
     finish_scan(&mut app);
@@ -642,7 +642,7 @@ fn a_font_installed_while_running_is_loaded_on_the_next_showing() {
     app.refresh_installed_fonts();
     assert_eq!(style(&app, wid, ids[0]).font, family("Geist Mono"));
 
-    // The user installs the font, then shows the Color schemes window.
+    // The user installs the font, then shows the Color schemes tab.
     fake.system.lock().push("Sample Mono".into());
     let task = app.update(Message::Schemes(SchemesMsg::Open));
     drop(task);
@@ -857,7 +857,7 @@ fn showing_the_gallery_scans() {
     let fake = fake_fonts(&mut app, &[], &["JetBrains Mono"]);
     send(&mut app, SchemesMsg::Open);
     finish_scan(&mut app);
-    // Installed after the window opened: showing the gallery finds it.
+    // Installed after the tab opened: showing the gallery finds it.
     fake.system.lock().push("IBM Plex Mono".into());
     send(&mut app, SchemesMsg::ShowGallery(true));
     assert!(app.fonts_scanning);

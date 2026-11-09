@@ -1,7 +1,7 @@
-//! The Color schemes window's state: every scheme as a draft, the selected one's form (colors,
+//! The Color schemes tab's state: every scheme as a draft, the selected one's form (colors,
 //! font, name) and a live preview terminal, as plain data so its rules are testable without a
 //! GUI. Built-in schemes are read-only; user schemes are edited in their draft and written to
-//! `schemes/` only on Save, so unsaved edits change the preview and nothing else. The window is
+//! `schemes/` only on Save, so unsaved edits change the preview and nothing else. The tab is
 //! drawn by [`view`] and wired to the app in `glue`.
 
 use std::path::PathBuf;
@@ -139,9 +139,9 @@ pub enum ImportChoice {
     Cancel,
 }
 
-/// What the Color schemes window asks for. `Open`, `Close`, `Duplicate`, `Delete`,
+/// What the Color schemes tab asks for. `Open`, `Close`, `Duplicate`, `Delete`,
 /// `ConfirmDelete`, `Save`, the import and export messages and `Preview` are the app's; the
-/// rest edit the window's state.
+/// rest edit the tab's state.
 #[derive(Debug, Clone)]
 pub enum SchemesMsg {
     #[cfg_attr(
@@ -459,7 +459,7 @@ impl SchemesState {
         state
     }
 
-    /// Follow the settings the window shows: `use_theme_fonts` and the global font.
+    /// Follow the settings the tab shows: `use_theme_fonts` and the global font.
     pub fn sync_settings(&mut self, settings: &fbterm_config::Settings) {
         self.use_theme_fonts = settings.use_theme_fonts;
         self.global_font.clone_from(&settings.font_family);
@@ -649,7 +649,7 @@ impl SchemesState {
             .collect();
     }
 
-    /// Apply a message that only edits the window's state; the app's messages are ignored here.
+    /// Apply a message that only edits the tab's state; the app's messages are ignored here.
     /// Edits of a built-in scheme are refused.
     pub fn update(&mut self, msg: SchemesMsg) {
         match msg {
@@ -744,7 +744,7 @@ impl SchemesState {
         }
     }
 
-    /// `scheme` was written over whatever the window held for its id: the draft and its
+    /// `scheme` was written over whatever the tab held for its id: the draft and its
     /// unsaved edits are dropped for it, and the form shows it if selected.
     pub(super) fn discard_draft(&mut self, scheme: &Scheme) {
         self.mark_saved(scheme);

@@ -34,7 +34,7 @@ bar and the rest of the app keep the app theme.
 
 - **A scheme never changes the app chrome.** Tab bar, dialogs, Settings, palette and editors
   keep the app's Dark/Light theme; a scheme rules only inside its sessions. (Owner's decision,
-  2026-10-27.)
+  2026-10-27.) Superseded by `2026-11-09-schemes-tab-and-themed-chrome-design.md` (part B).
 - No importing other applications' theme file formats in this version; the shareable format is
   fbterm's own (main design 5.10 lists third-party formats as a nice-to-have, still open).
 - No per-tab or per-session ad-hoc scheme switching outside profiles in this version.
