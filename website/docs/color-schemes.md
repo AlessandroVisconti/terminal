@@ -67,11 +67,11 @@ A scheme can suggest a font that suits it, with a link to the font's official do
 
 In the Color schemes window, the selected scheme (and each gallery row) shows **Suggested font** with the family and:
 
-- **Download** opens the font's page in your browser. Download and install the font there, the way your system installs fonts.
+- **Download** opens the font's page in your browser; the button shows the site it leads to, such as `Download (github.com)`. Download and install the font there, the way your system installs fonts.
 - **Use font** makes it the global **Font family** in Settings. It is available once the font is installed; the suggestion itself is not written into the scheme, so an installed gallery theme keeps receiving updates.
 - **In use** when the scheme's sessions already use that font, or **Not installed** when your system does not have it. A scheme that sets its own font (under **Font**) keeps it for its sessions, and the line says so.
 
-The check looks at the fonts fbterm can draw with, each time a scheme's details or the gallery are shown. fbterm reads the system's fonts when it starts, so a font installed while it runs is listed after a restart.
+The check looks at the fonts fbterm can draw with. A suggested font you install while fbterm runs is picked up the next time you open the Color schemes window or its gallery (or turn on the checkbox below): fbterm looks through the system's fonts again for the suggested families it is missing and adds just those, without a restart.
 
 ### Use each theme's suggested font
 
