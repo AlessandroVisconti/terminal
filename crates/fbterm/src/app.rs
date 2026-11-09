@@ -726,8 +726,9 @@ impl App {
             tunnels_panels: TunnelsPanels::new(saved.tunnels_panel_width),
             tunnel_retries,
             bindings: Bindings::current(&settings.keys.map),
-            theme: theme::chrome_theme(theme::graphite_tokens()),
-            tokens: theme::graphite_tokens(),
+            // Replaced by `retheme` below, once the scheme set and settings are in.
+            theme: theme::chrome_theme(&theme::DARK),
+            tokens: &theme::DARK,
             settings,
             profiles,
             notices,
@@ -838,6 +839,7 @@ impl App {
             ask_welcome: !cfg!(test),
             demo_update: debug_env("FBTERM_DEMO_UPDATE").map(|v| v.to_string_lossy().into_owned()),
         };
+        app.retheme();
         app.update_output_rate();
         if app.settings.use_theme_fonts {
             app.refresh_installed_fonts();

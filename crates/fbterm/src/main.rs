@@ -121,6 +121,8 @@ mod tab_menu;
 mod tab_sidebar;
 mod tabs;
 mod theme;
+#[cfg(test)]
+mod theme_app_tests;
 mod theme_fonts;
 #[cfg(test)]
 mod theme_fonts_tests;

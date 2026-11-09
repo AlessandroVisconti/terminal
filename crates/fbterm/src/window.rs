@@ -2420,7 +2420,7 @@ mod tests {
             steps: impl FnOnce(&[Rectangle], &DrawnControls) -> Vec<(Event, Point)>,
         ) -> Vec<Message> {
             let bindings = Bindings::defaults(cfg!(target_os = "macos"));
-            let t = &crate::theme::DARK;
+            let t = crate::theme::graphite_tokens();
             let bar = TabBar {
                 window: window::Id::unique(),
                 bar_bg: t.surface,

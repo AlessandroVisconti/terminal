@@ -920,7 +920,7 @@ mod tests {
         use iced::advanced::widget::Tree;
         use iced::advanced::{Shell, clipboard};
         use iced::{Pixels, Rectangle, mouse};
-        let t = &crate::theme::DARK;
+        let t = crate::theme::graphite_tokens();
         let renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
             iced::Font::DEFAULT,
             Pixels(16.0),
@@ -957,7 +957,7 @@ mod tests {
         use iced::Pixels;
         use iced::advanced::layout::{self, Layout};
         use iced::advanced::widget::Tree;
-        let t = &crate::theme::DARK;
+        let t = crate::theme::graphite_tokens();
         let renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
             iced::Font::DEFAULT,
             Pixels(16.0),

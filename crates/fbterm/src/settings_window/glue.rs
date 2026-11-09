@@ -464,6 +464,7 @@ impl App {
         }
         if let Some(before) = before {
             self.schemes_moved(&before);
+            self.retheme();
         }
         if decorations_changed {
             let chrome = self.window_decorations_changed(self.settings.window_decorations);

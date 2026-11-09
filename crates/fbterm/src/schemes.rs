@@ -110,6 +110,24 @@ impl App {
             .unwrap_or_else(|| graphite())
     }
 
+    /// The scheme the app's chrome is drawn from: the global one if known, else Graphite.
+    /// Profile overrides never count.
+    pub(crate) fn chrome_scheme(&self) -> &Scheme {
+        self.global_scheme()
+    }
+
+    /// Rebuild the chrome's tokens and iced theme from [`App::chrome_scheme`]. Tokens are
+    /// interned, so an unchanged scheme gives the same pointer and nothing is rebuilt.
+    pub(crate) fn retheme(&mut self) {
+        let s = self.chrome_scheme();
+        let tokens = crate::theme::tokens_for(&s.id, &s.colors);
+        if std::ptr::eq(tokens, self.tokens) {
+            return;
+        }
+        self.tokens = tokens;
+        self.theme = crate::theme::chrome_theme(tokens);
+    }
+
     /// The terminal colors of `pane`'s scheme.
     pub(crate) fn scheme_colors(&self, pane: &Pane) -> ColorScheme {
         ColorScheme::from(&self.scheme_for(pane).colors)
@@ -171,6 +189,7 @@ impl App {
         self.schemes = set;
         self.scheme_errors = errors;
         tracing::info!(schemes = self.schemes.all().len(), "schemes reloaded");
+        self.retheme();
         self.rebuild_scheme_fonts();
         self.warm_ligature_sets();
         if let Some((_, state)) = &mut self.schemes_win {

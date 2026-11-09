@@ -2,12 +2,12 @@
 
 use std::sync::Mutex;
 
-use fbterm_config::profile::Rgb;
 use fbterm_config::schemes::{self, SchemeColors};
 use iced::theme::{Palette, palette};
 use iced::{Color, Font, Theme, color};
 
-use crate::tab_look::contrast;
+use crate::tab_look::{contrast, mix};
+use crate::ui::to_color;
 
 /// UI text face (bundled).
 pub const UI_FONT: Font = Font::with_name("Geist");
@@ -73,16 +73,6 @@ pub const LIGHT: Tokens = Tokens {
     terminal: color!(0x0b0b0e),
 };
 
-/// The tokens of the built-in Graphite scheme. Temporary stand-in until the window follows
-/// the global color scheme.
-pub fn graphite_tokens() -> &'static Tokens {
-    let graphite = schemes::builtins()
-        .into_iter()
-        .find(|s| s.id == "graphite")
-        .expect("Graphite is built in");
-    tokens_for("graphite", &graphite.colors)
-}
-
 /// The iced theme for a token set: the same extended-palette overrides for every scheme.
 pub fn chrome_theme(t: &Tokens) -> Theme {
     theme_named("Chrome", t)
@@ -130,16 +120,9 @@ const MUTED_STEP: f32 = 0.575;
 
 const VIOLET: Color = color!(0x7c49e3);
 
-fn to_color(c: Rgb) -> Color {
-    Color::from_rgb8(c.r, c.g, c.b)
-}
-
-fn mix(a: Color, b: Color, t: f32) -> Color {
-    Color::from_rgb(
-        a.r + (b.r - a.r) * t,
-        a.g + (b.g - a.g) * t,
-        a.b + (b.b - a.b) * t,
-    )
+/// `t` of the way from `from` to `to`, opaque.
+fn toward(from: Color, to: Color, t: f32) -> Color {
+    mix(to, from, t)
 }
 
 /// The extreme (white or black) that contrasts most with `bg`.
@@ -158,7 +141,7 @@ fn ensure(c: Color, bg: Color, min: f32) -> Color {
     }
     let end = far_end(bg);
     (1..=50)
-        .map(|i| mix(c, end, i as f32 / 50.0))
+        .map(|i| toward(c, end, i as f32 / 50.0))
         .find(|m| contrast(*m, bg) >= min)
         .unwrap_or(end)
 }
@@ -176,7 +159,7 @@ fn roomy(bg: Color) -> Color {
         return bg;
     }
     (1..=100)
-        .map(|i| mix(bg, other, i as f32 / 100.0))
+        .map(|i| toward(bg, other, i as f32 / 100.0))
         .find(|m| contrast(far_end(*m), *m) >= 7.0)
         .unwrap_or(other)
 }
@@ -187,13 +170,12 @@ fn with_alpha(c: Color, a: f32) -> Color {
 
 /// The chrome tokens of a scheme, derived from its colors alone. Pure; see [`tokens_for`] for
 /// the interned form the app uses.
-#[allow(dead_code)] // wired into the app in a later task
 pub fn derive(colors: &SchemeColors) -> Tokens {
     let dark = schemes::is_dark(colors);
     let bg = roomy(to_color(colors.background));
     let fg = to_color(colors.foreground);
-    let app = roomy(mix(bg, fg, APP_STEP));
-    let neutral = |step: f32| mix(bg, fg, step);
+    let app = roomy(toward(bg, fg, APP_STEP));
+    let neutral = |step: f32| toward(bg, fg, step);
 
     let text = ensure(fg, app, 7.0);
     let text_secondary = ensure(neutral(SECONDARY_STEP), app, 4.5);
@@ -233,7 +215,7 @@ pub fn derive(colors: &SchemeColors) -> Tokens {
         accent,
         accent_soft: with_alpha(accent, if dark { 0.14 } else { 0.09 }),
         accent_edge: if dark {
-            mix(accent, Color::WHITE, 0.3)
+            toward(accent, Color::WHITE, 0.3)
         } else {
             accent
         },
@@ -271,6 +253,16 @@ pub fn tokens_for(id: &str, colors: &SchemeColors) -> &'static Tokens {
     let leaked: &'static Tokens = Box::leak(Box::new(tokens));
     interned.push(leaked);
     leaked
+}
+
+/// The tokens of the built-in Graphite scheme, for tests that draw chrome without an app.
+#[cfg(test)]
+pub fn graphite_tokens() -> &'static Tokens {
+    let graphite = schemes::builtins()
+        .into_iter()
+        .find(|s| s.id == "graphite")
+        .expect("Graphite is built in");
+    tokens_for("graphite", &graphite.colors)
 }
 
 #[cfg(test)]
