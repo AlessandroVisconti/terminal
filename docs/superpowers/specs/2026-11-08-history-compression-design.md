@@ -118,7 +118,7 @@ In the Settings tab, under the Scrollback row:
 - **Default:** when the key is absent, the value is 10,000 or `scrollback_lines - 1`, whichever
   is less, silently (so the shipped defaults, both 10,000, are valid and fire no notice). The
   Settings field shows that effective value. The template line documents it as
-  `#uncompressed_history_lines = 10000  # at most scrollback_lines - 1`.
+  `#uncompressed_history_lines = 10000  # 1000 to scrollback_lines - 1`.
 - `uncompressed_history_lines` must be at least 1,000 and less than `scrollback_lines`. The
   floor keeps the screen and the history people usually scroll through uncompressed, so drawing
   near the bottom never decompresses.

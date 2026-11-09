@@ -1305,10 +1305,10 @@ fn icon_is_written_only_when_set() {
 fn history_compression_defaults_off() {
     assert_eq!(Settings::default().history_compression_keep(), None);
     assert!(SETTINGS_TEMPLATE.contains("#history_compression = false"));
-    assert!(
-        SETTINGS_TEMPLATE
-            .contains("#uncompressed_history_lines = 10000  # at most scrollback_lines - 1")
-    );
+    assert!(SETTINGS_TEMPLATE.contains(
+        "# With history_compression: how many of the newest lines stay uncompressed.\n\
+         #uncompressed_history_lines = 10000  # 1000 to scrollback_lines - 1\n"
+    ));
 }
 
 fn compressing(scrollback: usize, keep: Option<usize>) -> Settings {

@@ -489,8 +489,8 @@ pub const SETTINGS_TEMPLATE: &str = r##"# featherbit terminal settings.
 # output scrolls into it. Recommended for very large histories (100000 lines or more).
 #history_compression = false
 
-# With history_compression: how many of the newest lines stay uncompressed, from 1000.
-#uncompressed_history_lines = 10000  # at most scrollback_lines - 1
+# With history_compression: how many of the newest lines stay uncompressed.
+#uncompressed_history_lines = 10000  # 1000 to scrollback_lines - 1
 
 # Color theme: "dark" or "light".
 #theme = "dark"
