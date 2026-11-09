@@ -8,8 +8,8 @@
 //! - a search across the whole history that matches nothing;
 //! - an export of the whole history (plain and with colors, to a sink).
 //!
-//! Every measure is repeated (`RUNS`, default 9, alternating off and on) and reported as the
-//! median with the range. Run with
+//! Every measure is repeated (`RUNS`, default 9; off first on even runs, on first on odd ones)
+//! and reported as the median with the range. The on tab has no history job left while timed. Run with
 //! `cargo run --release -p fbterm-term --example cold_bench`.
 
 use std::sync::Arc;
@@ -196,10 +196,18 @@ fn main() {
     let fill_on = start.elapsed();
     let start = Instant::now();
     on.lock().run_history_jobs();
+    let fill_jobs = start.elapsed();
+    {
+        // Nothing may be left to compress while timing (the flag stays up after the last
+        // install until a look for more finds none).
+        let mut t = on.lock();
+        assert!(t.next_history_jobs(usize::MAX).is_empty(), "jobs left");
+        assert!(!t.has_history_jobs(), "jobs left");
+    }
     println!(
         "fill, on: {:.0} ms, then every job run inline: {:.0} ms (history {} lines)",
         ms(fill_on),
-        ms(start.elapsed()),
+        ms(fill_jobs),
         on.lock().history_len()
     );
     println!("runs per measure: {runs}, median [min - max] in ms");
@@ -221,9 +229,14 @@ fn main() {
             std::hint::black_box(list.texts.len());
             d
         };
-        first_off.push(first(&off));
-        first_on.push(first(&on));
-        let (a, b) = (frames(&off.lock(), &scheme), frames(&on.lock(), &scheme));
+        let (x, y) = in_turn(r, || first(&off), || first(&on));
+        first_off.push(x);
+        first_on.push(y);
+        let (a, b) = in_turn(
+            r,
+            || frames(&off.lock(), &scheme),
+            || frames(&on.lock(), &scheme),
+        );
         warm_off.push(a);
         warm_on.push(b);
         ratio.push(b / a);
@@ -258,14 +271,14 @@ fn main() {
             snippets: false,
         };
         let (mut a, mut b, mut q) = (Vec::new(), Vec::new(), Vec::new());
-        for _ in 0..runs {
+        for run in 0..runs {
             let time = |t: &SharedTerminal| {
                 let start = Instant::now();
                 let out = search(t, &r, &no);
                 assert!(out.hits.is_empty() && out.resume.is_none());
                 ms(start.elapsed())
             };
-            let (x, y) = (time(&off), time(&on));
+            let (x, y) = in_turn(run, || time(&off), || time(&on));
             a.push(x);
             b.push(y);
             q.push(y / x);
@@ -285,13 +298,13 @@ fn main() {
         ("with colors", ExportFormat::Ansi),
     ] {
         let (mut a, mut b, mut q) = (Vec::new(), Vec::new(), Vec::new());
-        for _ in 0..runs {
+        for run in 0..runs {
             let time = |t: &SharedTerminal| {
                 let start = Instant::now();
                 export(t, format, &mut std::io::sink()).unwrap();
                 ms(start.elapsed())
             };
-            let (x, y) = (time(&off), time(&on));
+            let (x, y) = in_turn(run, || time(&off), || time(&on));
             a.push(x);
             b.push(y);
             q.push(y / x);
@@ -303,6 +316,18 @@ fn main() {
             "export, {label}: off {as_}, on {bs}, ratio {qs}  gate <= 2x: {}",
             verdict(m <= 2.0)
         );
+    }
+}
+
+/// Run `off` and `on` (returned in that order), off first on even runs and on first on odd
+/// ones, so neither always runs right after the other's work.
+fn in_turn<T>(run: usize, off: impl FnOnce() -> T, on: impl FnOnce() -> T) -> (T, T) {
+    if run.is_multiple_of(2) {
+        let a = off();
+        (a, on())
+    } else {
+        let b = on();
+        (off(), b)
     }
 }
 
