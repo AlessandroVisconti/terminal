@@ -110,7 +110,7 @@ impl<T> std::fmt::Debug for Delivered<T> {
     reason = "some variants are sent by the palette, editor and restore"
 )]
 #[derive(Debug, Clone)]
-pub enum Message {
+pub(crate) enum Message {
     Session(SessionId, SessionEvent),
     /// A system font scan for missing suggested fonts finished (see `crate::theme_fonts`).
     FontsScanned(Arc<Vec<crate::theme_fonts::NewFace>>),
