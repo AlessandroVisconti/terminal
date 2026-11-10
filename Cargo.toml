@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.10.0"
+version = "0.10.1"
 edition = "2024"
 license = "Apache-2.0"
 
@@ -34,7 +34,7 @@ serde_json = "1"
 parking_lot = "0.12"
 async-trait = "0.1"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "std"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "ansi", "std", "tracing-log"] }
 png = "0.17"
 rfd = "0.17.2"
 # Tab export: gzip output, and the local time in the default file name.
