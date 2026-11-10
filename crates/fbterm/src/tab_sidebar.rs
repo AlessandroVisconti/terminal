@@ -857,8 +857,12 @@ impl App {
             self.sidebar_quiet.extend(self.windows.keys().copied());
             self.sidebar_shown.clear();
             self.sidebar_scroll.clear();
+            self.reveal_strips();
             return None;
         }
+        // Tabs on the left: no strip to scroll, and what was known about it is forgotten.
+        self.strip_offset.clear();
+        self.strip_seen.clear();
         let bar = crate::chrome::Chrome::current().bar_height();
         let mut tasks = Vec::new();
         // The windows whose active tab changed since the sidebar last showed it.
