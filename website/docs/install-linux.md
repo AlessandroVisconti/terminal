@@ -113,6 +113,16 @@ fbterm keeps a log of each run in `fbterm.log` in its [configuration directory](
 
 To report the problem, send `crash.log` and `fbterm.previous.log` (or `fbterm.log` if fbterm has not been started again since). Look through them first: they can name your profiles, hosts and folders.
 
+### If the graphics device is lost
+
+If fbterm closes and then says `fbterm stopped last time because the graphics device was lost`, the graphics driver stopped responding under it, or fbterm picked a graphics backend this GPU and driver cannot run. A driver reset or update, waking from sleep or switching GPUs can cause it once; restarting fbterm is enough. If it happens every time, update the graphics driver (on Mesa, the `mesa` packages), then try the other backend for one run:
+
+```sh
+WGPU_BACKEND=gl fbterm
+```
+
+(`vulkan` is the other choice.) `fbterm.log` names the graphics adapter and backend fbterm used; include it when you report the problem.
+
 ## Next steps
 
 On first launch you get a local shell. Add your SSH hosts as [profiles](profiles) and open them from the palette with `Ctrl+Shift+P`.

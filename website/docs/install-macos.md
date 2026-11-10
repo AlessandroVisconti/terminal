@@ -51,6 +51,8 @@ fbterm keeps a log of each run in `fbterm.log` in its [configuration directory](
 
 To report the problem, send `crash.log` and `fbterm.previous.log` (or `fbterm.log` if fbterm has not been started again since). Look through them first: they can name your profiles, hosts and folders.
 
+If fbterm says `fbterm stopped last time because the graphics device was lost`, the graphics driver stopped responding under it, which waking from sleep or switching GPUs can cause once; restarting fbterm is enough. If it keeps happening, send the report: `fbterm.log` names the graphics adapter fbterm used.
+
 ## Next steps
 
 On first launch you get a local shell. Add your SSH hosts as [profiles](profiles) and open them from the palette with `Cmd+Shift+P`.
