@@ -26,7 +26,7 @@ Uninstalling the app never removes this directory (see [Install on Linux](instal
 | `state.toml` | the app | Open windows and tabs, and when each profile was last used. |
 | `fbterm.log`, `fbterm.previous.log` | the app | The log of the current run and of the run before. See [If fbterm crashes or doesn't start](install-macos#if-fbterm-crashes-or-doesnt-start). |
 | `crash.log`, `crash.previous.log` | the app | Reports of crashes and failed starts, newest last; older reports move to `crash.previous.log` once `crash.log` is over 256 KB. |
-| `crash.pending` | the app | Empty marker: a report was written that the next launch has not mentioned yet. |
+| `crash.pending` | the app | Marker: a report was written that the next launch has not mentioned yet. Empty, or the name of a cause fbterm recognizes (`gpu-lost`), so the launch can say what happened. |
 
 `profiles.toml` and `settings.toml` are reloaded while the app runs. If a file has a syntax error, the app reports the file and line, keeps what it had loaded, and never overwrites the broken file.
 

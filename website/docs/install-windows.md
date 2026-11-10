@@ -66,6 +66,16 @@ fbterm keeps a log of each run in `fbterm.log` in its [configuration directory](
 
 To report the problem, send `crash.log` and `fbterm.previous.log` (or `fbterm.log` if fbterm has not been started again since). Look through them first: they can name your profiles, hosts and folders.
 
+### If the graphics device is lost
+
+If fbterm closes and then says `fbterm stopped last time because the graphics device was lost`, the graphics driver stopped responding under it, or fbterm picked a graphics backend this GPU and driver cannot run. A driver reset or update, waking from sleep, Remote Desktop or switching GPUs can cause it once; restarting fbterm is enough. If it happens every time, update the graphics driver. If that does not help, try another backend for one run from PowerShell, starting with `dx12`, then `vulkan`, then `gl`:
+
+```powershell
+$env:WGPU_BACKEND="dx12"; & "C:\Program Files\featherbit terminal\fbterm.exe"
+```
+
+When one works, set `WGPU_BACKEND` to it as a user environment variable (Settings, System, About, Advanced system settings, Environment Variables) so the Start menu shortcut uses it too. `fbterm.log` names the graphics adapter and backend fbterm used; include it when you report the problem.
+
 ## Next steps
 
 On first launch you get a local shell. Add your SSH hosts as [profiles](profiles) and open them from the palette with `Ctrl+Shift+P`.
