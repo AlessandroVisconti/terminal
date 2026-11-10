@@ -2,6 +2,13 @@
 
 All notable changes to featherbit terminal (`fbterm`). The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each version links to its GitHub release, where the downloads are.
 
+## [0.10.1] - 2026-11-10
+
+### Fixed
+
+- When fbterm closes because the graphics device was lost (the graphics driver stopped responding, or fbterm picked a graphics backend the GPU cannot run), the next launch says so and what to try: update the graphics driver, or on Windows and Linux start fbterm with `WGPU_BACKEND` set to another backend. The crash report gets a matching hint, and the install pages explain the steps ([#99](https://github.com/featherbitplatform/terminal/pull/99)).
+- `fbterm.log` now names the graphics adapter, backend and surface format fbterm uses, so a report about a graphics problem carries them ([#99](https://github.com/featherbitplatform/terminal/pull/99)).
+
 ## [0.10.0] - 2026-11-09
 
 ### Added
@@ -220,6 +227,7 @@ The first release: the daily driver milestone, macOS only.
 - Compact scrollback history: a live `scrollback_lines` setting with a Settings confirmation, and memory given back when tabs close ([#2](https://github.com/featherbitplatform/terminal/pull/2)).
 - Unsigned macOS `.dmg` packaging and the release workflow ([#1](https://github.com/featherbitplatform/terminal/pull/1)).
 
+[0.10.1]: https://github.com/featherbitplatform/terminal/releases/tag/v0.10.1
 [0.10.0]: https://github.com/featherbitplatform/terminal/releases/tag/v0.10.0
 [0.9.0]: https://github.com/featherbitplatform/terminal/releases/tag/v0.9.0
 [0.8.3]: https://github.com/featherbitplatform/terminal/releases/tag/v0.8.3
