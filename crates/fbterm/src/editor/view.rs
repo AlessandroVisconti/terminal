@@ -606,7 +606,6 @@ fn footer<'a>(
                 ui::ghost
             ),
             messages,
-            ui::text_button(t, "Close", Some(msg(EditorMsg::Close)), ui::secondary),
             ui::text_button(
                 t,
                 "Save",
