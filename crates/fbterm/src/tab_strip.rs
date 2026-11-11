@@ -286,6 +286,96 @@ impl<'a> From<Viewport<'a>> for Element<'a, Message> {
     }
 }
 
+/// How far one wheel line scrolls the strip.
+pub(crate) const WHEEL_LINE_PX: f32 = 40.0;
+
+impl App {
+    /// The strip of window `wid`, from its size, its tabs and the buttons after it.
+    pub(crate) fn strip_layout_of(&self, wid: window::Id) -> StripLayout {
+        let count = self.windows.get(&wid).map_or(0, |w| w.tabs.len());
+        let trailing = trailing_width(self.tunnels.up_count(), self.files_button(wid).is_some());
+        strip_layout(
+            Chrome::current(),
+            self.fullscreen.contains(&wid),
+            self.sizes.get(&wid).map(|&(w, _)| w),
+            count,
+            trailing,
+        )
+    }
+
+    /// The window's strip offset as stored, maybe past the strip's end since the strip shrank:
+    /// readers clamp it with the layout they have (`clamp_offset`).
+    pub(crate) fn stored_offset(&self, wid: window::Id) -> f32 {
+        self.strip_offset.get(&wid).copied().unwrap_or(0.0)
+    }
+
+    /// The window's strip offset as stored, kept within the strip as it is now.
+    #[cfg(test)]
+    pub(crate) fn offset_of(&self, wid: window::Id) -> f32 {
+        clamp_offset(self.stored_offset(wid), &self.strip_layout_of(wid))
+    }
+
+    /// Scroll the strip by `delta` logical pixels, within its ends.
+    pub(crate) fn strip_scrolled_by(&mut self, wid: window::Id, delta: f32) {
+        let layout = self.strip_layout_of(wid);
+        let next = clamp_offset(
+            clamp_offset(self.stored_offset(wid), &layout) + delta,
+            &layout,
+        );
+        self.strip_offset.insert(wid, next);
+    }
+
+    /// A chevron: one tab toward `dir` (`-1` earlier tabs, `1` later).
+    pub(crate) fn strip_stepped(&mut self, wid: window::Id, dir: i8) {
+        let step = self.strip_layout_of(wid).tab_w + TAB_SPACING;
+        self.strip_scrolled_by(wid, f32::from(dir) * step);
+    }
+
+    /// After every update, with tabs on top: a window whose active tab, its place among the
+    /// tabs or the strip's room changed since the strip last showed the active tab scrolls just enough
+    /// to show it; one whose tabs fit goes back to the start. Any other change (a tab opening,
+    /// the buttons' width) only clamps the offset, and a scroll by hand stays.
+    pub(crate) fn reveal_strips(&mut self) {
+        let changed: Vec<(window::Id, StripSeen, StripLayout)> = self
+            .windows
+            .iter()
+            .filter_map(|(wid, w)| {
+                let tab = w.active_tab()?;
+                let layout = self.strip_layout_of(*wid);
+                let seen = StripSeen {
+                    tab: tab.id,
+                    index: w.active,
+                    tab_w: layout.tab_w,
+                    strip_w: layout.strip_w,
+                };
+                (self.strip_seen.get(wid) != Some(&seen)).then_some((*wid, seen, layout))
+            })
+            .collect();
+        for (wid, seen, layout) in changed {
+            self.strip_seen.insert(wid, seen);
+            let start = seen.index as f32 * (layout.tab_w + TAB_SPACING);
+            let offset = clamp_offset(self.stored_offset(wid), &layout);
+            let next = if layout.overflow {
+                reveal_span(start, layout.tab_w, offset, layout.strip_w).unwrap_or(offset)
+            } else {
+                0.0
+            };
+            self.strip_offset.insert(wid, clamp_offset(next, &layout));
+        }
+    }
+}
+
+/// What the reveal of a window's active tab was last done for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct StripSeen {
+    tab: TabId,
+    index: usize,
+    /// The room the strip had: a resize, full screen or a button appearing (a tunnel count,
+    /// the files button) changes it and can push the active tab out of view.
+    tab_w: f32,
+    strip_w: f32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,86 +536,6 @@ mod tests {
             "never negative"
         );
     }
-}
-
-/// How far one wheel line scrolls the strip.
-pub(crate) const WHEEL_LINE_PX: f32 = 40.0;
-
-impl App {
-    /// The strip of window `wid`, from its size, its tabs and the buttons after it.
-    pub(crate) fn strip_layout_of(&self, wid: window::Id) -> StripLayout {
-        let count = self.windows.get(&wid).map_or(0, |w| w.tabs.len());
-        let trailing = trailing_width(self.tunnels.up_count(), self.files_button(wid).is_some());
-        strip_layout(
-            Chrome::current(),
-            self.fullscreen.contains(&wid),
-            self.sizes.get(&wid).map(|&(w, _)| w),
-            count,
-            trailing,
-        )
-    }
-
-    /// The window's strip offset as stored, kept within the strip as it is now.
-    pub(crate) fn offset_of(&self, wid: window::Id) -> f32 {
-        let stored = self.strip_offset.get(&wid).copied().unwrap_or(0.0);
-        clamp_offset(stored, &self.strip_layout_of(wid))
-    }
-
-    /// Scroll the strip by `delta` logical pixels, within its ends.
-    pub(crate) fn strip_scrolled_by(&mut self, wid: window::Id, delta: f32) {
-        let next = clamp_offset(self.offset_of(wid) + delta, &self.strip_layout_of(wid));
-        self.strip_offset.insert(wid, next);
-    }
-
-    /// A chevron: one tab toward `dir` (`-1` earlier tabs, `1` later).
-    pub(crate) fn strip_stepped(&mut self, wid: window::Id, dir: i8) {
-        let step = self.strip_layout_of(wid).tab_w + TAB_SPACING;
-        self.strip_scrolled_by(wid, f32::from(dir) * step);
-    }
-
-    /// After every update, with tabs on top: a window whose active tab, its place among the
-    /// tabs or the strip's room changed since the strip last showed the active tab scrolls just enough
-    /// to show it; one whose tabs fit goes back to the start. Any other change (a tab opening,
-    /// the buttons' width) only clamps the offset, and a scroll by hand stays.
-    pub(crate) fn reveal_strips(&mut self) {
-        let changed: Vec<(window::Id, StripSeen, StripLayout)> = self
-            .windows
-            .iter()
-            .filter_map(|(wid, w)| {
-                let tab = w.active_tab()?;
-                let layout = self.strip_layout_of(*wid);
-                let seen = StripSeen {
-                    tab: tab.id,
-                    index: w.active,
-                    tab_w: layout.tab_w,
-                    strip_w: layout.strip_w,
-                };
-                (self.strip_seen.get(wid) != Some(&seen)).then_some((*wid, seen, layout))
-            })
-            .collect();
-        for (wid, seen, layout) in changed {
-            self.strip_seen.insert(wid, seen);
-            let start = seen.index as f32 * (layout.tab_w + TAB_SPACING);
-            let offset = self.offset_of(wid);
-            let next = if layout.overflow {
-                reveal_span(start, layout.tab_w, offset, layout.strip_w).unwrap_or(offset)
-            } else {
-                0.0
-            };
-            self.strip_offset.insert(wid, clamp_offset(next, &layout));
-        }
-    }
-}
-
-/// What the reveal of a window's active tab was last done for.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct StripSeen {
-    tab: TabId,
-    index: usize,
-    /// The room the strip had: a resize, full screen or a button appearing (a tunnel count,
-    /// the files button) changes it and can push the active tab out of view.
-    tab_w: f32,
-    strip_w: f32,
 }
 
 #[cfg(test)]

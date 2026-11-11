@@ -88,8 +88,10 @@ pub(crate) struct Strip<'a> {
 }
 
 /// Where something dropped at `p` lands between the tabs: before the tab whose first half
-/// (along the axis) is under `p`, after the one whose second half is, else the nearest gap.
-/// Over its own tab (`own`): nowhere.
+/// (along the axis) is under `p`, after the one whose second half is, else the nearest gap
+/// between the tabs shown. Tabs scrolled out of the strip are empty rectangles and never count:
+/// past the strip's end the gap is beside the last tab shown on that side. Over its own tab
+/// (`own`): nowhere.
 pub(crate) fn gap_at(
     rects: &[Rectangle],
     own: Option<usize>,
@@ -110,10 +112,12 @@ pub(crate) fn gap_at(
             i + 1
         });
     }
+    let shown = |r: &Rectangle| r.width > 0.0 && r.height > 0.0;
     Some(
         rects
             .iter()
-            .position(|r| axis.along(p) < axis.center(r))
+            .position(|r| shown(r) && axis.along(p) < axis.center(r))
+            .or_else(|| rects.iter().rposition(shown).map(|i| i + 1))
             .unwrap_or(rects.len()),
     )
 }
@@ -315,6 +319,27 @@ pub(crate) fn drag_event(
 mod tests {
     use super::*;
     use iced::{Point, Rectangle, Size};
+
+    #[test]
+    fn gap_at_skips_tabs_scrolled_out_of_the_strip() {
+        // Tabs 0 and 3 are scrolled out: empty at the strip's edges (x 100 and 300).
+        let hidden = |x| Rectangle::new(Point::new(x, 0.0), Size::new(0.0, 30.0));
+        let shown = |x| Rectangle::new(Point::new(x, 0.0), Size::new(98.0, 30.0));
+        let rects = [hidden(100.0), shown(100.0), shown(200.0), hidden(300.0)];
+        let at = |x| gap_at(&rects, None, Point::new(x, 10.0), Axis::X);
+        assert_eq!(
+            at(50.0),
+            Some(1),
+            "left of the strip: before the first shown"
+        );
+        assert_eq!(
+            at(400.0),
+            Some(3),
+            "right of the strip: after the last shown"
+        );
+        assert_eq!(at(260.0), Some(3), "second half of the last shown");
+        assert_eq!(at(120.0), Some(1), "first half of the first shown");
+    }
 
     #[test]
     fn gap_at_works_along_either_axis() {

@@ -180,7 +180,7 @@ fn window_view(app: &App, id: window::Id) -> Element<'_, Message> {
         renaming: app.renaming.as_ref().filter(|r| r.window == id),
         tabs_in_bar: sidebar.is_none(),
         outline_start: sidebar.unwrap_or(0.0),
-        strip_offset: app.offset_of(id),
+        strip_offset: app.stored_offset(id),
     };
     let mut body = column![tab_bar(t, bar, &win.tabs, win.active)];
     let notices = app.visible_notices();
@@ -1126,8 +1126,8 @@ fn tab_bar<'a>(
             .center_y(height),
     );
     bar = bar.push(container(profiles).center_y(height));
-    // After the tab buttons, like every trailing button: `BarBackground` measures the tabs as
-    // the row's first children.
+    // Every button comes after the strip: `BarBackground` finds the tabs in the row's first
+    // child (`strip_bounds`).
     bar = bar.push(container(tunnels).center_y(height));
     if let Some(files) = files {
         bar = bar.push(container(files).center_y(height));
@@ -1498,9 +1498,6 @@ pub(crate) fn page_icon(page: Page) -> &'static str {
     }
 }
 
-/// How far outside the strip a scrolled-out tab's empty rectangle is parked (see [`tab_rects`]).
-const HIDDEN_TAB_DISTANCE: f32 = 1.0e6;
-
 /// How close to either end of the strip a drag scrolls it, and how far each pointer move scrolls.
 const EDGE_SCROLL_BAND: f32 = 24.0;
 const EDGE_SCROLL_STEP: f32 = 24.0;
@@ -1532,21 +1529,19 @@ fn strip_bounds(layout: Layout<'_>) -> Rectangle {
         .unwrap_or_default()
 }
 
-/// The tab buttons' bounds, clipped to the strip (zero wide when scrolled out): the strip's
-/// children, the strip being the bar's row's first child (container -> row -> strip -> row).
+/// The tab buttons' bounds, clipped to the strip (zero wide at the strip's edge on their side
+/// when scrolled out, which `gap_at` skips): the strip's children, the strip being the bar's
+/// row's first child (container -> row -> strip -> row).
 fn tab_rects(layout: Layout<'_>, n: usize) -> Vec<Rectangle> {
     let view = strip_bounds(layout);
     tab_rects_full(layout, n)
         .into_iter()
         .map(|b| {
-            // A tab scrolled out is zero wide and parked far outside the strip on its own side,
-            // so a drop beyond the strip (over a chevron, left of it) finds the gap beside the
-            // last visible tab on that side, where the marker shows.
             b.intersection(&view).unwrap_or(Rectangle {
                 x: if b.x < view.x {
-                    view.x - HIDDEN_TAB_DISTANCE
+                    view.x
                 } else {
-                    view.x + view.width + HIDDEN_TAB_DISTANCE
+                    view.x + view.width
                 },
                 width: 0.0,
                 ..b
