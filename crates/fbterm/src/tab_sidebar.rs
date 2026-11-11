@@ -865,10 +865,12 @@ impl App {
         self.strip_seen.clear();
         let bar = crate::chrome::Chrome::current().bar_height();
         let mut tasks = Vec::new();
-        // The windows whose active tab changed since the sidebar last showed it.
+        // The windows whose active tab changed since the sidebar last showed it; none while a
+        // carry is on there (see `reveal_strips`): it is revealed once the carry ends.
         let changed: Vec<(window::Id, TabId, usize)> = self
             .windows
             .iter()
+            .filter(|(wid, _)| self.carry_in(**wid).is_none())
             .filter_map(|(wid, w)| {
                 let tab = w.active_tab()?;
                 (self.sidebar_shown.get(wid) != Some(&tab.id)).then_some((*wid, tab.id, w.active))

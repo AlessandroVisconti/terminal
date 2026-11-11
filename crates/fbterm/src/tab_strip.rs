@@ -334,11 +334,15 @@ impl App {
     /// After every update, with tabs on top: a window whose active tab, its place among the
     /// tabs or the strip's room changed since the strip last showed the active tab scrolls just enough
     /// to show it; one whose tabs fit goes back to the start. Any other change (a tab opening,
-    /// the buttons' width) only clamps the offset, and a scroll by hand stays.
+    /// the buttons' width) only clamps the offset, and a scroll by hand stays. Never while a
+    /// carry is on in that window: a hover selecting a half-shown tab would scroll the strip
+    /// under a pointer that did not move, and the next dwell would walk on; the reveal comes
+    /// once the carry ends.
     pub(crate) fn reveal_strips(&mut self) {
         let changed: Vec<(window::Id, StripSeen, StripLayout)> = self
             .windows
             .iter()
+            .filter(|(wid, _)| self.carry_in(**wid).is_none())
             .filter_map(|(wid, w)| {
                 let tab = w.active_tab()?;
                 let layout = self.strip_layout_of(*wid);
@@ -699,6 +703,24 @@ mod app_tests {
         assert!(l.overflow);
         let used = Chrome::Unified.leading_inset(false) + l.strip_w + TAB_SPACING + CHEVRONS_WIDTH;
         assert!(800.0 - used >= DRAG_ROOM, "{l:?}");
+    }
+
+    #[test]
+    fn a_hover_switch_while_carrying_leaves_the_strip_still() {
+        use crate::windows::DragMsg;
+        let (mut app, wid) = app_with_tabs(40, 800.0);
+        let _ = app.update(Message::SelectTab(0));
+        let carried = app.windows[&wid].tabs[0].id;
+        let _ = app.update(Message::Drag(wid, DragMsg::StartTab(carried)));
+        let _ = app.update(Message::Drag(wid, DragMsg::OverTab(Some(39))));
+        let generation = app.hover_generation;
+        let _ = app.update(Message::Drag(wid, DragMsg::HoverElapsed(generation)));
+        assert_eq!(app.windows[&wid].active, 39);
+        assert_eq!(app.offset_of(wid), 0.0, "no scroll under the carried tab");
+        // The carry ends on the tab shown: now it is revealed.
+        app.carry = None;
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::StripScroll(0.0)));
+        assert!(app.offset_of(wid) > 0.0);
     }
 
     #[test]
