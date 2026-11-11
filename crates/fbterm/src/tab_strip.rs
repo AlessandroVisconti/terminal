@@ -21,6 +21,8 @@ pub(crate) const TAB_MIN_WIDTH: f32 = 80.0;
 pub(crate) const TAB_SPACING: f32 = 2.0;
 /// The two chevron buttons and their spacing.
 pub(crate) const CHEVRONS_WIDTH: f32 = 2.0 * (BUTTON_WIDTH + BAR_SPACING);
+/// Empty bar kept free of tabs however many there are, so the window can always be dragged by it.
+pub(crate) const DRAG_ROOM: f32 = 40.0;
 
 /// Where the tabs sit in a bar of one window.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -58,7 +60,7 @@ pub(crate) fn strip_layout(
     } else {
         0.0
     };
-    let room = width - chrome.leading_inset(fullscreen) - controls - trailing;
+    let room = width - chrome.leading_inset(fullscreen) - controls - trailing - DRAG_ROOM;
     let tab_w = (room / count.max(1) as f32 - TAB_SPACING).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH);
     let content_w = content_width(tab_w, count);
     // Half a pixel of slack: widths come out of float arithmetic.
@@ -326,6 +328,7 @@ mod tests {
             400.0
                 - Chrome::Unified.leading_inset(false)
                 - trailing_width(3, true)
+                - DRAG_ROOM
                 - CHEVRONS_WIDTH
                 - TAB_SPACING
         );
@@ -338,7 +341,7 @@ mod tests {
         let trailing = trailing_width(3, true);
         let inset = Chrome::Unified.leading_inset(false);
         // The room left of the group exactly holds `n` tabs of 80 px with their gaps.
-        let exact = inset + trailing + n as f32 * (TAB_MIN_WIDTH + TAB_SPACING);
+        let exact = inset + trailing + DRAG_ROOM + n as f32 * (TAB_MIN_WIDTH + TAB_SPACING);
         let at = |width| strip_layout(Chrome::Unified, false, Some(width), n, trailing);
         assert!(!at(exact).overflow, "exactly fits");
         assert!(at(exact - 1.0).overflow, "a pixel less does not");
@@ -370,8 +373,8 @@ mod tests {
 
     #[test]
     fn drawn_controls_and_full_screen_change_the_room() {
-        let plain = layout(Chrome::Unified, Some(400.0), 30);
-        let drawn = layout(Chrome::Drawn, Some(400.0), 30);
+        let plain = layout(Chrome::Unified, Some(500.0), 30);
+        let drawn = layout(Chrome::Drawn, Some(500.0), 30);
         let setup = chrome::setup();
         let controls = chrome::controls_width(setup.look, setup.controls.order.len());
         let inset_diff = Chrome::Unified.leading_inset(false) - Chrome::Drawn.leading_inset(false);
@@ -379,7 +382,7 @@ mod tests {
         let full = strip_layout(
             Chrome::Unified,
             true,
-            Some(400.0),
+            Some(500.0),
             30,
             trailing_width(3, true),
         );
@@ -481,7 +484,7 @@ impl App {
     }
 
     /// After every update, with tabs on top: a window whose active tab, its place among the
-    /// tabs or its width changed since the strip last showed the active tab scrolls just enough
+    /// tabs or the strip's room changed since the strip last showed the active tab scrolls just enough
     /// to show it; one whose tabs fit goes back to the start. Any other change (a tab opening,
     /// the buttons' width) only clamps the offset, and a scroll by hand stays.
     pub(crate) fn reveal_strips(&mut self) {
@@ -490,14 +493,14 @@ impl App {
             .iter()
             .filter_map(|(wid, w)| {
                 let tab = w.active_tab()?;
+                let layout = self.strip_layout_of(*wid);
                 let seen = StripSeen {
                     tab: tab.id,
                     index: w.active,
-                    width: self.sizes.get(wid).map(|&(w, _)| w),
-                    fullscreen: self.fullscreen.contains(wid),
+                    tab_w: layout.tab_w,
+                    strip_w: layout.strip_w,
                 };
-                (self.strip_seen.get(wid) != Some(&seen))
-                    .then(|| (*wid, seen, self.strip_layout_of(*wid)))
+                (self.strip_seen.get(wid) != Some(&seen)).then_some((*wid, seen, layout))
             })
             .collect();
         for (wid, seen, layout) in changed {
@@ -519,8 +522,10 @@ impl App {
 pub(crate) struct StripSeen {
     tab: TabId,
     index: usize,
-    width: Option<f32>,
-    fullscreen: bool,
+    /// The room the strip had: a resize, full screen or a button appearing (a tunnel count,
+    /// the files button) changes it and can push the active tab out of view.
+    tab_w: f32,
+    strip_w: f32,
 }
 
 #[cfg(test)]
@@ -657,6 +662,33 @@ mod app_tests {
         }
         let _ = app.update(Message::TabBar(wid, TabBarMsg::StripScroll(0.0)));
         assert_eq!(app.offset_of(wid), moved, "left where it was put");
+    }
+
+    #[test]
+    fn a_narrower_strip_reveals_the_active_tab_again() {
+        let (mut app, wid) = app_with_tabs(40, 800.0);
+        let _ = app.update(Message::SelectTab(20));
+        // Scroll so the active tab is the last one shown, then take room from the strip (here
+        // by a resize; a tunnel count or the files button does it through `strip_w` the same way).
+        let l = app.strip_layout_of(wid);
+        let start = 20.0 * (l.tab_w + TAB_SPACING);
+        app.strip_offset.insert(wid, start + l.tab_w - l.strip_w);
+        app.sizes.insert(wid, (700.0, 600.0));
+        let _ = app.update(Message::TabBar(wid, TabBarMsg::StripScroll(0.0)));
+        let l = app.strip_layout_of(wid);
+        let offset = app.offset_of(wid);
+        assert!(
+            offset <= start && start + l.tab_w <= offset + l.strip_w + 0.5,
+            "{offset} {l:?}"
+        );
+    }
+
+    #[test]
+    fn overflowing_tabs_leave_room_to_drag_the_window() {
+        let l = strip_layout(Chrome::Unified, false, Some(800.0), 40, 0.0);
+        assert!(l.overflow);
+        let used = Chrome::Unified.leading_inset(false) + l.strip_w + TAB_SPACING + CHEVRONS_WIDTH;
+        assert!(800.0 - used >= DRAG_ROOM, "{l:?}");
     }
 
     #[test]

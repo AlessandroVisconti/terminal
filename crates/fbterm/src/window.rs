@@ -1658,23 +1658,29 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
             renaming: self.renaming,
         };
         let rects = tab_rects(layout, self.ids.len());
-        // A tab or tile dragged near either end of the strip scrolls it, so it can be dropped
-        // further along: one step per pointer move, never a timer.
+        // A tab or tile dragged near either end of the strip, or past it anywhere over the bar
+        // (a fast pointer overshoots the band), scrolls it while tabs are hidden on that side,
+        // so it can be dropped further along: one step per pointer move, never a timer.
         if let Event::Mouse(mouse::Event::CursorMoved { position }) = event
             && !self.modal
+            && !self.ids.is_empty()
             && (state.press.as_ref().is_some_and(|p| p.dragging)
                 || matches!(self.carry, Some(Carry::Tile(_) | Carry::Tab(_))))
         {
             let strip = strip_bounds(layout);
-            let over = position.y >= strip.y && position.y <= strip.y + strip.height;
-            if over && position.x >= strip.x && position.x <= strip.x + EDGE_SCROLL_BAND {
+            let bar = layout.bounds();
+            let full = tab_rects_full(layout, self.ids.len());
+            let hidden_left = full.first().is_some_and(|r| r.x < strip.x - 0.5);
+            let hidden_right = full
+                .last()
+                .is_some_and(|r| r.x + r.width > strip.x + strip.width + 0.5);
+            let over = position.y >= bar.y && position.y <= bar.y + bar.height;
+            if over && hidden_left && position.x <= strip.x + EDGE_SCROLL_BAND {
                 shell.publish(Message::TabBar(
                     self.window,
                     TabBarMsg::StripScroll(-EDGE_SCROLL_STEP),
                 ));
-            } else if over
-                && position.x <= strip.x + strip.width
-                && position.x >= strip.x + strip.width - EDGE_SCROLL_BAND
+            } else if over && hidden_right && position.x >= strip.x + strip.width - EDGE_SCROLL_BAND
             {
                 shell.publish(Message::TabBar(
                     self.window,
@@ -3055,6 +3061,37 @@ mod tests {
                 [EDGE_SCROLL_STEP, -EDGE_SCROLL_STEP],
                 "{messages:?}"
             );
+        }
+
+        #[test]
+        fn a_drag_past_the_band_keeps_scrolling_and_stops_at_the_ends() {
+            let tabs = many_tabs(40);
+            let carried = Some(Carry::Tile(PaneId(7)));
+            let past = |p: &Parts| {
+                // Over the right chevron, then above the tabs at the right edge, then left of
+                // the strip.
+                let chevron = p.rest[1].center();
+                let above = Point::new(p.strip.x + p.strip.width - 5.0, p.strip.y - 4.0);
+                let left = Point::new(p.strip.x - 1.0, p.strip.center().y);
+                vec![
+                    (moved(chevron), chevron),
+                    (moved(above), above),
+                    (moved(left), left),
+                ]
+            };
+            let messages = drive_full(Chrome::Unified, &tabs, carried, Some(800.0), 0.0, past);
+            assert_eq!(
+                strip_scrolls(&messages),
+                [EDGE_SCROLL_STEP, EDGE_SCROLL_STEP],
+                "nothing hidden on the left at the start"
+            );
+            // Tabs that fit: nothing to scroll anywhere.
+            let few = many_tabs(3);
+            let messages = drive_full(Chrome::Unified, &few, carried, Some(800.0), 0.0, |p| {
+                let at = Point::new(p.strip.x + p.strip.width - 5.0, p.strip.center().y);
+                vec![(moved(at), at)]
+            });
+            assert!(strip_scrolls(&messages).is_empty(), "{messages:?}");
         }
 
         #[test]

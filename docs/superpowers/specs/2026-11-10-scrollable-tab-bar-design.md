@@ -26,7 +26,8 @@ real failure.
   is computed from what is there, never assumed. Once at that end the group stays put.
 - **The strip.** The tabs live in a strip between the left inset and the group (or the
   chevrons, below). When their natural width fits, the strip is exactly that wide and nothing
-  scrolls. When it does not, the strip takes all the room left of the chevrons and the group and
+  scrolls. When it does not, the strip takes all the room left of the chevrons and the group,
+  less 40 px of empty bar (`DRAG_ROOM`, reserved in every layout) to drag the window by, and
   scrolls sideways.
 - **Scrolling.** The mouse wheel or trackpad over the strip scrolls it sideways (a vertical
   wheel too, since the bar has no vertical axis), and so do two chevron buttons.
@@ -95,7 +96,7 @@ Read these first; the design leans on them.
 1. **Layout is computed, not discovered.** One pure function takes the window width (`None`:
    full size, as `tab_width` does), chrome, tab count and trailing width and returns the tab
    width, the strip's width and whether it overflows. Tab width is `clamp(room / n - 2, 80,
-   196)` as today with the new floor; overflow is when `n * (tab_width + 2)` exceeds the room
+   196)` as today with the new floor, the room already less `DRAG_ROOM`; overflow is when `n * (tab_width + 2)` exceeds the room
    left after the group; the strip's width is the natural width or, on overflow, the room less the
    group and the chevrons. Everything downstream (`tab_bar`, tests) uses it. It replaces the
    width logic of `tab_width`.
