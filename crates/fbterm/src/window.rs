@@ -1129,7 +1129,7 @@ fn tab_bar<'a>(
     );
     bar = bar.push(container(profiles).center_y(height));
     // Every button comes after the strip: `BarBackground` finds the tabs in the row's first
-    // child (`strip_bounds`).
+    // child (`strip_and_tabs`).
     bar = bar.push(container(tunnels).center_y(height));
     if let Some(files) = files {
         bar = bar.push(container(files).center_y(height));
@@ -1523,24 +1523,31 @@ fn marker_x(rects: &[Rectangle], gap: usize, strip: Rectangle) -> f32 {
     x.min(strip.x + strip.width - 2.0).max(strip.x)
 }
 
-/// The strip's bounds (the row's first child, when the bar lists tabs).
-fn strip_bounds(layout: Layout<'_>) -> Rectangle {
-    layout
+/// The strip's bounds and its `n` tab buttons' bounds as laid out, scrolled out or not, in one
+/// walk of the layout: the strip is the bar's row's first child, the tabs its row's children
+/// (container -> row -> strip -> row).
+fn strip_and_tabs(layout: Layout<'_>, n: usize) -> (Rectangle, Vec<Rectangle>) {
+    let Some(strip) = layout
         .children()
         .next()
         .and_then(|row| row.children().next())
-        .map(|strip| strip.bounds())
-        .unwrap_or_default()
+    else {
+        return (Rectangle::default(), Vec::new());
+    };
+    let tabs = match strip.children().next() {
+        Some(row) if n > 0 => row.children().take(n).map(|tab| tab.bounds()).collect(),
+        _ => Vec::new(),
+    };
+    (strip.bounds(), tabs)
 }
 
-/// The tabs the strip shows, whole or cut at its edge: the index of the first one and their
-/// bounds clipped to the strip, in order (the shown tabs are always a run). Tabs scrolled out
-/// have no place on screen and are left out.
-fn shown_tabs(layout: Layout<'_>, n: usize) -> (usize, Vec<Rectangle>) {
-    let view = strip_bounds(layout);
+/// The tabs the strip `view` shows of `full` (see [`strip_and_tabs`]), whole or cut at its
+/// edge: the index of the first one and their bounds clipped to the strip, in order (the shown
+/// tabs are always a run). Tabs scrolled out have no place on screen and are left out.
+fn shown_tabs(view: Rectangle, full: &[Rectangle]) -> (usize, Vec<Rectangle>) {
     let mut first = None;
     let mut shown = Vec::new();
-    for (i, tab) in tab_rects_full(layout, n).iter().enumerate() {
+    for (i, tab) in full.iter().enumerate() {
         if let Some(r) = tab.intersection(&view).filter(|r| r.width > 0.0) {
             first.get_or_insert(i);
             shown.push(r);
@@ -1551,29 +1558,12 @@ fn shown_tabs(layout: Layout<'_>, n: usize) -> (usize, Vec<Rectangle>) {
 
 /// Whether tabs are scrolled out of the strip on its left and on its right: a scroll toward a
 /// side with nothing hidden would change nothing, so it is never sent.
-fn hidden_sides(layout: Layout<'_>, n: usize) -> (bool, bool) {
-    let strip = strip_bounds(layout);
-    let full = tab_rects_full(layout, n);
+fn hidden_sides(strip: Rectangle, full: &[Rectangle]) -> (bool, bool) {
     (
         full.first().is_some_and(|r| r.x < strip.x - 0.5),
         full.last()
             .is_some_and(|r| r.x + r.width > strip.x + strip.width + 0.5),
     )
-}
-
-/// The tab buttons' bounds as laid out, scrolled out or not: the strip's children, the strip
-/// being the bar's row's first child (container -> row -> strip -> row).
-fn tab_rects_full(layout: Layout<'_>, n: usize) -> Vec<Rectangle> {
-    if n == 0 {
-        return Vec::new();
-    }
-    layout
-        .children()
-        .next()
-        .and_then(|row| row.children().next())
-        .and_then(|strip| strip.children().next())
-        .map(|row| row.children().take(n).map(|tab| tab.bounds()).collect())
-        .unwrap_or_default()
 }
 
 impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
@@ -1634,17 +1624,18 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         // The wheel over the strip scrolls it sideways, a vertical wheel too: the bar has no
         // other axis. Scrolling down or right moves toward later tabs. Nothing is sent toward
         // a side with no hidden tabs.
+        let (view, full) = strip_and_tabs(layout, self.ids.len());
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
             && !self.modal
             && !self.ids.is_empty()
-            && cursor.is_over(strip_bounds(layout))
+            && cursor.is_over(view)
         {
             let (x, y) = match *delta {
                 mouse::ScrollDelta::Lines { x, y } => (x * WHEEL_LINE_PX, y * WHEEL_LINE_PX),
                 mouse::ScrollDelta::Pixels { x, y } => (x, y),
             };
             let along = if x.abs() > y.abs() { -x } else { -y };
-            let (hidden_left, hidden_right) = hidden_sides(layout, self.ids.len());
+            let (hidden_left, hidden_right) = hidden_sides(view, &full);
             if (along < 0.0 && hidden_left) || (along > 0.0 && hidden_right) {
                 shell.publish(Message::TabBar(self.window, TabBarMsg::StripScroll(along)));
             }
@@ -1653,7 +1644,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         let state = tree.state.downcast_mut::<DragState>();
         // The bar lists every tab: rows and window indices are the same.
         let indices: Vec<usize> = (0..self.ids.len()).collect();
-        let (first, rects) = shown_tabs(layout, self.ids.len());
+        let (first, rects) = shown_tabs(view, &full);
         let strip = Strip {
             window: self.window,
             ids: &self.ids,
@@ -1686,17 +1677,15 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
             && (state.press.as_ref().is_some_and(|p| p.dragging)
                 || matches!(self.carry, Some(Carry::Tile(_) | Carry::Tab(_))))
         {
-            let strip = strip_bounds(layout);
             let bar = layout.bounds();
-            let (hidden_left, hidden_right) = hidden_sides(layout, self.ids.len());
+            let (hidden_left, hidden_right) = hidden_sides(view, &full);
             let over = position.y >= bar.y && position.y <= bar.y + bar.height;
-            if over && hidden_left && position.x <= strip.x + EDGE_SCROLL_BAND {
+            if over && hidden_left && position.x <= view.x + EDGE_SCROLL_BAND {
                 shell.publish(Message::TabBar(
                     self.window,
                     TabBarMsg::StripScroll(-moved_by),
                 ));
-            } else if over && hidden_right && position.x >= strip.x + strip.width - EDGE_SCROLL_BAND
-            {
+            } else if over && hidden_right && position.x >= view.x + view.width - EDGE_SCROLL_BAND {
                 shell.publish(Message::TabBar(
                     self.window,
                     TabBarMsg::StripScroll(moved_by),
@@ -1751,16 +1740,17 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
     ) {
         use iced::advanced::Renderer as _;
         let bounds = layout.bounds();
-        let (first, buttons) = shown_tabs(layout, self.tabs.len());
+        let (view, full) = strip_and_tabs(layout, self.tabs.len());
+        let (first, buttons) = shown_tabs(view, &full);
         let tab_bounds: Vec<Rectangle> = buttons
             .iter()
             .map(|tab| snap_rect(*tab, self.scale))
             .collect();
         // The hole (and the flares beside it) only around a tab the strip shows whole.
-        let strip = snap_rect(strip_bounds(layout), self.scale);
+        let strip = snap_rect(view, self.scale);
         let hole = self
             .hole
-            .and_then(|i| tab_rects_full(layout, self.tabs.len()).get(i).copied())
+            .and_then(|i| full.get(i).copied())
             .map(|tab| snap_rect(tab, self.scale))
             .and_then(|tab| visible_hole(tab, strip));
         let radius = tab_radius(self.scale);
@@ -1903,7 +1893,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         // A carried tile or tab: a violet bar in the gap where it would land.
         let state = tree.state.downcast_ref::<DragState>();
         if let (Some(Carry::Tile(_) | Carry::Tab(_)), Some(gap)) = (self.carry, state.gap) {
-            let x = marker_x(&buttons, gap.saturating_sub(first), strip_bounds(layout));
+            let x = marker_x(&buttons, gap.saturating_sub(first), view);
             let height = buttons.first().map_or(bounds.height, |r| r.height);
             let marker = snap_rect(
                 Rectangle {
@@ -2645,9 +2635,8 @@ mod tests {
         /// Every tab's bounds clipped to the strip, zero wide at the strip's edge on their
         /// side when scrolled out: the tests address tabs by index.
         fn tab_rects(layout: Layout<'_>, n: usize) -> Vec<Rectangle> {
-            let view = strip_bounds(layout);
-            tab_rects_full(layout, n)
-                .into_iter()
+            let (view, full) = strip_and_tabs(layout, n);
+            full.into_iter()
                 .map(|b| {
                     b.intersection(&view).unwrap_or(Rectangle {
                         x: if b.x < view.x {
@@ -2818,7 +2807,7 @@ mod tests {
             };
             let parts = Parts {
                 tabs: tab_rects(background, tabs.len()),
-                strip: strip_bounds(background),
+                strip: strip_and_tabs(background, 0).0,
                 rest: background
                     .children()
                     .next()
