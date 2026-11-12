@@ -119,16 +119,17 @@ pub(crate) fn item_tops(items: &[Item]) -> Vec<f32> {
     tops
 }
 
-/// The scroll offset that shows the item at `top`, `height` tall, when it is not fully in
-/// view (`offset` and `viewport` are the list's current offset and visible height): the item
-/// with the list's padding beside it on the side it was hidden, never above the top. `None`
-/// when it shows.
-pub(crate) fn reveal(top: f32, height: f32, offset: f32, viewport: f32) -> Option<f32> {
+/// The scroll offset that shows the span at `top`, `height` long, when it is not fully in
+/// view (`offset` and `viewport` are the list's or strip's current offset and visible
+/// length): the span with `pad` beside it on the side it was hidden, never before the start;
+/// a span longer than the view shows its start. `None` when it shows. The sidebar's rows
+/// (`LIST_PADDING`) and the tab strip's tabs (no padding) both reveal through this.
+pub(crate) fn reveal(top: f32, height: f32, offset: f32, viewport: f32, pad: f32) -> Option<f32> {
     let bottom = top + height;
-    if top < offset {
-        Some((top - LIST_PADDING).max(0.0))
+    if top < offset || height > viewport {
+        Some((top - pad).max(0.0))
     } else if bottom > offset + viewport {
-        Some((bottom + LIST_PADDING - viewport).max(0.0))
+        Some((bottom + pad - viewport).max(0.0))
     } else {
         None
     }
@@ -897,7 +898,7 @@ impl App {
                 continue;
             };
             let top = item_tops(&items)[n];
-            if let Some(y) = reveal(top, ROW_HEIGHT, offset, height) {
+            if let Some(y) = reveal(top, ROW_HEIGHT, offset, height, LIST_PADDING) {
                 self.sidebar_scroll.insert(wid, (y, height));
                 tasks.push(iced::widget::operation::scroll_to(
                     scroll_id(wid),
@@ -1092,15 +1093,18 @@ mod tests {
         let tops = item_tops(&items(&flat, 0, false));
         assert_eq!(tops[0], LIST_PADDING);
         assert_eq!(tops[3], LIST_PADDING + 3.0 * (ROW_HEIGHT + 2.0));
-        assert_eq!(reveal(tops[0], ROW_HEIGHT, 0.0, 300.0), None);
-        assert_eq!(reveal(tops[2], ROW_HEIGHT, 0.0, 300.0), None);
+        assert_eq!(reveal(tops[0], ROW_HEIGHT, 0.0, 300.0, LIST_PADDING), None);
+        assert_eq!(reveal(tops[2], ROW_HEIGHT, 0.0, 300.0, LIST_PADDING), None);
         assert_eq!(
-            reveal(tops[10], ROW_HEIGHT, 0.0, 300.0),
+            reveal(tops[10], ROW_HEIGHT, 0.0, 300.0, LIST_PADDING),
             Some(tops[10] + ROW_HEIGHT + LIST_PADDING - 300.0)
         );
-        assert_eq!(reveal(tops[0], ROW_HEIGHT, 100.0, 300.0), Some(0.0));
         assert_eq!(
-            reveal(tops[5], ROW_HEIGHT, 400.0, 300.0),
+            reveal(tops[0], ROW_HEIGHT, 100.0, 300.0, LIST_PADDING),
+            Some(0.0)
+        );
+        assert_eq!(
+            reveal(tops[5], ROW_HEIGHT, 400.0, 300.0, LIST_PADDING),
             Some(tops[5] - LIST_PADDING)
         );
     }
@@ -1222,10 +1226,10 @@ mod tests {
     #[test]
     fn reveal_uses_the_items_top() {
         assert_eq!(
-            reveal(100.0, 32.0, 0.0, 50.0),
+            reveal(100.0, 32.0, 0.0, 50.0, LIST_PADDING),
             Some(100.0 + 32.0 + 6.0 - 50.0)
         );
-        assert_eq!(reveal(100.0, 32.0, 90.0, 300.0), None);
+        assert_eq!(reveal(100.0, 32.0, 90.0, 300.0, LIST_PADDING), None);
     }
 
     #[test]

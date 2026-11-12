@@ -11,6 +11,7 @@ use iced::{Element, Event, Length, Point, Rectangle, Size, Vector, mouse, window
 
 use crate::app::{App, Message};
 use crate::chrome::{self, Chrome};
+use crate::tab_sidebar::reveal;
 use crate::tabs::TabId;
 use crate::window::{BAR_SPACING, BUTTON_WIDTH, trailing_width};
 
@@ -111,19 +112,6 @@ pub(crate) fn clamp_offset(offset: f32, layout: &StripLayout) -> f32 {
         offset.clamp(0.0, (layout.content_w - layout.strip_w).max(0.0))
     } else {
         0.0
-    }
-}
-
-/// The offset that shows the span `[start, start + len)` of a strip `viewport` wide scrolled by
-/// `offset`, just enough, when it is not fully in view; `None` when it shows. A span longer
-/// than the viewport shows its start.
-pub(crate) fn reveal_span(start: f32, len: f32, offset: f32, viewport: f32) -> Option<f32> {
-    if start < offset || len > viewport {
-        Some(start.max(0.0))
-    } else if start + len > offset + viewport {
-        Some((start + len - viewport).max(0.0))
-    } else {
-        None
     }
 }
 
@@ -431,7 +419,7 @@ impl App {
             let start = seen.index as f32 * (layout.tab_w + TAB_SPACING);
             let offset = clamp_offset(self.stored_offset(wid), &layout);
             let next = if layout.overflow {
-                reveal_span(start, layout.tab_w, offset, layout.strip_w).unwrap_or(offset)
+                reveal(start, layout.tab_w, offset, layout.strip_w, 0.0).unwrap_or(offset)
             } else {
                 0.0
             };
@@ -579,7 +567,8 @@ mod tests {
     }
 
     #[test]
-    fn reveal_span_cases() {
+    fn reveal_without_padding_cases() {
+        let reveal_span = |start, len, offset, viewport| reveal(start, len, offset, viewport, 0.0);
         // View [100, 400).
         assert_eq!(
             reveal_span(20.0, 80.0, 100.0, 300.0),
