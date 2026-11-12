@@ -303,6 +303,13 @@ pub(crate) fn drag_event(
                 );
             }
         }
+        // Every frame is laid out afresh before it is drawn: a strip that scrolled under a
+        // still pointer (edge-scroll, wheel, reveal) moves its tabs, so the gap is measured
+        // again from these rects, as the release will, and the marker shows where the drop
+        // lands. The frame is being drawn already: no redraw to ask for.
+        Event::Window(window::Event::RedrawRequested(_)) => {
+            state.gap = gap(cursor.position_over(bounds));
+        }
         Event::Mouse(mouse::Event::CursorLeft) | Event::Window(window::Event::Unfocused) => {
             if let Some(Press { dragging: true, .. }) = state.press.take() {
                 publish(shell, DragMsg::End);
@@ -689,6 +696,45 @@ mod tests {
             "{drags:?}"
         );
         assert_eq!(drags.last(), Some(&DragMsg::End));
+    }
+
+    #[test]
+    fn a_strip_scrolled_under_a_still_pointer_moves_the_gap_on_the_next_frame() {
+        use iced::advanced::Shell;
+        let ids = [TabId::next(), TabId::next(), TabId::next()];
+        let strip = Strip {
+            window: window::Id::unique(),
+            ids: &ids,
+            indices: &[0, 1, 2],
+            range: None,
+            clamp: false,
+            carry: Some(Carry::Tile(crate::layout::PaneId::next())),
+            modal: false,
+            hole: None,
+            axis: Axis::X,
+            scroll: 0.0,
+            renaming: None,
+        };
+        let tabs = |shift: f32| {
+            [0.0, 100.0, 200.0]
+                .map(|x| Rectangle::new(Point::new(x - shift, 0.0), Size::new(96.0, 30.0)))
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(300.0, 30.0));
+        let at = mouse::Cursor::Available(Point::new(120.0, 10.0));
+        let mut state = DragState::default();
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        let before = tabs(0.0);
+        let event = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(120.0, 10.0),
+        });
+        drag_event(&strip, &mut state, &event, &before, bounds, at, &mut shell);
+        assert_eq!(state.gap, Some(1), "the first half of the second tab");
+        // The strip scrolls 60 px: the pointer is now over the second half of that tab.
+        let after = tabs(60.0);
+        let frame = Event::Window(window::Event::RedrawRequested(std::time::Instant::now()));
+        drag_event(&strip, &mut state, &frame, &after, bounds, at, &mut shell);
+        assert_eq!(state.gap, Some(2));
     }
 
     #[test]
