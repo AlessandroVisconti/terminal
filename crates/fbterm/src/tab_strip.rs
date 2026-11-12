@@ -387,6 +387,15 @@ impl App {
         self.strip_offset.insert(wid, next);
     }
 
+    /// Show window `wid`'s active tab again after this update, as if it had just become
+    /// active: scrolled into view in the bar or the sidebar, its group unfolded. For a key or
+    /// palette action on the active tab (rename, copy password), which must not act on a tab
+    /// scrolled out of sight by hand.
+    pub(crate) fn reveal_active_tab(&mut self, wid: window::Id) {
+        self.strip_seen.remove(&wid);
+        self.sidebar_shown.remove(&wid);
+    }
+
     /// A chevron: one tab toward `dir` (`-1` earlier tabs, `1` later).
     pub(crate) fn strip_stepped(&mut self, wid: window::Id, dir: i8) {
         let step = self.strip_layout_of(wid).tab_w + TAB_SPACING;
@@ -651,6 +660,22 @@ mod app_tests {
             let _ = app.close_tab(wid, 0);
         }
         assert_eq!(app.offset_of(wid), 0.0, "five tabs fit: nothing to scroll");
+    }
+
+    #[test]
+    fn a_rename_or_copy_password_by_key_scrolls_the_active_tab_back_into_view() {
+        use crate::app::TabBarMsg;
+        use crate::keys::Action;
+        for action in [Action::RenameTab, Action::CopyPassword] {
+            let (mut app, wid) = app_with_tabs(40, 800.0);
+            app.windows.get_mut(&wid).unwrap().active = 39;
+            let _ = app.update(Message::TabBar(wid, TabBarMsg::StripScroll(0.0)));
+            assert_eq!(app.offset_of(wid), max(&app, wid), "the last tab is shown");
+            let _ = app.update(Message::TabBar(wid, TabBarMsg::StripScroll(-1e6)));
+            assert_eq!(app.offset_of(wid), 0.0, "{action:?}: scrolled away by hand");
+            let _ = app.update(Message::Shortcut(wid, action));
+            assert_eq!(app.offset_of(wid), max(&app, wid), "{action:?}");
+        }
     }
 
     #[test]
