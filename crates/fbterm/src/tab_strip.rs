@@ -61,15 +61,20 @@ pub(crate) fn strip_layout(
         0.0
     };
     let room = width - chrome.leading_inset(fullscreen) - controls - trailing - DRAG_ROOM;
-    let tab_w = (room / count.max(1) as f32 - TAB_SPACING).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH);
-    let content_w = content_width(tab_w, count);
+    let mut tab_w = (room / count.max(1) as f32 - TAB_SPACING).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH);
     // Half a pixel of slack: widths come out of float arithmetic.
     let overflow = count as f32 * (TAB_MIN_WIDTH + TAB_SPACING) > room + 0.5;
     let strip_w = if overflow {
         (room - CHEVRONS_WIDTH - TAB_SPACING).max(0.0)
     } else {
-        content_w
+        content_width(tab_w, count)
     };
+    // A strip narrower than a tab could never show the active tab whole, so it would never get
+    // its hole: the tabs shrink to the strip instead.
+    if overflow && strip_w > 0.0 {
+        tab_w = tab_w.min(strip_w);
+    }
+    let content_w = content_width(tab_w, count);
     StripLayout {
         tab_w,
         strip_w,
@@ -103,6 +108,41 @@ pub(crate) fn reveal_span(start: f32, len: f32, offset: f32, viewport: f32) -> O
     } else {
         None
     }
+}
+
+/// `offset`, reached by scrolling `delta`, moved on so the tab `[start, start + len)` is whole
+/// in view or out of it: a tab cut at the strip's edge gets no hole, so the bar's translucent
+/// background would lie under its own fill. Cut on the side the strip is moving toward, it is
+/// passed over when the strip's end allows; otherwise it is shown whole.
+pub(crate) fn keep_whole(
+    offset: f32,
+    delta: f32,
+    start: f32,
+    len: f32,
+    layout: &StripLayout,
+) -> f32 {
+    let viewport = layout.strip_w;
+    let end = start + len;
+    let shown = |o: f32| start >= o - 0.01 && end <= o + viewport + 0.01;
+    let hidden = |o: f32| end <= o + 0.01 || start >= o + viewport - 0.01;
+    if !layout.overflow || len > viewport || shown(offset) || hidden(offset) {
+        return offset;
+    }
+    let cut_left = start < offset;
+    if (delta > 0.0) == cut_left {
+        let past = clamp_offset(
+            if cut_left {
+                end + TAB_SPACING
+            } else {
+                start - TAB_SPACING - viewport
+            },
+            layout,
+        );
+        if hidden(past) {
+            return past;
+        }
+    }
+    clamp_offset(if cut_left { start } else { end - viewport }, layout)
 }
 
 /// The strip itself: `content` (the tabs' row) laid out `offset` px to the left of the strip's
@@ -315,13 +355,18 @@ impl App {
         clamp_offset(self.stored_offset(wid), &self.strip_layout_of(wid))
     }
 
-    /// Scroll the strip by `delta` logical pixels, within its ends.
+    /// Scroll the strip by `delta` logical pixels, within its ends, never leaving the active tab
+    /// cut at an edge (`keep_whole`).
     pub(crate) fn strip_scrolled_by(&mut self, wid: window::Id, delta: f32) {
         let layout = self.strip_layout_of(wid);
-        let next = clamp_offset(
+        let mut next = clamp_offset(
             clamp_offset(self.stored_offset(wid), &layout) + delta,
             &layout,
         );
+        if let Some(w) = self.windows.get(&wid) {
+            let start = w.active as f32 * (layout.tab_w + TAB_SPACING);
+            next = keep_whole(next, delta, start, layout.tab_w, &layout);
+        }
         self.strip_offset.insert(wid, next);
     }
 
@@ -414,12 +459,12 @@ mod tests {
             "narrower window, narrower tabs"
         );
 
-        let l = layout(Chrome::Unified, Some(400.0), 30);
+        let l = layout(Chrome::Unified, Some(600.0), 30);
         assert_eq!(l.tab_w, 80.0);
         assert!(l.overflow);
         assert_eq!(
             l.strip_w,
-            400.0
+            600.0
                 - Chrome::Unified.leading_inset(false)
                 - trailing_width(3, true)
                 - DRAG_ROOM
@@ -703,6 +748,47 @@ mod app_tests {
         assert!(l.overflow);
         let used = Chrome::Unified.leading_inset(false) + l.strip_w + TAB_SPACING + CHEVRONS_WIDTH;
         assert!(800.0 - used >= DRAG_ROOM, "{l:?}");
+    }
+
+    #[test]
+    fn a_scroll_by_hand_never_leaves_the_active_tab_cut() {
+        for active in [0, 1, 7, 20, 38, 39] {
+            let (mut app, wid) = app_with_tabs(40, 800.0);
+            let _ = app.update(Message::SelectTab(active));
+            let l = app.strip_layout_of(wid);
+            let start = active as f32 * (l.tab_w + TAB_SPACING);
+            let end = start + l.tab_w;
+            for delta in [13.0, 40.0, -13.0, -40.0] {
+                for _ in 0..200 {
+                    app.strip_scrolled_by(wid, delta);
+                    let o = app.offset_of(wid);
+                    let shown = start >= o - 0.01 && end <= o + l.strip_w + 0.01;
+                    let hidden = end <= o + 0.01 || start >= o + l.strip_w - 0.01;
+                    assert!(shown || hidden, "tab {active}, delta {delta}, offset {o}");
+                }
+            }
+            // The strip still reaches both ends.
+            app.strip_scrolled_by(wid, 1e6);
+            let far = app.offset_of(wid);
+            app.strip_scrolled_by(wid, -1e6);
+            assert!(far > 0.0 && app.offset_of(wid) < far, "tab {active}");
+        }
+    }
+
+    #[test]
+    fn a_strip_narrower_than_a_tab_shrinks_its_tabs() {
+        let l = strip_layout(
+            Chrome::Unified,
+            false,
+            Some(400.0),
+            30,
+            trailing_width(3, true),
+        );
+        assert!(
+            l.overflow && l.strip_w > 0.0 && l.strip_w < TAB_MIN_WIDTH,
+            "{l:?}"
+        );
+        assert_eq!(l.tab_w, l.strip_w);
     }
 
     #[test]

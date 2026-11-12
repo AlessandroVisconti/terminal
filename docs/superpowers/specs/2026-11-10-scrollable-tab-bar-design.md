@@ -1,6 +1,6 @@
 # A scrollable tab bar with buttons that stay in view
 
-Status: implemented on `feature/UI-tabs-improvements`; the strip is a custom clipped widget with the offset kept in `App` instead of an iced scrollable, and an active tab partly out of the strip draws no hole (see the plan). Owner's request, 2026-11-10: with many tabs or a narrow window the
+Status: implemented on `feature/UI-tabs-improvements`; the strip is a custom clipped widget with the offset kept in `App` instead of an iced scrollable, and the active tab is never left partly out of the strip: a scroll by hand passes over it or shows it whole, and an overflowing strip narrower than a tab shrinks its tabs to fit (see the plan). Owner's request, 2026-11-10: with many tabs or a narrow window the
 bar's trailing buttons (new tab, Profiles, Tunnels, Files, Settings) run off the right edge,
 under the drawn window controls or out of the window. They must always be visible; the tabs
 scroll instead. Everything marked "builder's call" is open to change by the builder; the rest
