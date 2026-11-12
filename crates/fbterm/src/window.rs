@@ -1554,6 +1554,18 @@ fn tab_rects(layout: Layout<'_>, n: usize) -> Vec<Rectangle> {
         .collect()
 }
 
+/// Whether tabs are scrolled out of the strip on its left and on its right: a scroll toward a
+/// side with nothing hidden would change nothing, so it is never sent.
+fn hidden_sides(layout: Layout<'_>, n: usize) -> (bool, bool) {
+    let strip = strip_bounds(layout);
+    let full = tab_rects_full(layout, n);
+    (
+        full.first().is_some_and(|r| r.x < strip.x - 0.5),
+        full.last()
+            .is_some_and(|r| r.x + r.width > strip.x + strip.width + 0.5),
+    )
+}
+
 /// The tab buttons' bounds as laid out, scrolled out or not (see [`tab_rects`]).
 fn tab_rects_full(layout: Layout<'_>, n: usize) -> Vec<Rectangle> {
     if n == 0 {
@@ -1624,7 +1636,8 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         viewport: &Rectangle,
     ) {
         // The wheel over the strip scrolls it sideways, a vertical wheel too: the bar has no
-        // other axis. Scrolling down or right moves toward later tabs.
+        // other axis. Scrolling down or right moves toward later tabs. Nothing is sent toward
+        // a side with no hidden tabs.
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
             && !self.modal
             && !self.ids.is_empty()
@@ -1635,7 +1648,8 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
                 mouse::ScrollDelta::Pixels { x, y } => (x, y),
             };
             let along = if x.abs() > y.abs() { -x } else { -y };
-            if along != 0.0 {
+            let (hidden_left, hidden_right) = hidden_sides(layout, self.ids.len());
+            if (along < 0.0 && hidden_left) || (along > 0.0 && hidden_right) {
                 shell.publish(Message::TabBar(self.window, TabBarMsg::StripScroll(along)));
             }
             return;
@@ -1677,11 +1691,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         {
             let strip = strip_bounds(layout);
             let bar = layout.bounds();
-            let full = tab_rects_full(layout, self.ids.len());
-            let hidden_left = full.first().is_some_and(|r| r.x < strip.x - 0.5);
-            let hidden_right = full
-                .last()
-                .is_some_and(|r| r.x + r.width > strip.x + strip.width + 0.5);
+            let (hidden_left, hidden_right) = hidden_sides(layout, self.ids.len());
             let over = position.y >= bar.y && position.y <= bar.y + bar.height;
             if over && hidden_left && position.x <= strip.x + EDGE_SCROLL_BAND {
                 shell.publish(Message::TabBar(
@@ -3018,7 +3028,7 @@ mod tests {
         #[test]
         fn a_wheel_over_the_strip_scrolls_it_sideways() {
             let tabs = many_tabs(40);
-            let messages = drive_full(Chrome::Unified, &tabs, None, Some(800.0), 0.0, |p| {
+            let messages = drive_full(Chrome::Unified, &tabs, None, Some(800.0), 300.0, |p| {
                 let at = p.strip.center();
                 vec![
                     (wheel(mouse::ScrollDelta::Lines { x: 0.0, y: -1.0 }), at),
@@ -3030,6 +3040,36 @@ mod tests {
                 strip_scrolls(&messages),
                 [WHEEL_LINE_PX, -WHEEL_LINE_PX, 30.0]
             );
+        }
+
+        #[test]
+        fn a_wheel_toward_a_side_with_nothing_hidden_sends_nothing() {
+            let toward_start = |p: &Parts| {
+                let at = p.strip.center();
+                vec![(wheel(mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 }), at)]
+            };
+            let toward_end = |p: &Parts| {
+                let at = p.strip.center();
+                vec![(wheel(mouse::ScrollDelta::Lines { x: 0.0, y: -1.0 }), at)]
+            };
+            let tabs = many_tabs(40);
+            let l = strip_layout(
+                Chrome::Unified,
+                false,
+                Some(800.0),
+                40,
+                trailing_width(3, true),
+            );
+            let end = l.content_w - l.strip_w;
+            let at_start = drive_full(Chrome::Unified, &tabs, None, Some(800.0), 0.0, toward_start);
+            assert!(strip_scrolls(&at_start).is_empty(), "{at_start:?}");
+            let at_end = drive_full(Chrome::Unified, &tabs, None, Some(800.0), end, toward_end);
+            assert!(strip_scrolls(&at_end).is_empty(), "{at_end:?}");
+            let few = many_tabs(3);
+            let fit = drive_full(Chrome::Unified, &few, None, Some(800.0), 0.0, toward_start);
+            assert!(strip_scrolls(&fit).is_empty(), "{fit:?}");
+            let fit = drive_full(Chrome::Unified, &few, None, Some(800.0), 0.0, toward_end);
+            assert!(strip_scrolls(&fit).is_empty(), "{fit:?}");
         }
 
         #[test]
