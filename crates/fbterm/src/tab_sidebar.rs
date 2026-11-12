@@ -626,6 +626,7 @@ impl Rows<'_> {
             axis: Axis::Y,
             scroll: viewport.y - layout.bounds().y,
             renaming: self.renaming,
+            first: 0,
         }
     }
 }

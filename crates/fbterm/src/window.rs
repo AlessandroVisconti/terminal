@@ -1533,25 +1533,20 @@ fn strip_bounds(layout: Layout<'_>) -> Rectangle {
         .unwrap_or_default()
 }
 
-/// The tab buttons' bounds, clipped to the strip (zero wide at the strip's edge on their side
-/// when scrolled out, which `gap_at` skips): the strip's children, the strip being the bar's
-/// row's first child (container -> row -> strip -> row).
-fn tab_rects(layout: Layout<'_>, n: usize) -> Vec<Rectangle> {
+/// The tabs the strip shows, whole or cut at its edge: the index of the first one and their
+/// bounds clipped to the strip, in order (the shown tabs are always a run). Tabs scrolled out
+/// have no place on screen and are left out.
+fn shown_tabs(layout: Layout<'_>, n: usize) -> (usize, Vec<Rectangle>) {
     let view = strip_bounds(layout);
-    tab_rects_full(layout, n)
-        .into_iter()
-        .map(|b| {
-            b.intersection(&view).unwrap_or(Rectangle {
-                x: if b.x < view.x {
-                    view.x
-                } else {
-                    view.x + view.width
-                },
-                width: 0.0,
-                ..b
-            })
-        })
-        .collect()
+    let mut first = None;
+    let mut shown = Vec::new();
+    for (i, tab) in tab_rects_full(layout, n).iter().enumerate() {
+        if let Some(r) = tab.intersection(&view).filter(|r| r.width > 0.0) {
+            first.get_or_insert(i);
+            shown.push(r);
+        }
+    }
+    (first.unwrap_or(0), shown)
 }
 
 /// Whether tabs are scrolled out of the strip on its left and on its right: a scroll toward a
@@ -1566,7 +1561,8 @@ fn hidden_sides(layout: Layout<'_>, n: usize) -> (bool, bool) {
     )
 }
 
-/// The tab buttons' bounds as laid out, scrolled out or not (see [`tab_rects`]).
+/// The tab buttons' bounds as laid out, scrolled out or not: the strip's children, the strip
+/// being the bar's row's first child (container -> row -> strip -> row).
 fn tab_rects_full(layout: Layout<'_>, n: usize) -> Vec<Rectangle> {
     if n == 0 {
         return Vec::new();
@@ -1657,6 +1653,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         let state = tree.state.downcast_mut::<DragState>();
         // The bar lists every tab: rows and window indices are the same.
         let indices: Vec<usize> = (0..self.ids.len()).collect();
+        let (first, rects) = shown_tabs(layout, self.ids.len());
         let strip = Strip {
             window: self.window,
             ids: &self.ids,
@@ -1669,8 +1666,8 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
             axis: Axis::X,
             scroll: 0.0,
             renaming: self.renaming,
+            first,
         };
-        let rects = tab_rects(layout, self.ids.len());
         // A tab or tile dragged near either end of the strip, or past it anywhere over the bar
         // (a fast pointer overshoots the band), scrolls it while tabs are hidden on that side,
         // so it can be dropped further along: by the distance the pointer moved (at most
@@ -1754,7 +1751,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
     ) {
         use iced::advanced::Renderer as _;
         let bounds = layout.bounds();
-        let buttons = tab_rects(layout, self.tabs.len());
+        let (first, buttons) = shown_tabs(layout, self.tabs.len());
         let tab_bounds: Vec<Rectangle> = buttons
             .iter()
             .map(|tab| snap_rect(*tab, self.scale))
@@ -1821,8 +1818,9 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         }
         // Inactive tabs: hover and tint, never over a flare's tab-colored part (a neighbour
         // of the active tab only reaches into the flare's disc).
-        for (i, (&tab, &(accent, style))) in tab_bounds.iter().zip(&self.tabs).enumerate() {
-            if Some(i) == self.hole {
+        let shown = self.tabs.iter().skip(first);
+        for (i, (&tab, &(accent, style))) in tab_bounds.iter().zip(shown).enumerate() {
+            if Some(first + i) == self.hole {
                 continue;
             }
             let hovered = cursor.is_over(tab);
@@ -1905,7 +1903,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         // A carried tile or tab: a violet bar in the gap where it would land.
         let state = tree.state.downcast_ref::<DragState>();
         if let (Some(Carry::Tile(_) | Carry::Tab(_)), Some(gap)) = (self.carry, state.gap) {
-            let x = marker_x(&buttons, gap, strip_bounds(layout));
+            let x = marker_x(&buttons, gap.saturating_sub(first), strip_bounds(layout));
             let height = buttons.first().map_or(bounds.height, |r| r.height);
             let marker = snap_rect(
                 Rectangle {
@@ -2643,6 +2641,26 @@ mod tests {
         use crate::windows::{Carry, DragMsg};
 
         const SIZE: Size = Size::new(1000.0, 40.0);
+
+        /// Every tab's bounds clipped to the strip, zero wide at the strip's edge on their
+        /// side when scrolled out: the tests address tabs by index.
+        fn tab_rects(layout: Layout<'_>, n: usize) -> Vec<Rectangle> {
+            let view = strip_bounds(layout);
+            tab_rects_full(layout, n)
+                .into_iter()
+                .map(|b| {
+                    b.intersection(&view).unwrap_or(Rectangle {
+                        x: if b.x < view.x {
+                            view.x
+                        } else {
+                            view.x + view.width
+                        },
+                        width: 0.0,
+                        ..b
+                    })
+                })
+                .collect()
+        }
 
         fn press() -> Event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
