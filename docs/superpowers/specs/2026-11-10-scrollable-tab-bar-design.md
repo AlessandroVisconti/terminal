@@ -1,6 +1,6 @@
 # A scrollable tab bar with buttons that stay in view
 
-Status: implemented on `feature/UI-tabs-improvements`; the strip is a custom clipped widget with the offset kept in `App` instead of an iced scrollable, and the active tab is never left partly out of the strip: a scroll by hand passes over it or shows it whole, and an overflowing strip narrower than a tab shrinks its tabs to fit (see the plan). Owner's request, 2026-11-10: with many tabs or a narrow window the
+Status: implemented on `feature/UI-tabs-improvements`; the strip is a custom clipped widget with the offset kept in `App` instead of an iced scrollable, and the active tab is never left partly out of the strip: a scroll by hand passes over it or shows it whole, and the chevrons show only with room for them and a whole minimum tab; narrower, the strip takes all the room and the tabs shrink down to 50 px (no close button below 80 px), and the drag room is 10 px, never wider than the strip (see the plan). Owner's request, 2026-11-10: with many tabs or a narrow window the
 bar's trailing buttons (new tab, Profiles, Tunnels, Files, Settings) run off the right edge,
 under the drawn window controls or out of the window. They must always be visible; the tabs
 scroll instead. Everything marked "builder's call" is open to change by the builder; the rest
@@ -27,7 +27,7 @@ real failure.
 - **The strip.** The tabs live in a strip between the left inset and the group (or the
   chevrons, below). When their natural width fits, the strip is exactly that wide and nothing
   scrolls. When it does not, the strip takes all the room left of the chevrons and the group,
-  less 40 px of empty bar (`DRAG_ROOM`, reserved in every layout) to drag the window by, and
+  less 10 px of empty bar (`DRAG_ROOM`, reserved in every layout) to drag the window by, and
   scrolls sideways.
 - **Scrolling.** The mouse wheel or trackpad over the strip scrolls it sideways (a vertical
   wheel too, since the bar has no vertical axis), and so do two chevron buttons.

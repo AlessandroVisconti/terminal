@@ -17,12 +17,15 @@ use crate::window::{BAR_SPACING, BUTTON_WIDTH, trailing_width};
 /// A tab's widest and narrowest width; tabs share the bar's room between them.
 pub(crate) const TAB_MAX_WIDTH: f32 = 196.0;
 pub(crate) const TAB_MIN_WIDTH: f32 = 80.0;
+/// The narrowest a tab gets in a bar too narrow for the chevrons: its dot and a few letters of
+/// its name, no close button.
+pub(crate) const TAB_TIGHT_WIDTH: f32 = 50.0;
 /// The gap between two tabs.
 pub(crate) const TAB_SPACING: f32 = 2.0;
 /// The two chevron buttons and their spacing.
 pub(crate) const CHEVRONS_WIDTH: f32 = 2.0 * (BUTTON_WIDTH + BAR_SPACING);
 /// Empty bar kept free of tabs however many there are, so the window can always be dragged by it.
-pub(crate) const DRAG_ROOM: f32 = 40.0;
+pub(crate) const DRAG_ROOM: f32 = 10.0;
 
 /// Where the tabs sit in a bar of one window.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -33,8 +36,11 @@ pub(crate) struct StripLayout {
     pub strip_w: f32,
     /// All the tabs' width side by side.
     pub content_w: f32,
-    /// The tabs do not fit at [`TAB_MIN_WIDTH`]: the strip scrolls and the chevrons show.
+    /// The tabs do not all fit in the strip: it scrolls.
     pub overflow: bool,
+    /// The chevrons show beside the strip: it overflows and there is room for them and a
+    /// whole [`TAB_MIN_WIDTH`] tab.
+    pub chevrons: bool,
 }
 
 /// The strip for `count` tabs in a window `width` wide (`None`: not known yet, full-size tabs),
@@ -52,6 +58,7 @@ pub(crate) fn strip_layout(
             strip_w: content_width(TAB_MAX_WIDTH, count),
             content_w: content_width(TAB_MAX_WIDTH, count),
             overflow: false,
+            chevrons: false,
         };
     };
     let controls = if chrome.draws_controls() {
@@ -61,25 +68,35 @@ pub(crate) fn strip_layout(
         0.0
     };
     let room = width - chrome.leading_inset(fullscreen) - controls - trailing - DRAG_ROOM;
-    let mut tab_w = (room / count.max(1) as f32 - TAB_SPACING).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH);
+    let shared = room / count.max(1) as f32 - TAB_SPACING;
     // Half a pixel of slack: widths come out of float arithmetic.
-    let overflow = count as f32 * (TAB_MIN_WIDTH + TAB_SPACING) > room + 0.5;
-    let strip_w = if overflow {
-        (room - CHEVRONS_WIDTH - TAB_SPACING).max(0.0)
+    let fits = count as f32 * (TAB_MIN_WIDTH + TAB_SPACING) <= room + 0.5;
+    let beside_chevrons = room - CHEVRONS_WIDTH - TAB_SPACING;
+    let (tab_w, strip_w, chevrons) = if fits {
+        let tab_w = shared.clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH);
+        (tab_w, content_width(tab_w, count), false)
+    } else if beside_chevrons >= TAB_MIN_WIDTH {
+        (TAB_MIN_WIDTH, beside_chevrons, true)
     } else {
-        content_width(tab_w, count)
+        // Too narrow for the chevrons and a whole tab: the strip takes the room, the tabs
+        // shrink further to share it, never wider than the strip so the active one can show
+        // whole, and the wheel still scrolls them.
+        let strip_w = room.max(0.0);
+        let tab_w = if strip_w > 0.0 {
+            shared.clamp(TAB_TIGHT_WIDTH, TAB_MIN_WIDTH).min(strip_w)
+        } else {
+            TAB_TIGHT_WIDTH
+        };
+        (tab_w, strip_w, false)
     };
-    // A strip narrower than a tab could never show the active tab whole, so it would never get
-    // its hole: the tabs shrink to the strip instead.
-    if overflow && strip_w > 0.0 {
-        tab_w = tab_w.min(strip_w);
-    }
     let content_w = content_width(tab_w, count);
+    let overflow = content_w > strip_w + 0.5;
     StripLayout {
         tab_w,
         strip_w,
         content_w,
         overflow,
+        chevrons,
     }
 }
 
@@ -490,8 +507,8 @@ mod tests {
     fn a_window_too_narrow_for_the_group_has_an_empty_strip() {
         let l = layout(Chrome::Unified, Some(10.0), 5);
         assert_eq!(l.strip_w, 0.0);
-        assert_eq!(l.tab_w, TAB_MIN_WIDTH);
-        assert!(l.overflow);
+        assert_eq!(l.tab_w, TAB_TIGHT_WIDTH);
+        assert!(l.overflow && !l.chevrons);
     }
 
     #[test]
@@ -512,8 +529,8 @@ mod tests {
 
     #[test]
     fn drawn_controls_and_full_screen_change_the_room() {
-        let plain = layout(Chrome::Unified, Some(500.0), 30);
-        let drawn = layout(Chrome::Drawn, Some(500.0), 30);
+        let plain = layout(Chrome::Unified, Some(700.0), 30);
+        let drawn = layout(Chrome::Drawn, Some(700.0), 30);
         let setup = chrome::setup();
         let controls = chrome::controls_width(setup.look, setup.controls.order.len());
         let inset_diff = Chrome::Unified.leading_inset(false) - Chrome::Drawn.leading_inset(false);
@@ -521,7 +538,7 @@ mod tests {
         let full = strip_layout(
             Chrome::Unified,
             true,
-            Some(500.0),
+            Some(700.0),
             30,
             trailing_width(3, true),
         );
@@ -538,12 +555,14 @@ mod tests {
             strip_w: 300.0,
             content_w: 420.0,
             overflow: true,
+            chevrons: true,
         };
         assert_eq!(clamp_offset(500.0, &l), 120.0);
         assert_eq!(clamp_offset(-5.0, &l), 0.0);
         assert_eq!(clamp_offset(50.0, &l), 50.0);
         let fits = StripLayout {
             overflow: false,
+            chevrons: false,
             strip_w: 420.0,
             ..l
         };
@@ -776,7 +795,8 @@ mod app_tests {
     }
 
     #[test]
-    fn a_strip_narrower_than_a_tab_shrinks_its_tabs() {
+    fn a_bar_too_narrow_for_the_chevrons_shrinks_its_tabs() {
+        // 30 tabs leave about 105 px: no chevrons, the strip takes it all and scrolls.
         let l = strip_layout(
             Chrome::Unified,
             false,
@@ -784,11 +804,32 @@ mod app_tests {
             30,
             trailing_width(3, true),
         );
+        assert!(l.overflow && !l.chevrons, "{l:?}");
         assert!(
-            l.overflow && l.strip_w > 0.0 && l.strip_w < TAB_MIN_WIDTH,
+            l.strip_w >= TAB_MIN_WIDTH && l.tab_w == TAB_TIGHT_WIDTH,
             "{l:?}"
         );
-        assert_eq!(l.tab_w, l.strip_w);
+        // Two tabs in about 118 px share it without scrolling.
+        let room = 118.0;
+        let width = room + Chrome::Unified.leading_inset(false) + DRAG_ROOM;
+        let l = strip_layout(Chrome::Unified, false, Some(width), 2, 0.0);
+        assert!(!l.overflow && !l.chevrons, "{l:?}");
+        assert!(
+            l.content_w <= l.strip_w + 0.5 && l.tab_w < TAB_MIN_WIDTH,
+            "{l:?}"
+        );
+        // Under 48 px of room, one tab: it shows whole, the strip's width.
+        let width = 48.0 + Chrome::Unified.leading_inset(false) + DRAG_ROOM;
+        let l = strip_layout(Chrome::Unified, false, Some(width), 1, 0.0);
+        assert!(!l.overflow && !l.chevrons, "{l:?}");
+        assert!(
+            l.tab_w > 0.0 && l.tab_w <= l.strip_w && l.strip_w <= 48.0,
+            "{l:?}"
+        );
+        // No room at all: nothing shows, nothing is zero wide.
+        let l = strip_layout(Chrome::Unified, false, Some(10.0), 3, 0.0);
+        assert_eq!(l.strip_w, 0.0);
+        assert!(l.tab_w > 0.0 && !l.chevrons);
     }
 
     #[test]

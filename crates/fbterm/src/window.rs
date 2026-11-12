@@ -23,7 +23,9 @@ use crate::shortcuts::{Mode, Shortcuts};
 use crate::tab_drag::{Axis, DragState, Strip, drag_event};
 use crate::tab_look::{Surroundings, look};
 use crate::tab_sidebar::SIDEBAR_WIDTH;
-use crate::tab_strip::{TAB_SPACING, Viewport, WHEEL_LINE_PX, clamp_offset, strip_layout};
+use crate::tab_strip::{
+    TAB_MIN_WIDTH, TAB_SPACING, Viewport, WHEEL_LINE_PX, clamp_offset, strip_layout,
+};
 use crate::tabs::{Page, Pane, Tab, TabId, TabState};
 use crate::theme::{Tokens, UI_FONT};
 use crate::tooltip::{DemoTip, tip, tooltip_text};
@@ -1021,7 +1023,7 @@ fn tab_bar<'a>(
         }
         bar = bar.push(Viewport::new(tab_row.into(), strip.strip_w, offset));
     }
-    if strip.overflow {
+    if strip.chevrons {
         let max = strip.content_w - strip.strip_w;
         let chevron = |glyph: &'static str, dir: i8, enabled: bool| {
             let color = if enabled {
@@ -2170,9 +2172,15 @@ fn tab_button<'a>(
     if tab.trouble() {
         inner = inner.push(dot(t.warning));
     }
+    let inner = inner.push(container(label).width(Length::Fill).clip(true));
+    // A tab shrunk below the usual minimum (a bar too narrow for the chevrons) has no room for
+    // the close button; the shortcut and the tab menu still close it.
+    let inner = if width >= TAB_MIN_WIDTH {
+        inner.push(close)
+    } else {
+        inner
+    };
     let inner = inner
-        .push(container(label).width(Length::Fill).clip(true))
-        .push(close)
         .spacing(8)
         .height(Length::Fill)
         .align_y(Alignment::Center);
@@ -2610,7 +2618,7 @@ mod tests {
         use super::*;
         use crate::chrome::BarAction;
         use crate::layout::PaneId;
-        use crate::tab_strip::{TAB_MIN_WIDTH, WHEEL_LINE_PX};
+        use crate::tab_strip::WHEEL_LINE_PX;
         use crate::windows::{Carry, DragMsg};
 
         const SIZE: Size = Size::new(1000.0, 40.0);
