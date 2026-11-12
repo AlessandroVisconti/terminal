@@ -118,7 +118,7 @@ Read these first; the design leans on them.
    it must not draw outside the strip or panic with an empty or off-screen rectangle.
 5. **Auto-scroll while dragging** a tab or a tile near either end of the strip (within about
    24 px) so it can be dropped further along: owner's "yes", mechanism the builder's. It must be
-   driven by pointer-move events only (no timer); the cost is that a perfectly still pointer at
+   driven by pointer-move events only (no timer), each move scrolling as far as the pointer travelled (at most 24 px), so the speed does not follow the device's event rate; the cost is that a perfectly still pointer at
    the edge does not keep scrolling, which is accepted.
 6. **State and messages.** A `TabBarMsg` variant for the strip's scroll (offset, visible width)
    next to the sidebar's, an `App` map keyed by window (cleared with the window like

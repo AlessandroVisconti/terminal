@@ -58,6 +58,8 @@ pub(crate) struct DragState {
     /// Where a carried tile would become a tab, or a carried tab of this strip would move
     /// to, as last drawn.
     pub gap: Option<usize>,
+    /// The pointer at the last move the bar saw: its edge-scroll goes by the distance moved.
+    pub last_pointer: Option<Point>,
 }
 
 /// What a strip of tabs is while an event is handled.

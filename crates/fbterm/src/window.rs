@@ -1500,7 +1500,9 @@ pub(crate) fn page_icon(page: Page) -> &'static str {
     }
 }
 
-/// How close to either end of the strip a drag scrolls it, and how far each pointer move scrolls.
+/// How close to either end of the strip a drag scrolls it, and the most one pointer move
+/// scrolls: a move scrolls as far as the pointer travelled, so the speed follows the hand, not
+/// the device's event rate.
 const EDGE_SCROLL_BAND: f32 = 24.0;
 const EDGE_SCROLL_STEP: f32 = 24.0;
 
@@ -1657,8 +1659,17 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         let rects = tab_rects(layout, self.ids.len());
         // A tab or tile dragged near either end of the strip, or past it anywhere over the bar
         // (a fast pointer overshoots the band), scrolls it while tabs are hidden on that side,
-        // so it can be dropped further along: one step per pointer move, never a timer.
+        // so it can be dropped further along: by the distance the pointer moved (at most
+        // `EDGE_SCROLL_STEP`), never a timer.
+        let moved_by = match event {
+            Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                let from = state.last_pointer.replace(*position);
+                from.map_or(0.0, |from| from.distance(*position).min(EDGE_SCROLL_STEP))
+            }
+            _ => 0.0,
+        };
         if let Event::Mouse(mouse::Event::CursorMoved { position }) = event
+            && moved_by >= 0.5
             && !self.modal
             && !self.ids.is_empty()
             && (state.press.as_ref().is_some_and(|p| p.dragging)
@@ -1675,13 +1686,13 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
             if over && hidden_left && position.x <= strip.x + EDGE_SCROLL_BAND {
                 shell.publish(Message::TabBar(
                     self.window,
-                    TabBarMsg::StripScroll(-EDGE_SCROLL_STEP),
+                    TabBarMsg::StripScroll(-moved_by),
                 ));
             } else if over && hidden_right && position.x >= strip.x + strip.width - EDGE_SCROLL_BAND
             {
                 shell.publish(Message::TabBar(
                     self.window,
-                    TabBarMsg::StripScroll(EDGE_SCROLL_STEP),
+                    TabBarMsg::StripScroll(moved_by),
                 ));
             }
         }
@@ -3076,7 +3087,10 @@ mod tests {
                 let chevron = p.rest[1].center();
                 let above = Point::new(p.strip.x + p.strip.width - 5.0, p.strip.y - 4.0);
                 let left = Point::new(p.strip.x - 1.0, p.strip.center().y);
+                // A move to measure from first: the strip's middle scrolls nothing.
+                let start = p.strip.center();
                 vec![
+                    (moved(start), start),
                     (moved(chevron), chevron),
                     (moved(above), above),
                     (moved(left), left),
@@ -3098,11 +3112,35 @@ mod tests {
         }
 
         #[test]
+        fn edge_scroll_goes_by_the_distance_moved_not_the_event_count() {
+            let tabs = many_tabs(40);
+            let carried = Some(Carry::Tile(PaneId(7)));
+            // Twenty 1 px moves in the band (a fast mouse) scroll 20 px in all, one long move
+            // at most one step, and a pointer that stays put nothing.
+            let messages = drive_full(Chrome::Unified, &tabs, carried, Some(800.0), 0.0, |p| {
+                let y = p.strip.center().y;
+                let x0 = p.strip.x + p.strip.width - 22.0;
+                (0..=20)
+                    .map(|i| Point::new(x0 + i as f32, y))
+                    .chain([Point::new(x0 + 20.0, y)])
+                    .map(|at| (moved(at), at))
+                    .collect()
+            });
+            let scrolls = strip_scrolls(&messages);
+            assert_eq!(scrolls.len(), 20, "{scrolls:?}");
+            assert!(
+                scrolls.iter().all(|d| (d - 1.0).abs() < 0.01),
+                "{scrolls:?}"
+            );
+        }
+
+        #[test]
         fn a_carried_tile_near_the_strip_edge_scrolls_it_and_nothing_carried_does_not() {
             let tabs = many_tabs(40);
             let near_right = |p: &Parts| {
+                let from = Point::new(p.strip.x + p.strip.width - 15.0, 20.0);
                 let at = Point::new(p.strip.x + p.strip.width - 5.0, 20.0);
-                vec![(moved(at), at)]
+                vec![(moved(from), from), (moved(at), at)]
             };
             let carried = Some(Carry::Tile(PaneId(7)));
             let messages = drive_full(
@@ -3113,7 +3151,8 @@ mod tests {
                 0.0,
                 near_right,
             );
-            assert_eq!(strip_scrolls(&messages), [EDGE_SCROLL_STEP]);
+            // The first move has nothing to measure from; the second went 10 px.
+            assert_eq!(strip_scrolls(&messages), [10.0]);
             // Nothing carried and nothing dragged: a pointer at the edge does nothing.
             let messages = drive_full(Chrome::Unified, &tabs, None, Some(800.0), 0.0, near_right);
             assert!(strip_scrolls(&messages).is_empty(), "{messages:?}");
