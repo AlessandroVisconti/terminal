@@ -92,6 +92,15 @@ pub(crate) fn strip_layout(
     };
     let content_w = content_width(tab_w, count);
     let overflow = content_w > strip_w + 0.5;
+    // A scrolling strip shows whole tabs only, so both its ends land on tab edges: at either
+    // end no tab is cut, and the active one never keeps the strip from reaching it
+    // (`keep_whole`). The rest of the room stays empty bar.
+    let strip_w = if overflow && strip_w >= tab_w {
+        let pitch = tab_w + TAB_SPACING;
+        ((strip_w + TAB_SPACING) / pitch + 1e-3).floor() * pitch - TAB_SPACING
+    } else {
+        strip_w
+    };
     StripLayout {
         tab_w,
         strip_w,
@@ -477,14 +486,17 @@ mod tests {
         let l = layout(Chrome::Unified, Some(600.0), 30);
         assert_eq!(l.tab_w, 80.0);
         assert!(l.overflow);
+        // The room beside the chevrons, trimmed to whole tabs.
+        let room = 600.0
+            - Chrome::Unified.leading_inset(false)
+            - trailing_width(3, true)
+            - DRAG_ROOM
+            - CHEVRONS_WIDTH
+            - TAB_SPACING;
+        let pitch = 80.0 + TAB_SPACING;
         assert_eq!(
             l.strip_w,
-            600.0
-                - Chrome::Unified.leading_inset(false)
-                - trailing_width(3, true)
-                - DRAG_ROOM
-                - CHEVRONS_WIDTH
-                - TAB_SPACING
+            ((room + TAB_SPACING) / pitch).floor() * pitch - TAB_SPACING
         );
         assert_eq!(l.content_w, 30.0 * 80.0 + 29.0 * TAB_SPACING);
     }
@@ -532,7 +544,13 @@ mod tests {
         let setup = chrome::setup();
         let controls = chrome::controls_width(setup.look, setup.controls.order.len());
         let inset_diff = Chrome::Unified.leading_inset(false) - Chrome::Drawn.leading_inset(false);
-        assert_eq!(plain.strip_w - drawn.strip_w, controls - inset_diff);
+        // Each strip is trimmed to whole tabs, so the difference is the controls' within a tab.
+        let pitch = plain.tab_w + TAB_SPACING;
+        let diff = plain.strip_w - drawn.strip_w;
+        assert!(
+            (diff - (controls - inset_diff)).abs() < pitch,
+            "{plain:?} {drawn:?}"
+        );
         let full = strip_layout(
             Chrome::Unified,
             true,
@@ -540,9 +558,10 @@ mod tests {
             30,
             trailing_width(3, true),
         );
-        assert_eq!(
-            full.strip_w - plain.strip_w,
-            Chrome::Unified.leading_inset(false) - Chrome::Unified.leading_inset(true)
+        let gained = Chrome::Unified.leading_inset(false) - Chrome::Unified.leading_inset(true);
+        assert!(
+            (full.strip_w - plain.strip_w - gained).abs() < pitch,
+            "{full:?} {plain:?}"
         );
     }
 
@@ -801,11 +820,34 @@ mod app_tests {
                     assert!(shown || hidden, "tab {active}, delta {delta}, offset {o}");
                 }
             }
-            // The strip still reaches both ends.
+            // The strip still reaches both ends exactly, by the wheel and by the chevrons.
+            let max = l.content_w - l.strip_w;
             app.strip_scrolled_by(wid, 1e6);
-            let far = app.offset_of(wid);
+            assert_eq!(app.offset_of(wid), max, "tab {active}");
             app.strip_scrolled_by(wid, -1e6);
-            assert!(far > 0.0 && app.offset_of(wid) < far, "tab {active}");
+            assert_eq!(app.offset_of(wid), 0.0, "tab {active}");
+            for (dir, end) in [(1, max), (-1, 0.0)] {
+                for _ in 0..50 {
+                    app.strip_stepped(wid, dir);
+                }
+                assert_eq!(app.offset_of(wid), end, "tab {active}, chevron {dir}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_scrolling_strip_shows_whole_tabs_only() {
+        for width in [400.0, 640.0, 800.0, 1013.0, 1500.0] {
+            for count in [12, 40, 90] {
+                let l = strip_layout(Chrome::Unified, false, Some(width), count, 0.0);
+                if !l.overflow {
+                    continue;
+                }
+                let tabs = (l.strip_w + TAB_SPACING) / (l.tab_w + TAB_SPACING);
+                assert!((tabs - tabs.round()).abs() < 1e-3, "{width} {count} {l:?}");
+                let end = (l.content_w - l.strip_w) / (l.tab_w + TAB_SPACING);
+                assert!((end - end.round()).abs() < 1e-3, "{width} {count} {l:?}");
+            }
         }
     }
 
