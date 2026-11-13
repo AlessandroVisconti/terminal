@@ -396,7 +396,8 @@ impl App {
     /// the buttons' width) only clamps the offset, and a scroll by hand stays. Never while a
     /// carry is on in that window: a hover selecting a half-shown tab would scroll the strip
     /// under a pointer that did not move, and the next dwell would walk on; the reveal comes
-    /// once the carry ends.
+    /// once the carry ends. Until then a half-shown tab made active by a dwell stays clipped
+    /// with no hole (`visible_hole`), a deliberate, short-lived look.
     pub(crate) fn reveal_strips(&mut self) {
         let changed: Vec<(window::Id, StripSeen, StripLayout)> = self
             .windows

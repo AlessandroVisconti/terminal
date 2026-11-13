@@ -1661,17 +1661,20 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
         };
         // A tab or tile dragged near either end of the strip, or past it anywhere over the bar
         // (a fast pointer overshoots the band), scrolls it while tabs are hidden on that side,
-        // so it can be dropped further along: by the distance the pointer moved (at most
-        // `EDGE_SCROLL_STEP`), never a timer.
-        let moved_by = match event {
+        // so it can be dropped further along: by how far the pointer moved toward that edge
+        // (at most `EDGE_SCROLL_STEP`; a move along the band or back toward the middle scrolls
+        // nothing), never a timer.
+        let dx = match event {
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 let from = state.last_pointer.replace(*position);
-                from.map_or(0.0, |from| from.distance(*position).min(EDGE_SCROLL_STEP))
+                from.map_or(0.0, |from| {
+                    (position.x - from.x).clamp(-EDGE_SCROLL_STEP, EDGE_SCROLL_STEP)
+                })
             }
             _ => 0.0,
         };
         if let Event::Mouse(mouse::Event::CursorMoved { position }) = event
-            && moved_by >= 0.5
+            && dx.abs() >= 0.5
             && !self.modal
             && !self.ids.is_empty()
             && (state.press.as_ref().is_some_and(|p| p.dragging)
@@ -1680,16 +1683,13 @@ impl Widget<Message, iced::Theme, iced::Renderer> for BarBackground<'_> {
             let bar = layout.bounds();
             let (hidden_left, hidden_right) = hidden_sides(view, &full);
             let over = position.y >= bar.y && position.y <= bar.y + bar.height;
-            if over && hidden_left && position.x <= view.x + EDGE_SCROLL_BAND {
-                shell.publish(Message::TabBar(
-                    self.window,
-                    TabBarMsg::StripScroll(-moved_by),
-                ));
-            } else if over && hidden_right && position.x >= view.x + view.width - EDGE_SCROLL_BAND {
-                shell.publish(Message::TabBar(
-                    self.window,
-                    TabBarMsg::StripScroll(moved_by),
-                ));
+            let left = over && dx < 0.0 && hidden_left && position.x <= view.x + EDGE_SCROLL_BAND;
+            let right = over
+                && dx > 0.0
+                && hidden_right
+                && position.x >= view.x + view.width - EDGE_SCROLL_BAND;
+            if left || right {
+                shell.publish(Message::TabBar(self.window, TabBarMsg::StripScroll(dx)));
             }
         }
         // The button pressed at the start of a drag is let go without a click: it sees the
@@ -3128,25 +3128,28 @@ mod tests {
         fn a_drag_past_the_band_keeps_scrolling_and_stops_at_the_ends() {
             let tabs = many_tabs(40);
             let carried = Some(Carry::Tile(PaneId(7)));
+            let mut to_chevron = 0.0;
             let past = |p: &Parts| {
-                // Over the right chevron, then above the tabs at the right edge, then left of
+                // Above the tabs at the right edge, then over the right chevron, then left of
                 // the strip.
-                let chevron = p.rest[1].center();
                 let above = Point::new(p.strip.x + p.strip.width - 5.0, p.strip.y - 4.0);
+                let chevron = Point::new(p.rest[1].center().x, p.strip.center().y);
                 let left = Point::new(p.strip.x - 1.0, p.strip.center().y);
+                to_chevron = (chevron.x - above.x).min(EDGE_SCROLL_STEP);
                 // A move to measure from first: the strip's middle scrolls nothing.
                 let start = p.strip.center();
                 vec![
                     (moved(start), start),
-                    (moved(chevron), chevron),
                     (moved(above), above),
+                    (moved(chevron), chevron),
                     (moved(left), left),
                 ]
             };
             let messages = drive_full(Chrome::Unified, &tabs, carried, Some(800.0), 0.0, past);
+            assert!(to_chevron >= 0.5, "the chevron sits right of the strip");
             assert_eq!(
                 strip_scrolls(&messages),
-                [EDGE_SCROLL_STEP, EDGE_SCROLL_STEP],
+                [EDGE_SCROLL_STEP, to_chevron],
                 "nothing hidden on the left at the start"
             );
             // Tabs that fit: nothing to scroll anywhere.
@@ -3179,6 +3182,28 @@ mod tests {
                 scrolls.iter().all(|d| (d - 1.0).abs() < 0.01),
                 "{scrolls:?}"
             );
+        }
+
+        #[test]
+        fn edge_scroll_follows_only_the_outward_horizontal_move() {
+            let tabs = many_tabs(40);
+            let carried = Some(Carry::Tile(PaneId(7)));
+            // In the right band: 6 px down, 3 px back toward the middle, then 4 px right and
+            // 8 px down at once. Only the last scrolls, and by its 4 px outward.
+            let messages = drive_full(Chrome::Unified, &tabs, carried, Some(800.0), 0.0, |p| {
+                let (x, y) = (p.strip.x + p.strip.width - 10.0, p.strip.y + 2.0);
+                [
+                    (x, y),
+                    (x, y + 6.0),
+                    (x - 3.0, y + 6.0),
+                    (x + 1.0, y + 14.0),
+                ]
+                .map(|(x, y)| Point::new(x, y))
+                .into_iter()
+                .map(|at| (moved(at), at))
+                .collect()
+            });
+            assert_eq!(strip_scrolls(&messages), [4.0], "{messages:?}");
         }
 
         #[test]
